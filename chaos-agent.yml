@@ -1,0 +1,81 @@
+name: CHAOS approved-task coding agent
+on:
+  schedule:
+    - cron: '17 7 * * *' # daily, UTC; schedule can be delayed
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: chaos-agent
+  cancel-in-progress: false
+jobs:
+  propose:
+    if: ${{ vars.CHAOS_AGENT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select one approved task not already proposed
+        id: select
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python .github/scripts/select_task.py
+      - name: Run Codex with limited workspace permission
+        if: steps.select.outputs.has_task == 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ':workspace'
+          prompt-file: .agent-task.md
+      - name: Reject changes to agent policy or task approval
+        if: steps.select.outputs.has_task == 'true'
+        run: |
+          python .github/scripts/check_agent_diff.py
+      - name: Build from maintained source
+        if: steps.select.outputs.has_task == 'true'
+        run: |
+          python build_standalone.py
+          python build_standalone.py --check
+      - name: Existing focused regression checks
+        if: steps.select.outputs.has_task == 'true'
+        run: |
+          set -e
+          for test in qa_v0364s_reengagement.js qa_v0364r_intelligence.js qa_v0364q_low_contact.js qa_v0364t_policy.js qa_v0364t_feedback.js; do
+            if [ -f "$test" ]; then node "$test"; fi
+          done
+      - name: Re-check forbidden changes after building
+        if: steps.select.outputs.has_task == 'true'
+        run: python .github/scripts/check_agent_diff.py
+      - name: Open review-only pull request
+        if: steps.select.outputs.has_task == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          branch: ${{ steps.select.outputs.branch }}
+          delete-branch: false
+          title: 'CHAOS agent: ${{ steps.select.outputs.title }}'
+          body: |
+            Automated proposal for approved task `${{ steps.select.outputs.task }}`.
+            **Review required. Do not merge without gameplay validation.**
+            Focused CI will run on the pull request.
+          commit-message: 'Agent proposal for ${{ steps.select.outputs.task }}'
+          add-paths: |
+            src/**
+            index.html
+            qa_*.js
+            qa_*.py
+            QA_*.md
+            CHANGELOG.md
