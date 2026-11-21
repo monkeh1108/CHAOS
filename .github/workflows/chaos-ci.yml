@@ -1,0 +1,27 @@
+name: CHAOS source verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python build_standalone.py --check
+      - name: Focused existing regression tests
+        run: |
+          set -e
+          for test in qa_v0364s_reengagement.js qa_v0364r_intelligence.js qa_v0364q_low_contact.js qa_v0364t_policy.js qa_v0364t_feedback.js qa_v0364u_reengagement.js qa_v0364w_pursuit.js; do
+            if [ -f "$test" ]; then node "$test"; fi
+          done
