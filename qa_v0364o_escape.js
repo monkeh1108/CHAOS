@@ -17,4 +17,11 @@ const eliteWrap=run(scenario({grip:.83,quality:.78,style:'wrap',strength:99,truc
 const light=scenario({grip:.12});const none=run(light);assert(!none.broken&&none.kind==='none','light brush never becomes break-tackle event');
 const tired=scenario({stamina:.13}),fresh=scenario({stamina:1});assert(model.drive(fresh.runner,fresh.defender,fresh.link).effort>model.drive(tired.runner,tired.defender,tired.link).effort,'leg drive scales with stamina');
 const low=scenario({strength:58}),high=scenario({strength:98});assert(model.drive(high.runner,high.defender,high.link).legPower>model.drive(low.runner,low.defender,low.link).legPower,'lower body strength contributes');
+const coasting=scenario();
+coasting.runner.intent='carry-coast';
+const inertial=model.drive(coasting.runner,coasting.defender,coasting.link);
+assert.equal(inertial.effort,0,'neutral-input runner has no active leg drive');
+assert.equal(inertial.forwardSpeed,5,'collision-derived movement is still measured');
+assert.ok(inertial.margin>-inertial.opposing,'separation speed can still strain the grip');
+assert.ok(!run(coasting).broken,'external forward velocity alone does not power a grip escape');
 console.log('PASS: weak-grab break, sustained grip, secure-wrap resistance, earned wrap break, no brush break, stamina and lower-body drive');
