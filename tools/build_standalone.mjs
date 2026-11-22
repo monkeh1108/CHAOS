@@ -8,9 +8,13 @@ const marker = "<!-- GRIDIRON_ENGINE -->";
 const output = new URL("index.html", root);
 const check = process.argv.includes("--check");
 
-const template = (await readFile(new URL("src/browser_template.html", root), "utf8")).replace(/\r\n/g, "\n");
+const template = (
+  await readFile(new URL("src/browser_template.html", root), "utf8")
+).replace(/\r\n/g, "\n");
 if (template.split(marker).length !== 2) {
-  throw new Error("The standalone template must contain one engine placeholder.");
+  throw new Error(
+    "The standalone template must contain one engine placeholder.",
+  );
 }
 
 const bundle = await build({
@@ -29,7 +33,7 @@ if (/<\/script/i.test(script)) {
 }
 
 const html = template.replace(marker, () => `<script>\n${script}</script>`);
-const current = await readFile(output, "utf8").catch(error => {
+const current = await readFile(output, "utf8").catch((error) => {
   if (error.code !== "ENOENT") throw error;
   return "";
 });
