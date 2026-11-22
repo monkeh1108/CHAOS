@@ -1,4 +1,4 @@
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
 
 function invalidSnapshot() {
   return new TypeError("Invalid CHAOS match snapshot");

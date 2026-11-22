@@ -183,6 +183,7 @@ export function createGameHud({ readState, queries }) {
       playSeconds,
       scrimmagePlayCalled,
       possession,
+      localTeam,
       timeOuts,
       TEAM_NAMES,
       controlMode,
@@ -310,7 +311,7 @@ export function createGameHud({ readState, queries }) {
         : specialState.kind === "punt"
           ? "PUNT RETURN · WATCH FOR THE BALL · K FOR FAIR CATCH"
           : "KICKOFF · " +
-            (possession === 0
+            (possession === localTeam
               ? "RETURN " + returnCall.toUpperCase()
               : "COVER THE RETURN");
     else if (control && phase === "halftime")
@@ -411,7 +412,7 @@ export function createGameHud({ readState, queries }) {
             ? specialState
               ? "KICKOFF READY"
               : scrimmagePlayCalled
-                ? possession === 1
+                ? possession !== localTeam
                   ? "CPU PRE-SNAP"
                   : "YOUR PRE-SNAP"
                 : "PICK A PLAY"
@@ -479,7 +480,10 @@ export function createGameHud({ readState, queries }) {
         break;
       case "playSelectionChanged":
         for (const button of document.querySelectorAll(".play")) {
-          button.classList.toggle("selected", button.dataset.play === event.play);
+          button.classList.toggle(
+            "selected",
+            button.dataset.play === event.play,
+          );
         }
         break;
       case "selectionChanged":

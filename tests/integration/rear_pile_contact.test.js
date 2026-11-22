@@ -42,7 +42,7 @@ assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
  window.fixture = {
   neutral() {matchState.controlMode='offense';matchState.manualDrive=true;matchState.suppressManualUntilNeutral=false;},
-  input(value) {matchState.keys.arrowright=value;},
+  input(value) {dispatchInput({type:"controls",move:{x:0,y:Number(value),mag:Number(value)}});},
   time() {return matchState.playClock;},
   contacts() {return Object.fromEntries(matchState.liveTackleContacts);},
   missDive(key) {
