@@ -42,7 +42,9 @@ custom.K={name:'Evan Mercer',pos:'K',team:1,h:73,w:198,SPD:65,ACC:67,AGI:57,
  STR:52,TAK:44,BLO:31,CAT:22,JMP:53,THP:10,THA:10,AWR:85,TRK:32,COV:24,
  KPW:88,KAC:85,PUNT:87};
 // Quarterback mental and pocket traits. Independent tunable ratings (1–99).
-Object.assign(custom.QB,{VIS:87,DEC:81,TOR:80,BSK:73});
+// QB ratings: vision, decision speed, throw on run, composure, scramble
+// tendency, pocket patience, improvisation and risk tolerance.
+Object.assign(custom.QB,{VIS:87,DEC:81,TOR:80,BSK:73,SCT:55,PAT:65,IMP:64,RSK:55});
 // Independent, editable contact-technique ratings. Derived defaults are only
 // starting values; simulations always read the live attribute from each player.
 for(const p of Object.values(custom)){
@@ -2849,57 +2851,151 @@ function quarterbackWindow(qb,rec){
  const score=16*openness+catchSkill+Math.min(15,progress*.35)-danger*25-ballDepth*10;
  return {rec,arrival,flight,range,danger,openness,score,inside};
 }
-function cpuQuarterback(qb,dt){
- if(passThrown||ballCarrier)return;
- // Pressure is physical: an unassigned safety who actually comes downhill
- // counts once close enough to threaten the pocket. A defender merely
- // disguising a blitz before the snap does not.
- const activeRush=def.filter(d=>!d.ground&&(d.rush||
-   (dist(d,qb)<5.8 && (d.vx*(qb.x-d.x)+d.vy*(qb.y-d.y))>Math.max(.6,dist(d,qb)*.42))));
- const rush=closestThreat(qb,activeRush);
- const pressure=clamp((5.2-rush.d)/4.7,0,1);
- // Stay in a pocket with lateral evasions. BSK affects escape composure.
- let wantX=playStart-4.2,wantY=26.65;
- if(rush.p&&rush.d<4){wantX=qb.x-(.6+pressure*.8);wantY=clamp(qb.y+(qb.y>=rush.p.y?1:-1)*(1.5+qb.BSK*.015),10,H-10)}
- qb.intent='qb-read';qb.intentTarget=cpuQB.choice?.key||'pocket';
- arrive(qb,wantX,wantY,dt,.58+qb.BSK*.002);
- if(playClock<cpuQB.nextRead)return;
- cpuQB.reads++;
- const options=eligibleTargets().map(r=>quarterbackWindow(qb,r));
- options.sort((a,b)=>b.score-a.score);
- // Field vision determines how much coverage the QB correctly perceives.
- // A poor VIS can underestimate risk and pick a lower-quality option.
- const recognition=clamp((qb.VIS-30)/69,0,1);
- let chosen=options[0];
- if(options.length>1 && rand()>recognition*.93+.05){
-  const chance=rand();chosen=options[chance<.50?1:chance<.81?2:3]||chosen;
- }
- cpuQB.choice=chosen?.rec||null;
- cpuQB.lastScore=chosen?.score||0;cpuQB.lastRisk=chosen?.danger||0;
- const patience=clamp((100-qb.DEC)/100,0,1);
- const timeDemand=CpuQBPolicy.minimumSettle(selectedPlay,qb.DEC,qb.VIS);
- const progress=chosen?Math.max(0,chosen.arrival.x-playStart):0;
- const developed=chosen&&CpuQBPolicy.hasDeveloped(selectedPlay,playClock,progress,pressure);
- const readable=chosen&&chosen.score>CpuQBPolicy.selectThreshold(qb.DEC,qb.VIS)&&
-   chosen.danger<CpuQBPolicy.dangerLimit(qb.VIS)&&chosen.openness>.22;
- // A QB with enough protection waits for receivers to complete the route's
- // meaningful break. Severe pressure permits a rushed or imperfect throw.
- const emergency=(pressure>.86&&rush.d<2.2&&playClock>Math.max(.90,timeDemand-.75))||
-    playClock>Math.max(4.7,timeDemand+2.6);
- const panic=pressure>.86&&rush.d<2.1;
- if(playClock>=timeDemand && ((developed&&readable)||emergency)){
-  const index=eligibleTargets().indexOf(chosen.rec);
-  if(index>=0){
-   const hold=chosen.range>19?.11:chosen.danger>.42?.46:.29;
-   const fired=passTo(index,hold);
-   if(fired){cpuQB.passes++;log('CPU QB · '+(emergency?'UNDER PRESSURE':'READ')+' · '+chosen.rec.key+' · risk '+chosen.danger.toFixed(2));return}
+// Sample the QB's path at estimated arrival times. Engaged defenders still
+// occupy their current lane, but have less freedom to close another one.
+function quarterbackClearance(qb,target,bodies,chase){
+ const length=dist(qb,target), initialSpeed=speed(qb), accel=acceleration(qb);
+ const topSpeed=maxSpeed(qb), qbRadius=radius(qb);
+ let clearance=6;
+ for(const fraction of [.25,.50,.75,1]){
+  const x=qb.x+(target.x-qb.x)*fraction,y=qb.y+(target.y-qb.y)*fraction;
+  const travel=length*fraction;
+  const time=Math.min(2,Math.max(travel/topSpeed,
+    (Math.sqrt(initialSpeed**2+2*accel*travel)-initialSpeed)/accel));
+  for(const p of bodies){
+   const engaged=p.team===1&&p.blocked;
+   const lead=Math.min(.65,time)*(engaged?.25:1);
+   const closing=chase&&p.team===1&&!engaged?Math.max(0,time-.55)*maxSpeed(p)*.52:0;
+   clearance=Math.min(clearance,Math.hypot(x-p.x-p.vx*lead,y-p.y-p.vy*lead)-qbRadius-radius(p)-closing);
   }
  }
- if(panic && playClock>Math.max(1.2,timeDemand-.30) && qb.BSK>=58){
-  // Scramble path responds to rush angle; crossing the LOS disables passing.
-  arrive(qb,playStart+3,clamp(qb.y+(qb.y>=rush.p.y?5:-5),5,H-5),dt,1.10);
+ return clearance;
+}
+function quarterbackLane(qb,bodies){
+ let best=null;
+ const vision=.55*qb.VIS+.45*qb.AWR;
+ const horizon=clamp(maxSpeed(qb)*1.4+(qb.ACC-70)*.035,5,13);
+ const runway=Math.min(110-playStart,horizon);
+ for(const offset of [0,-2.5,2.5,-5,5]){
+  if(Math.abs(offset)>4&&vision<70)continue;
+  const y=clamp(qb.y+offset,1,H-1);
+  const entry={x:playStart+Math.min(runway,2),y};
+  const entryGap=quarterbackClearance(qb,entry,bodies,true);
+  if(entryGap<.50)continue;
+  let gain=entry.x-playStart;
+  for(const depth of [5,8].filter(depth=>depth<runway).concat(runway)){
+   const x=playStart+depth;
+   if(quarterbackClearance(qb,{x,y},bodies,true)<.8)break;
+   gain=x-playStart;
+  }
+  const value=gain+Math.min(entryGap,3)*.65-Math.abs(y-qb.y)*.25;
+  if(!best||value>best.value)best={...entry,gain,value};
  }
- cpuQB.nextRead=playClock+clamp(.19+(100-qb.DEC)*.004,.18,.49);
+ return best;
+}
+function quarterbackPocket(qb,bodies,pressure,rusher){
+ // The QB begins near the traditional dropback spot, so aiming at the fixed
+ // home position every tick made him settle after moving only a few inches.
+ // Maintain a small moving pocket target even without an immediate rusher;
+ // select an actual safe gap rather than sliding through the offensive line.
+ const awareness=clamp((qb.AWR+qb.BSK)/200,0,1);
+ const threat=rusher?{x:rusher.x+rusher.vx*.35,y:rusher.y+rusher.vy*.35}:null;
+ let best={x:qb.x,y:qb.y},value=-Infinity;
+ const desiredStep=playClock>.42?clamp(playStart-qb.x-1.75,0,1.6):0;
+ const step=qb.x+desiredStep;
+ const candidates=[
+  {x:step,y:qb.y},
+  {x:Math.min(qb.x+.3,playStart-1.45),y:qb.spawnY-1.6},
+  {x:Math.min(qb.x+.3,playStart-1.45),y:qb.spawnY+1.6},
+  {x:step,y:qb.spawnY-1.25},
+  {x:step,y:qb.spawnY+1.25}
+ ];
+ for(const target of candidates){
+  if(target.x>playStart-1.4||target.y<2||target.y>H-2)continue;
+  const gap=quarterbackClearance(qb,target,bodies,false);
+  if(gap<.12)continue;
+  const threatGain=threat?dist(target,threat)-dist(qb,threat):0;
+  const travel=dist(qb,target);
+  const lateral=Math.abs(target.y-qb.spawnY);
+  // In a clean pocket, a short reposition creates a throwing lane. Under
+  // pressure, move to maximize distance from the actual oncoming defender.
+  const score=Math.min(gap,2.5)*.47 + threatGain*(pressure>.2?.85:.12)
+    + (target.x-qb.x)*(.25+.38*awareness)
+    - lateral*(pressure>.2?.065:.22) - travel*.075;
+  if(score>value){best=target;value=score;}
+ }
+ if(pressure>.48&&threat){
+  for(const side of [-1,1]){
+   if(qb.IMP<52||playClock<.85)continue;
+   const target={x:Math.min(qb.x+.35,playStart-1.45),y:clamp(qb.y+side*4.6,2,H-2)};
+   const gap=quarterbackClearance(qb,target,bodies,false);
+   const escape=dist(target,threat)-dist(qb,threat);
+   if(gap>.2&&escape>1.0&&gap+escape*.7>value+.35){best=target;value=gap+escape*.7;}
+  }
+ }
+ return best;
+}
+function cpuQuarterback(qb,dt){
+ if(passThrown||ballCarrier||convertQuarterbackScramble())return;
+ const targets=eligibleTargets();
+ if(playClock>=cpuQB.nextRead){
+  const bodies=players.filter(p=>p!==qb&&!p.ground);
+  const activeRush=def.filter(d=>!d.ground&&(d.rush||
+    (dist(d,qb)<5.8&&(d.vx*(qb.x-d.x)+d.vy*(qb.y-d.y))>Math.max(.6,dist(d,qb)*.42))));
+  const rush=closestThreat(qb,activeRush);
+  const protectedRush=rush.p?.blocked>0&&rush.d>2.4;
+  const pressure=clamp((5.2-rush.d)/4.7,0,1)*(protectedRush?.55:1);
+  cpuQB.reads++;
+  const patience=(qb.PAT-65)*.009;
+  const timeDemand=CpuQBPolicy.minimumSettle(selectedPlay,qb.DEC,qb.VIS)+patience;
+  // Stay within the concept's early progression. Faster processors reach
+  // later reads sooner. An emergency may end the progression early.
+  const interval=.20+(100-qb.DEC)*.004;
+  const progression=1+Math.floor(Math.max(0,playClock-.45)/(interval*2.5));
+  const risk=(qb.RSK-55)/100;
+  const options=targets.slice(0,progression).map(r=>quarterbackWindow(qb,r));
+  const perceivedScore=o=>o.score+risk*(Math.min(18,o.range)*.45+
+    (o.inside===1&&o.range>15?o.danger*18:0))+
+    (75-qb.VIS)*o.danger*.18;
+  const chosen=options.sort((a,b)=>perceivedScore(b)-perceivedScore(a))[0];
+  cpuQB.choice=chosen?.rec||null;
+  cpuQB.lastScore=chosen?.score||0;
+  cpuQB.lastRisk=chosen?.danger||0;
+  cpuQB.nextRead=playClock+interval;
+
+  const progress=chosen?Math.max(0,chosen.arrival.x-playStart):0;
+  const developed=chosen&&CpuQBPolicy.hasDeveloped(selectedPlay,playClock,progress,pressure);
+  const singleCoverage=chosen?.inside===1&&chosen.range>15;
+  const readable=chosen&&perceivedScore(chosen)>CpuQBPolicy.selectThreshold(qb.DEC,qb.VIS)&&
+    chosen.danger<CpuQBPolicy.dangerLimit(qb.VIS)+risk*(singleCoverage?.6:.18)&&
+    chosen.openness>(singleCoverage?.22-risk*.35:.22);
+  const emergency=pressure>.79+(qb.BSK-65)*.004&&rush.d<2.3;
+  const expired=playClock>Math.max(4.7,timeDemand+2.6);
+  const lane=playClock>1?quarterbackLane(qb,bodies):null;
+  const runValue=lane?lane.value+Math.min(lane.gain,togo)*.28+pressure*5:0;
+  const runDemand=10.5+(60-qb.SCT)*.16+(qb.PAT-65)*.05+
+    (developed&&readable?3:0)+(down>=3&&lane&&lane.gain<togo?4:0);
+  // Keep the chosen entry point while it is still clear. This avoids
+  // redirecting the runner every time the candidate grid shifts with him.
+  const committed=cpuQB.runTarget;
+  cpuQB.runTarget=committed&&quarterbackClearance(qb,committed,bodies,true)>.3?committed:
+    lane&&runValue>runDemand&&lane.gain>=Math.min(110-playStart,emergency?1.5:5)?lane:null;
+  if(!cpuQB.runTarget){
+   const set=speed(qb)<1.8 || qb.TOR>77 || expired || emergency;
+   if(chosen&&set&&((playClock>=timeDemand&&developed&&readable)||expired||
+      (emergency&&playClock>Math.max(.9,timeDemand-.55)))){
+    const hold=chosen.range>19?.11:chosen.danger>.42?.46:.29;
+    if(passTo(targets.indexOf(chosen.rec),hold)){cpuQB.passes++;return;}
+   }
+   cpuQB.pocketTarget=quarterbackPocket(qb,bodies,pressure,rush.p);
+  }
+ }
+ const lane=cpuQB.runTarget;
+ const target=lane||cpuQB.pocketTarget;
+ qb.intent=lane?'qb-scramble':'qb-read';
+ qb.intentTarget=lane?'rushing-lane':cpuQB.choice?.key||'pocket';
+ if(lane)steer(qb,lane.x-qb.x,lane.y-qb.y,dt,1.10);
+ else if(target)arrive(qb,target.x,target.y,dt,.67+qb.BSK*.002);
 }
 function qbAI(p,dt){
  p.intent='qb-control';p.intentTarget='user';
@@ -3625,7 +3721,7 @@ function projectedReceiver(rec, flight){
 // calculates release, lead and ballistic arc; THA/pressure/distance create misses.
 function convertQuarterbackScramble(){
  const qb=P('QB');
- if(phase!=='live'||RUNS.has(selectedPlay)||passThrown||ballCarrier||!qb||qb.x<=playStart+.10)return false;
+ if(phase!=='live'||RUNS.has(selectedPlay)||passThrown||ballCarrier||!qb||qb.x<=playStart)return false;
  pendingPass=null;ballCarrier=qb;qb.touches++;
  // Stay under user control, including if the left stick remains held forward.
  if(controlMode==='offense'){active=qb;manualDrive=true;suppressManualUntilNeutral=false;}
@@ -4582,7 +4678,7 @@ function frame(timestamp){if(!frame.prev)frame.prev=timestamp;let elapsed=Math.m
  }
  requestAnimationFrame(frame)}
 function summary(){const p=custom[$('athlete').value];$('physicsSummary').textContent='Calculated: '+(maxSpeed({...p,stam:1})*YARD_M*MPS_TO_MPH).toFixed(1)+' mph top speed · '+(acceleration(p)*YARD_M).toFixed(2)+' m/s² initial drive · '+mass(p).toFixed(1)+' kg mass · '+(catchReach(p)*YARD_M).toFixed(2)+' m modeled catch reach. Burst changes acceleration and velocity, not just the display.'};
-function sliders(){const k=$('athlete').value, p=custom[k];$('meta').innerHTML=`<div><span>POSITION</span>${p.pos}</div><div><span>HEIGHT</span>${Math.floor(p.h/12)}′${p.h%12}″</div><div><span>WEIGHT</span>${p.w} lb</div>`;let list=['SPD','ACC','AGI','STR','TRK','TAK','BLO','CAT','JMP','AWR'];if(k==='K')list=['KPW','KAC','PUNT','SPD','ACC','AGI','AWR'];if(k==='QB')list=['SPD','ACC','AGI','THP','THA','TOR','VIS','DEC','BSK','AWR','STR'];if(k.startsWith('WR'))list=['SPD','ACC','AGI','JUK','SFA','CAT','RTE','CUT','DBL','REL','HND','STA'];if(k.startsWith('CB'))list=['SPD','ACC','AGI','COV','CAT','JMP','TAK'];if(k==='MLB'||k==='EDGE1')list=['SPD','ACC','AGI','STR','TAK','AWR','COV'];if(k==='TE')list=['SPD','ACC','STR','BLO','IBL','CAT','RTE','CUT','REL','HND'];if(k==='RB')list=['SPD','ACC','AGI','JUK','SFA','TRK','STR','CAT','STA'];
+function sliders(){const k=$('athlete').value, p=custom[k];$('meta').innerHTML=`<div><span>POSITION</span>${p.pos}</div><div><span>HEIGHT</span>${Math.floor(p.h/12)}′${p.h%12}″</div><div><span>WEIGHT</span>${p.w} lb</div>`;let list=['SPD','ACC','AGI','STR','TRK','TAK','BLO','CAT','JMP','AWR'];if(k==='K')list=['KPW','KAC','PUNT','SPD','ACC','AGI','AWR'];if(k==='QB')list=['SPD','ACC','AGI','THP','THA','TOR','VIS','DEC','BSK','SCT','PAT','IMP','RSK','AWR','STR'];if(k.startsWith('WR'))list=['SPD','ACC','AGI','JUK','SFA','CAT','RTE','CUT','DBL','REL','HND','STA'];if(k.startsWith('CB'))list=['SPD','ACC','AGI','COV','CAT','JMP','TAK'];if(k==='MLB'||k==='EDGE1')list=['SPD','ACC','AGI','STR','TAK','AWR','COV'];if(k==='TE')list=['SPD','ACC','STR','BLO','IBL','CAT','RTE','CUT','REL','HND'];if(k==='RB')list=['SPD','ACC','AGI','JUK','SFA','TRK','STR','CAT','STA'];
  if(['LT','LG','C','RG','RT','FB','TE2'].includes(k))list=['SPD','ACC','AGI','STR','BLO','IBL','AWR'];
  if(k==='MLB'||k==='EDGE1'||k==='NT'||k==='SAM')list=['SPD','ACC','AGI','TAK','HIT','PRC','PUR','STA','AWR'];
  if(k.startsWith('CB'))list=['SPD','ACC','AGI','COV','PRS','JAM','MIR','RCR','DIS','PRC','PUR','STA'];
