@@ -108,6 +108,8 @@ export function createMatchState(localTeam, initialSeed) {
     passes: 0,
     lastScore: 0,
     lastRisk: 0,
+    runTarget: null,
+    pocketTarget: null,
   };
   matchState.airSelection = { offense: null, defense: null, defenderKey: null };
   matchState.currentMemoryPlay = null;

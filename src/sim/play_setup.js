@@ -100,6 +100,8 @@ export function createPlaySetup() {
       passes: 0,
       lastScore: 0,
       lastRisk: 0,
+      runTarget: null,
+      pocketTarget: null,
     };
     matchState.lastContact = 0;
     matchState.playClock = 0;

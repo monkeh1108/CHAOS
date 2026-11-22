@@ -30,7 +30,16 @@ export function createPlayerProfiles() {
     PUNT: 87,
   };
   // Quarterback mental and pocket traits. Independent tunable ratings (1–99).
-  Object.assign(custom.QB, { VIS: 87, DEC: 81, TOR: 80, BSK: 73 });
+  Object.assign(custom.QB, {
+    VIS: 87,
+    DEC: 81,
+    TOR: 80,
+    BSK: 73,
+    SCT: 55,
+    PAT: 65,
+    IMP: 64,
+    RSK: 55,
+  });
   // Independent, editable contact-technique ratings. Derived defaults are only
   // starting values; simulations always read the live attribute from each player.
   for (const p of Object.values(custom)) {

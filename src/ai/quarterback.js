@@ -4,13 +4,16 @@ import { CpuQBPolicy } from "../ai/cpu_qb_policy.js";
 export function createQuarterback() {
   let H,
     arrive,
+    radius,
+    maxSpeed,
+    convertQuarterbackScramble,
+    acceleration,
     closestThreat,
     dispatchInput,
     eligibleTargets,
     log,
     matchState,
     projectedReceiver,
-    rand,
     speed,
     sprintHeld,
     steer,
@@ -88,123 +91,278 @@ export function createQuarterback() {
     return { rec, arrival, flight, range, danger, openness, score, inside };
   }
 
-  function cpuQuarterback(qb, dt) {
-    if (matchState.passThrown || matchState.ballCarrier) return;
-    // Pressure is physical: an unassigned safety who actually comes downhill
-    // counts once close enough to threaten the pocket. A defender merely
-    // disguising a blitz before the snap does not.
-    const activeRush = matchState.def.filter(
-      (d) =>
-        !d.ground &&
-        (d.rush ||
-          (dist(d, qb) < 5.8 &&
-            d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) >
-              Math.max(0.6, dist(d, qb) * 0.42))),
-    );
-    const rush = closestThreat(qb, activeRush);
-    const pressure = clamp((5.2 - rush.d) / 4.7, 0, 1);
-    // Stay in a pocket with lateral evasions. BSK affects escape composure.
-    let wantX = matchState.playStart - 4.2,
-      wantY = 26.65;
-    if (rush.p && rush.d < 4) {
-      wantX = qb.x - (0.6 + pressure * 0.8);
-      wantY = clamp(
-        qb.y + (qb.y >= rush.p.y ? 1 : -1) * (1.5 + qb.BSK * 0.015),
-        10,
-        H - 10,
+  // Sample the QB's path at estimated arrival times. Engaged defenders still
+  // occupy their current lane, but have less freedom to close another one.
+  function quarterbackClearance(qb, target, bodies, chase) {
+    const length = dist(qb, target),
+      initialSpeed = speed(qb),
+      accel = acceleration(qb);
+    const topSpeed = maxSpeed(qb),
+      qbRadius = radius(qb);
+    let clearance = 6;
+    for (const fraction of [0.25, 0.5, 0.75, 1]) {
+      const x = qb.x + (target.x - qb.x) * fraction,
+        y = qb.y + (target.y - qb.y) * fraction;
+      const travel = length * fraction;
+      const time = Math.min(
+        2,
+        Math.max(
+          travel / topSpeed,
+          (Math.sqrt(initialSpeed ** 2 + 2 * accel * travel) - initialSpeed) /
+            accel,
+        ),
       );
+      for (const p of bodies) {
+        const engaged = p.team === 1 && p.blocked;
+        const lead = Math.min(0.65, time) * (engaged ? 0.25 : 1);
+        const closing =
+          chase && p.team === 1 && !engaged
+            ? Math.max(0, time - 0.55) * maxSpeed(p) * 0.52
+            : 0;
+        clearance = Math.min(
+          clearance,
+          Math.hypot(x - p.x - p.vx * lead, y - p.y - p.vy * lead) -
+            qbRadius -
+            radius(p) -
+            closing,
+        );
+      }
     }
-    qb.intent = "qb-read";
-    qb.intentTarget = matchState.cpuQB.choice?.key || "pocket";
-    arrive(qb, wantX, wantY, dt, 0.58 + qb.BSK * 0.002);
-    if (matchState.playClock < matchState.cpuQB.nextRead) return;
-    matchState.cpuQB.reads++;
-    const options = eligibleTargets().map((r) => quarterbackWindow(qb, r));
-    options.sort((a, b) => b.score - a.score);
-    // Field vision determines how much coverage the QB correctly perceives.
-    // A poor VIS can underestimate risk and pick a lower-quality option.
-    const recognition = clamp((qb.VIS - 30) / 69, 0, 1);
-    let chosen = options[0];
-    if (options.length > 1 && rand() > recognition * 0.93 + 0.05) {
-      const chance = rand();
-      chosen = options[chance < 0.5 ? 1 : chance < 0.81 ? 2 : 3] || chosen;
+    return clearance;
+  }
+  function quarterbackLane(qb, bodies) {
+    let best = null;
+    const vision = 0.55 * qb.VIS + 0.45 * qb.AWR;
+    const horizon = clamp(maxSpeed(qb) * 1.4 + (qb.ACC - 70) * 0.035, 5, 13);
+    const runway = Math.min(110 - matchState.playStart, horizon);
+    for (const offset of [0, -2.5, 2.5, -5, 5]) {
+      if (Math.abs(offset) > 4 && vision < 70) continue;
+      const y = clamp(qb.y + offset, 1, H - 1);
+      const entry = { x: matchState.playStart + Math.min(runway, 2), y };
+      const entryGap = quarterbackClearance(qb, entry, bodies, true);
+      if (entryGap < 0.5) continue;
+      let gain = entry.x - matchState.playStart;
+      for (const depth of [5, 8]
+        .filter((depth) => depth < runway)
+        .concat(runway)) {
+        const x = matchState.playStart + depth;
+        if (quarterbackClearance(qb, { x, y }, bodies, true) < 0.8) break;
+        gain = x - matchState.playStart;
+      }
+      const value =
+        gain + Math.min(entryGap, 3) * 0.65 - Math.abs(y - qb.y) * 0.25;
+      if (!best || value > best.value) best = { ...entry, gain, value };
     }
-    matchState.cpuQB.choice = chosen?.rec || null;
-    matchState.cpuQB.lastScore = chosen?.score || 0;
-    matchState.cpuQB.lastRisk = chosen?.danger || 0;
-    const timeDemand = CpuQBPolicy.minimumSettle(
-      matchState.selectedPlay,
-      qb.DEC,
-      qb.VIS,
-    );
-    const progress = chosen
-      ? Math.max(0, chosen.arrival.x - matchState.playStart)
-      : 0;
-    const developed =
-      chosen &&
-      CpuQBPolicy.hasDeveloped(
-        matchState.selectedPlay,
-        matchState.playClock,
-        progress,
-        pressure,
-      );
-    const readable =
-      chosen &&
-      chosen.score > CpuQBPolicy.selectThreshold(qb.DEC, qb.VIS) &&
-      chosen.danger < CpuQBPolicy.dangerLimit(qb.VIS) &&
-      chosen.openness > 0.22;
-    // A QB with enough protection waits for receivers to complete the route's
-    // meaningful break. Severe pressure permits a rushed or imperfect throw.
-    const emergency =
-      (pressure > 0.86 &&
-        rush.d < 2.2 &&
-        matchState.playClock > Math.max(0.9, timeDemand - 0.75)) ||
-      matchState.playClock > Math.max(4.7, timeDemand + 2.6);
-    const panic = pressure > 0.86 && rush.d < 2.1;
-    if (
-      matchState.playClock >= timeDemand &&
-      ((developed && readable) || emergency)
-    ) {
-      const index = eligibleTargets().indexOf(chosen.rec);
-      if (index >= 0) {
-        const hold =
-          chosen.range > 19 ? 0.11 : chosen.danger > 0.42 ? 0.46 : 0.29;
-        const fired = dispatchInput({
-          type: "pass",
-          receiver: index,
-          hold,
-          playerSlot: matchState.controllerTeams.cpu,
-        });
-        if (fired) {
-          matchState.cpuQB.passes++;
-          log(
-            "CPU QB · " +
-              (emergency ? "UNDER PRESSURE" : "READ") +
-              " · " +
-              chosen.rec.key +
-              " · risk " +
-              chosen.danger.toFixed(2),
-          );
-          return;
+    return best;
+  }
+  function quarterbackPocket(qb, bodies, pressure, rusher) {
+    // The QB begins near the traditional dropback spot, so aiming at the fixed
+    // home position every tick made him settle after moving only a few inches.
+    // Maintain a small moving pocket target even without an immediate rusher;
+    // select an actual safe gap rather than sliding through the offensive line.
+    const awareness = clamp((qb.AWR + qb.BSK) / 200, 0, 1);
+    const threat = rusher
+      ? { x: rusher.x + rusher.vx * 0.35, y: rusher.y + rusher.vy * 0.35 }
+      : null;
+    let best = { x: qb.x, y: qb.y },
+      value = -Infinity;
+    const desiredStep =
+      matchState.playClock > 0.42
+        ? clamp(matchState.playStart - qb.x - 1.75, 0, 1.6)
+        : 0;
+    const step = qb.x + desiredStep;
+    const candidates = [
+      { x: step, y: qb.y },
+      {
+        x: Math.min(qb.x + 0.3, matchState.playStart - 1.45),
+        y: qb.spawnY - 1.6,
+      },
+      {
+        x: Math.min(qb.x + 0.3, matchState.playStart - 1.45),
+        y: qb.spawnY + 1.6,
+      },
+      { x: step, y: qb.spawnY - 1.25 },
+      { x: step, y: qb.spawnY + 1.25 },
+    ];
+    for (const target of candidates) {
+      if (
+        target.x > matchState.playStart - 1.4 ||
+        target.y < 2 ||
+        target.y > H - 2
+      )
+        continue;
+      const gap = quarterbackClearance(qb, target, bodies, false);
+      if (gap < 0.12) continue;
+      const threatGain = threat ? dist(target, threat) - dist(qb, threat) : 0;
+      const travel = dist(qb, target);
+      const lateral = Math.abs(target.y - qb.spawnY);
+      // In a clean pocket, a short reposition creates a throwing lane. Under
+      // pressure, move to maximize distance from the actual oncoming defender.
+      const score =
+        Math.min(gap, 2.5) * 0.47 +
+        threatGain * (pressure > 0.2 ? 0.85 : 0.12) +
+        (target.x - qb.x) * (0.25 + 0.38 * awareness) -
+        lateral * (pressure > 0.2 ? 0.065 : 0.22) -
+        travel * 0.075;
+      if (score > value) {
+        best = target;
+        value = score;
+      }
+    }
+    if (pressure > 0.48 && threat) {
+      for (const side of [-1, 1]) {
+        if (qb.IMP < 52 || matchState.playClock < 0.85) continue;
+        const target = {
+          x: Math.min(qb.x + 0.35, matchState.playStart - 1.45),
+          y: clamp(qb.y + side * 4.6, 2, H - 2),
+        };
+        const gap = quarterbackClearance(qb, target, bodies, false);
+        const escape = dist(target, threat) - dist(qb, threat);
+        if (gap > 0.2 && escape > 1.0 && gap + escape * 0.7 > value + 0.35) {
+          best = target;
+          value = gap + escape * 0.7;
         }
       }
     }
+    return best;
+  }
+  function cpuQuarterback(qb, dt) {
     if (
-      panic &&
-      matchState.playClock > Math.max(1.2, timeDemand - 0.3) &&
-      qb.BSK >= 58
-    ) {
-      // Scramble path responds to rush angle; crossing the LOS disables passing.
-      arrive(
-        qb,
-        matchState.playStart + 3,
-        clamp(qb.y + (qb.y >= rush.p.y ? 5 : -5), 5, H - 5),
-        dt,
-        1.1,
+      matchState.passThrown ||
+      matchState.ballCarrier ||
+      convertQuarterbackScramble()
+    )
+      return;
+    const targets = eligibleTargets();
+    if (matchState.playClock >= matchState.cpuQB.nextRead) {
+      const bodies = matchState.players.filter((p) => p !== qb && !p.ground);
+      const activeRush = matchState.def.filter(
+        (d) =>
+          !d.ground &&
+          (d.rush ||
+            (dist(d, qb) < 5.8 &&
+              d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) >
+                Math.max(0.6, dist(d, qb) * 0.42))),
       );
+      const rush = closestThreat(qb, activeRush);
+      const protectedRush = rush.p?.blocked > 0 && rush.d > 2.4;
+      const pressure =
+        clamp((5.2 - rush.d) / 4.7, 0, 1) * (protectedRush ? 0.55 : 1);
+      matchState.cpuQB.reads++;
+      const patience = (qb.PAT - 65) * 0.009;
+      const timeDemand =
+        CpuQBPolicy.minimumSettle(matchState.selectedPlay, qb.DEC, qb.VIS) +
+        patience;
+      // Stay within the concept's early progression. Faster processors reach
+      // later reads sooner. An emergency may end the progression early.
+      const interval = 0.2 + (100 - qb.DEC) * 0.004;
+      const progression =
+        1 +
+        Math.floor(Math.max(0, matchState.playClock - 0.45) / (interval * 2.5));
+      const risk = (qb.RSK - 55) / 100;
+      const options = targets
+        .slice(0, progression)
+        .map((r) => quarterbackWindow(qb, r));
+      const perceivedScore = (o) =>
+        o.score +
+        risk *
+          (Math.min(18, o.range) * 0.45 +
+            (o.inside === 1 && o.range > 15 ? o.danger * 18 : 0)) +
+        (75 - qb.VIS) * o.danger * 0.18;
+      const chosen = options.sort(
+        (a, b) => perceivedScore(b) - perceivedScore(a),
+      )[0];
+      matchState.cpuQB.choice = chosen?.rec || null;
+      matchState.cpuQB.lastScore = chosen?.score || 0;
+      matchState.cpuQB.lastRisk = chosen?.danger || 0;
+      matchState.cpuQB.nextRead = matchState.playClock + interval;
+
+      const progress = chosen
+        ? Math.max(0, chosen.arrival.x - matchState.playStart)
+        : 0;
+      const developed =
+        chosen &&
+        CpuQBPolicy.hasDeveloped(
+          matchState.selectedPlay,
+          matchState.playClock,
+          progress,
+          pressure,
+        );
+      const singleCoverage = chosen?.inside === 1 && chosen.range > 15;
+      const readable =
+        chosen &&
+        perceivedScore(chosen) > CpuQBPolicy.selectThreshold(qb.DEC, qb.VIS) &&
+        chosen.danger <
+          CpuQBPolicy.dangerLimit(qb.VIS) +
+            risk * (singleCoverage ? 0.6 : 0.18) &&
+        chosen.openness > (singleCoverage ? 0.22 - risk * 0.35 : 0.22);
+      const emergency = pressure > 0.79 + (qb.BSK - 65) * 0.004 && rush.d < 2.3;
+      const expired = matchState.playClock > Math.max(4.7, timeDemand + 2.6);
+      const lane =
+        matchState.playClock > 1 ? quarterbackLane(qb, bodies) : null;
+      const runValue = lane
+        ? lane.value +
+          Math.min(lane.gain, matchState.togo) * 0.28 +
+          pressure * 5
+        : 0;
+      const runDemand =
+        10.5 +
+        (60 - qb.SCT) * 0.16 +
+        (qb.PAT - 65) * 0.05 +
+        (developed && readable ? 3 : 0) +
+        (matchState.down >= 3 && lane && lane.gain < matchState.togo ? 4 : 0);
+      // Keep the chosen entry point while it is still clear. This avoids
+      // redirecting the runner every time the candidate grid shifts with him.
+      const committed = matchState.cpuQB.runTarget;
+      matchState.cpuQB.runTarget =
+        committed && quarterbackClearance(qb, committed, bodies, true) > 0.3
+          ? committed
+          : lane &&
+              runValue > runDemand &&
+              lane.gain >=
+                Math.min(110 - matchState.playStart, emergency ? 1.5 : 5)
+            ? lane
+            : null;
+      if (!matchState.cpuQB.runTarget) {
+        const set = speed(qb) < 1.8 || qb.TOR > 77 || expired || emergency;
+        if (
+          chosen &&
+          set &&
+          ((matchState.playClock >= timeDemand && developed && readable) ||
+            expired ||
+            (emergency &&
+              matchState.playClock > Math.max(0.9, timeDemand - 0.55)))
+        ) {
+          const hold =
+            chosen.range > 19 ? 0.11 : chosen.danger > 0.42 ? 0.46 : 0.29;
+          if (
+            dispatchInput({
+              type: "pass",
+              receiver: targets.indexOf(chosen.rec),
+              hold,
+              playerSlot: matchState.controllerTeams.cpu,
+            })
+          ) {
+            matchState.cpuQB.passes++;
+            return;
+          }
+        }
+        matchState.cpuQB.pocketTarget = quarterbackPocket(
+          qb,
+          bodies,
+          pressure,
+          rush.p,
+        );
+      }
     }
-    matchState.cpuQB.nextRead =
-      matchState.playClock + clamp(0.19 + (100 - qb.DEC) * 0.004, 0.18, 0.49);
+    const lane = matchState.cpuQB.runTarget;
+    const target = lane || matchState.cpuQB.pocketTarget;
+    qb.intent = lane ? "qb-scramble" : "qb-read";
+    qb.intentTarget = lane
+      ? "rushing-lane"
+      : matchState.cpuQB.choice?.key || "pocket";
+    if (lane) steer(qb, lane.x - qb.x, lane.y - qb.y, dt, 1.1);
+    else if (target) arrive(qb, target.x, target.y, dt, 0.67 + qb.BSK * 0.002);
   }
 
   function qbAI(p, dt) {
@@ -221,13 +379,16 @@ export function createQuarterback() {
       ({
         H,
         arrive,
+        radius,
+        maxSpeed,
+        convertQuarterbackScramble,
+        acceleration,
         closestThreat,
         dispatchInput,
         eligibleTargets,
         log,
         matchState,
         projectedReceiver,
-        rand,
         speed,
         sprintHeld,
         steer,
