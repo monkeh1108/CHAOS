@@ -73,6 +73,10 @@ export function createContactInspection({
     debugCarrierCollisionImpulses: () =>
       matchState.carrierCollisionDiagnostics?.slice() || [],
     debugTackleEligibility: () => matchState.tackleDiagnostics?.slice() || [],
+    debugIndirectContact: () => {
+      const event = matchState.ballCarrier?.lastIndirectContact;
+      return event ? { ...event, chain: [...event.chain] } : null;
+    },
     debugContactWatch: (all = false) => {
       ChaosContactEvidence.setEnabled(true);
       ChaosContactEvidence.setFullScan(all);

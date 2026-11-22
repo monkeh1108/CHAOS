@@ -1,3 +1,4 @@
+import { recordDefenderDrive } from "./indirect_contact.js";
 import { clamp, distance2D as dist } from "../core/math.js";
 import { BlockingPolicy } from "../ai/blocking_policy.js";
 import { InsideZoneIQ } from "../ai/inside_zone_iq.js";
@@ -215,8 +216,18 @@ export function createBlockEngagement() {
         const drive =
           clamp((powerEdge + 24) * 0.018, 0.1, 0.95) *
           clamp(mass(d) / 117, 0.7, 1.4);
-        o.vx -= ix * drive * dt * 3.5;
-        o.vy -= iy * drive * dt * 3.5;
+        const recoilX = ix * drive * dt * 3.5;
+        const recoilY = iy * drive * dt * 3.5;
+        o.vx -= recoilX;
+        o.vy -= recoilY;
+        recordDefenderDrive(
+          matchState,
+          o,
+          d,
+          -recoilX * mass(o) * YARD_M,
+          -recoilY * mass(o) * YARD_M,
+          true,
+        );
         d.technique = "power-move";
         d.lean = clamp(d.lean + 0.05 * dt, -0.5, 0.5);
         if (!e.powerUsed) {
