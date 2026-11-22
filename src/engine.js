@@ -1,3 +1,9 @@
+import {
+  angleFromCosine,
+  clamp,
+  distance2D as dist,
+  hypot,
+} from "./core/math.js";
 import { AnimationPolicy } from "./render/animation_policy.js";
 import { BlockingPolicy } from "./ai/blocking_policy.js";
 import { CoverageRoutePolicy } from "./ai/coverage_route_policy.js";
@@ -2569,15 +2575,6 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   function seed(v) {
     seq = v >>> 0;
   }
-  function clamp(v, lo, hi) {
-    return Math.max(lo, Math.min(hi, v));
-  }
-  function hypot(dx, dy) {
-    return Math.hypot(dx, dy);
-  }
-  function dist(a, b) {
-    return hypot(a.x - b.x, a.y - b.y);
-  }
   function speed(p) {
     return hypot(p.vx, p.vy);
   }
@@ -4515,7 +4512,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     const ma = Math.hypot(ax, ay),
       mb = Math.hypot(bx, by);
     if (ma < 0.01 || mb < 0.01) return;
-    const bend = Math.acos(clamp((ax * bx + ay * by) / (ma * mb), -1, 1));
+    const bend = angleFromCosine((ax * bx + ay * by) / (ma * mb));
     if (bend < 0.34) return;
     const isDouble =
       selectedPlay === "sluggo" &&

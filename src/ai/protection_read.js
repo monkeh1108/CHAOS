@@ -1,6 +1,6 @@
+import { clamp } from "../core/math.js";
 // Visible pre-snap protection alert (independent of secret defensive play call).
 // The QB/center can only infer a rush from alignment and ratings, not d.rush.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function evaluate(def, los, qb, center, roll) {
   if (!qb) return null;
   const candidates = def

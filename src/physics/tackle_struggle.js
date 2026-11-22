@@ -1,6 +1,6 @@
+import { clamp } from "../core/math.js";
 // CHAOS: deterministic tackle struggle policy, driven by existing ratings,
 // balance, momentum, technique, and contact quality. Not a new break-tackle roll.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function state(runner, contacts, velocity) {
   if (!contacts.length) return { drive: 0, brakeMultiplier: 1, finishDelay: 0 };
   const totalHold = contacts.reduce((n, c) => n + Math.max(0, c.t.grip), 0);

@@ -1,7 +1,6 @@
+import { clamp, distance2D as distance } from "../core/math.js";
 // Inside Zone coordination. Pure football decisions; physics and graphics stay
 // in engine.js. All angles are player-relative, not an omniscient field scan.
-const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const rating = (p, key, fallback = 70) =>
   Number.isFinite(p?.[key]) ? p[key] : fallback;
 // Roughly 180 degrees forward, with no instant acquisition behind a player.

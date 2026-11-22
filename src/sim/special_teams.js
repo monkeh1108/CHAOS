@@ -1,7 +1,7 @@
+import { clamp } from "../core/math.js";
 /* Gridiron Lab special-teams decision helpers.
    Pure, independently testable rules; no DOM, physics mutation, or player-control
    side effects. Engine integration is deliberately limited to special plays. */
-const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const lanes = Object.freeze({ left: 13.5, middle: 26.65, right: 39.8 });
 function returnLaneY(call) {
   return lanes[call] ?? lanes.middle;

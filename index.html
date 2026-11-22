@@ -113,6 +113,23 @@
 </div>
 <script>
 (() => {
+  // src/core/math.js
+  function clamp(value, low, high) {
+    return Math.max(low, Math.min(high, value));
+  }
+  function clampFinite(value, low, high) {
+    return clamp(Number.isFinite(value) ? value : low, low, high);
+  }
+  function hypot(dx, dy) {
+    return Math.hypot(dx, dy);
+  }
+  function distance2D(a, b) {
+    return hypot(a.x - b.x, a.y - b.y);
+  }
+  function angleFromCosine(cosine) {
+    return Math.acos(clamp(cosine, -1, 1));
+  }
+
   // src/render/animation_policy.js
   var limit = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
   var actions = /* @__PURE__ */ new Set([
@@ -271,7 +288,6 @@
   });
 
   // src/ai/blocking_policy.js
-  var clamp = (v2, a, b) => Math.max(a, Math.min(b, v2));
   var stat = (p, key, fallback = 70) => Number.isFinite(p?.[key]) ? p[key] : fallback;
   var mass = (p) => Number.isFinite(p?.w) ? p.w : 220;
   function match(blocker, defender, helpers = 0) {
@@ -301,7 +317,7 @@
   }) {
     const { advantage, power } = match(blocker, defender, helpers);
     const dx = (defender.x || 0) - (blocker.x || 0), dy = (defender.y || 0) - (blocker.y || 0);
-    const distance3 = Math.max(1e-3, Math.hypot(dx, dy)), nx = dx / distance3, ny = dy / distance3;
+    const distance2 = Math.max(1e-3, Math.hypot(dx, dy)), nx = dx / distance2, ny = dy / distance2;
     const toward = runner ? {
       x: (runner.x || 0) - (defender.x || 0),
       y: (runner.y || 0) - (defender.y || 0)
@@ -319,7 +335,7 @@
       state: state2,
       nx,
       ny,
-      distance: distance3,
+      distance: distance2,
       strength,
       advantage,
       hold,
@@ -519,7 +535,6 @@
   var WIDTH = 53.333;
   var GOAL_LINE = 110;
   var MAX_ENDZONE_DEPTH = 4.65;
-  var clamp2 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   function compressedDepth(los, originalDepth) {
     if (!Number.isFinite(originalDepth) || originalDepth <= 0)
       return originalDepth;
@@ -545,8 +560,8 @@
     const dx = Number(axes?.x) || 0, dy = Number(axes?.y) || 0;
     if (Math.hypot(dx, dy) < 0.13) return null;
     const step3 = Math.min(0.05, dt) * 4.5 * (quickJog ? 1.45 : 1);
-    const x = clamp2(p.x + dx * step3, los + 0.85, GOAL_LINE + MAX_ENDZONE_DEPTH);
-    const y = clamp2(p.y + dy * step3, 1.1, WIDTH - 1.1);
+    const x = clamp(p.x + dx * step3, los + 0.85, GOAL_LINE + MAX_ENDZONE_DEPTH);
+    const y = clamp(p.y + dy * step3, 1.1, WIDTH - 1.1);
     const free = (cx, cy) => !(teammates || []).some(
       (t) => t !== p && Math.hypot(cx - t.x, cy - t.y) < 0.8
     );
@@ -559,13 +574,13 @@
     const a = d?.assignment;
     if (a?.kind !== "zone") return null;
     return {
-      x: clamp2(
-        (a.homeX ?? a.baseX) + clamp2((d.x - d.spawnX) * 0.6, -4.5, 4.5),
+      x: clamp(
+        (a.homeX ?? a.baseX) + clamp((d.x - d.spawnX) * 0.6, -4.5, 4.5),
         10.8,
         GOAL_LINE + MAX_ENDZONE_DEPTH
       ),
-      y: clamp2(
-        (a.homeY ?? a.baseY) + clamp2(
+      y: clamp(
+        (a.homeY ?? a.baseY) + clamp(
           (d.y - d.spawnY) * 0.65,
           -Math.min(5, a.width * 0.35),
           Math.min(5, a.width * 0.35)
@@ -588,7 +603,7 @@
     const lane = role === "gap-middle" ? center : role === "gap-left" ? (leftTackle + leftGuard) / 2 : role === "gap-right" ? (rightGuard + rightTackle) / 2 : role === "fill-left" ? (leftGuard + center) / 2 : role === "fill-right" ? (center + rightGuard) / 2 : (leftGuard + center) / 2;
     return {
       x: Math.min(109, lineOfScrimmage + 0.9),
-      y: clamp2(lane, 1, WIDTH - 1),
+      y: clamp(lane, 1, WIDTH - 1),
       role
     };
   }
@@ -614,8 +629,6 @@
   };
 
   // src/ai/inside_zone_iq.js
-  var clamp3 = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-  var distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   var rating = (p, key, fallback = 70) => Number.isFinite(p?.[key]) ? p[key] : fallback;
   function visible(observer, point) {
     if (!observer || !point) return false;
@@ -653,17 +666,17 @@
     return entries;
   }
   function readDelay(blocker, roll = 0.5) {
-    const awareness = clamp3(rating(blocker, "AWR"), 1, 99);
-    return clamp3(
-      0.075 + (99 - awareness) * 35e-4 + clamp3(roll, 0, 1) * 0.12,
+    const awareness = clamp(rating(blocker, "AWR"), 1, 99);
+    return clamp(
+      0.075 + (99 - awareness) * 35e-4 + clamp(roll, 0, 1) * 0.12,
       0.075,
       0.48
     );
   }
   function runnerProjection(a, snapX) {
-    const speed = Math.hypot(a?.vx || 0, a?.vy || 0), horizon = clamp3(0.24 + speed * 0.017, 0.24, 0.43);
-    const y = clamp3((a?.y ?? 26.65) + (a?.vy || 0) * horizon, 1.4, 51.9);
-    const x = clamp3(
+    const speed = Math.hypot(a?.vx || 0, a?.vy || 0), horizon = clamp(0.24 + speed * 0.017, 0.24, 0.43);
+    const y = clamp((a?.y ?? 26.65) + (a?.vy || 0) * horizon, 1.4, 51.9);
+    const x = clamp(
       Math.max(snapX + 0.65, (a?.x ?? snapX) + Math.max(0, a?.vx || 0) * horizon),
       snapX + 0.65,
       110
@@ -672,28 +685,28 @@
   }
   function threat(blocker, defender, runner, snapX) {
     if (!visible(blocker, defender)) return -Infinity;
-    const lane = runnerProjection(runner, snapX), r = distance(defender, runner), b = distance(blocker, defender);
-    const converge = clamp3(
+    const lane = runnerProjection(runner, snapX), r = distance2D(defender, runner), b = distance2D(blocker, defender);
+    const converge = clamp(
       ((runner.x - defender.x) * (defender.vx || 0) + (runner.y - defender.y) * (defender.vy || 0)) / Math.max(0.25, r),
       -7,
       7
     );
     const laneDist = Math.abs(
-      defender.y + clamp3((defender.vy || 0) * 0.25, -1.5, 1.5) - lane.y
+      defender.y + clamp((defender.vy || 0) * 0.25, -1.5, 1.5) - lane.y
     );
-    const danger = clamp3(
+    const danger = clamp(
       18 - laneDist * 1.7 - Math.max(0, defender.x - lane.x - 9) * 1.3,
       0,
       18
     );
     const defenderAbility = (rating(defender, "PUR") * 0.45 + rating(defender, "TAK") * 0.35 + rating(defender, "ACC") * 0.2 - 65) * 0.075;
-    return danger + clamp3(converge, 0, 7) * 1.8 + defenderAbility - b * 0.82 - Math.max(0, r - 13) * 0.5;
+    return danger + clamp(converge, 0, 7) * 1.8 + defenderAbility - b * 0.82 - Math.max(0, r - 13) * 0.5;
   }
   function response(defender, blockers, runner, role) {
     if (!runner || !visible(defender, runner)) return null;
     const near = blockers.filter(
-      (o) => !o.ground && visible(defender, o) && distance(defender, o) < 4.3
-    ).sort((a, b) => distance(defender, a) - distance(defender, b))[0];
+      (o) => !o.ground && visible(defender, o) && distance2D(defender, o) < 4.3
+    ).sort((a, b) => distance2D(defender, a) - distance2D(defender, b))[0];
     if (!near) return null;
     const skill = rating(defender, "PRC") * 0.6 + rating(defender, "AWR") * 0.4;
     if (skill < 53) return null;
@@ -701,7 +714,7 @@
     const offset = defender.y <= near.y ? -lateral : lateral;
     return {
       x: defender.x + 0.7,
-      y: clamp3(defender.y + offset, 0.5, 52.8),
+      y: clamp(defender.y + offset, 0.5, 52.8),
       kind: "blocker-read",
       blocker: near.key
     };
@@ -716,20 +729,19 @@
   });
 
   // src/ai/protection_read.js
-  var clamp4 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   function evaluate(def, los, qb, center, roll) {
     if (!qb) return null;
     const candidates = def.filter(
       (d2) => !d2.ground && ["FS", "SS", "CB", "MLB", "OLB", "WILL", "SAM"].includes(d2.pos) && d2.x >= los - 0.4 && d2.x <= los + 3.6 && Math.abs(d2.y - qb.y) < 19
     ).map((d2) => ({
       d: d2,
-      threat: clamp4((3.6 - (d2.x - los)) * 0.19, 0, 0.67) + (d2.pos === "FS" || d2.pos === "SS" || d2.pos === "CB" ? 0.12 : 0.08) + (Math.abs(d2.y - qb.y) < 9 ? 0.12 : 0)
+      threat: clamp((3.6 - (d2.x - los)) * 0.19, 0, 0.67) + (d2.pos === "FS" || d2.pos === "SS" || d2.pos === "CB" ? 0.12 : 0.08) + (Math.abs(d2.y - qb.y) < 9 ? 0.12 : 0)
     })).sort((a, b) => b.threat - a.threat);
     if (!candidates.length)
       return { key: null, recognized: false, confidence: 0 };
     const { d, threat: threat2 } = candidates[0];
-    const awareness = clamp4(((center?.AWR || 68) + qb.AWR) / 198, 0, 1);
-    const confidence = clamp4(0.12 + threat2 * 0.62 + awareness * 0.28, 0.12, 0.9);
+    const awareness = clamp(((center?.AWR || 68) + qb.AWR) / 198, 0, 1);
+    const confidence = clamp(0.12 + threat2 * 0.62 + awareness * 0.28, 0.12, 0.9);
     return {
       key: d.key,
       recognized: roll < confidence,
@@ -745,16 +757,15 @@
   var ProtectionRead = { evaluate, committing };
 
   // src/ai/pursuit_reaction.js
-  var clamp5 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   function aim(defender, carrier, base, clock) {
     if (!defender || !carrier || !base) return base;
-    const distance3 = Math.hypot(carrier.x - defender.x, carrier.y - defender.y);
-    if (distance3 > 5.3) {
+    const distance2 = Math.hypot(carrier.x - defender.x, carrier.y - defender.y);
+    if (distance2 > 5.3) {
       defender.closePursuitRead = null;
       return base;
     }
     const read = defender.closePursuitRead;
-    const skill = clamp5(
+    const skill = clamp(
       ((defender.PUR || 70) * 0.43 + (defender.PRC || 70) * 0.3 + (defender.AGI || 70) * 0.27 - 45) / 54,
       0,
       1
@@ -770,10 +781,10 @@
       };
     }
     const known = defender.closePursuitRead;
-    const age = clamp5(clock - known.at, 0, 0.24);
-    const prediction = clamp5(0.035 + skill * 0.055 - age * 0.38, 0, 0.09);
+    const age = clamp(clock - known.at, 0, 0.24);
+    const prediction = clamp(0.035 + skill * 0.055 - age * 0.38, 0, 0.09);
     const x = known.x + known.vx * prediction, y = known.y + known.vy * prediction;
-    const blend = clamp5((5.3 - distance3) / 2.6, 0, 0.9);
+    const blend = clamp((5.3 - distance2) / 2.6, 0, 0.9);
     return {
       ...base,
       x: base.x * (1 - blend) + x * blend,
@@ -785,11 +796,10 @@
   var ChaosPursuitReaction = Object.freeze({ aim });
 
   // src/ai/run_pursuit_policy.js
-  var clamp6 = (v2, lo, hi) => Math.max(lo, Math.min(hi, v2));
-  var rating2 = (v2) => Number.isFinite(v2) ? clamp6(v2, 1, 99) : 70;
+  var rating2 = (v2) => Number.isFinite(v2) ? clamp(v2, 1, 99) : 70;
   function quality(defender) {
     const combined = 0.55 * rating2(defender.PUR) + 0.45 * rating2(defender.PRC);
-    return clamp6((combined - 50) / 49, 0, 1);
+    return clamp((combined - 50) / 49, 0, 1);
   }
   function experience(history, formation) {
     const recent = Array.isArray(history) ? history.slice(-16) : [];
@@ -800,7 +810,7 @@
       if (play.retreatSide === "left") left++;
       else if (play.retreatSide === "right") right++;
     }
-    const familiarity = (hits) => hits < 2 ? 0 : clamp6((hits - 1) / 3 * (hits / Math.max(3, seen)), 0, 0.85);
+    const familiarity = (hits) => hits < 2 ? 0 : clamp((hits - 1) / 3 * (hits / Math.max(3, seen)), 0, 0.85);
     return { left: familiarity(left), right: familiarity(right) };
   }
   function plan(defender, carrier, base, { fieldWidth, peakX, enabled: enabled2 = true } = {}) {
@@ -810,7 +820,7 @@
     if (sep < 4.6) return { ...base, retreatRead: false };
     const baseQuality = quality(defender);
     const center = fieldWidth / 2, side = carrier.y < center ? -1 : 1;
-    const familiarity = clamp6(
+    const familiarity = clamp(
       (side < 0 ? defender.pursuitExperience?.left : defender.pursuitExperience?.right) || 0,
       0,
       0.85
@@ -825,8 +835,8 @@
     const opportunity = outsideThreat && (retreat > 1 || backwardSpeed > 0.7) && familiarity > 0 && (defender.pursuitReadRoll ?? 1) < 0.08 + 0.67 * familiarity;
     const q = opportunity ? baseQuality + (1 - baseQuality) * (0.55 + 0.3 * familiarity) : baseQuality;
     const uncertainty = Math.pow(1 - q, 1.15);
-    const lateralBias = clamp6(defender.pursuitLateralBias ?? 0, -1, 1);
-    const depthBias = clamp6(defender.pursuitDepthBias ?? 0, -1, 1);
+    const lateralBias = clamp(defender.pursuitLateralBias ?? 0, -1, 1);
+    const depthBias = clamp(defender.pursuitDepthBias ?? 0, -1, 1);
     const lateralError = lateralBias * uncertainty * Math.min(4.2, 1.8 + sep * 0.115);
     const depthError = depthBias * uncertainty * Math.min(3.6, 1.3 + sep * 0.09);
     const role = base.role || "";
@@ -834,13 +844,13 @@
     const retreatRead = outsideThreat && (retreat > 1.6 + (1 - q) * 2 || backwardSpeed > 1.15 + (1 - q) * 0.8);
     let x = base.x, y = base.y, mode = base.mode;
     if (onSide && outsideThreat) {
-      const cushion = clamp6(0.65 + q * 1.55 + outwardSpeed * 0.24, 0.7, 3.6);
-      y = clamp6(
+      const cushion = clamp(0.65 + q * 1.55 + outwardSpeed * 0.24, 0.7, 3.6);
+      y = clamp(
         carrier.y + side * cushion + lateralError,
         0.65,
         fieldWidth - 0.65
       );
-      const ahead = clamp6(
+      const ahead = clamp(
         1.15 + outwardSpeed * (0.17 + 0.2 * q) + (retreatRead ? Math.min(1.5, retreat * 0.3) : 0),
         1.15,
         4.8
@@ -854,9 +864,9 @@
       const insideGap = role === "cutback" ? 2.4 : role === "last-line" ? 1.5 : 1.05;
       x = Math.max(
         base.x,
-        carrier.x + clamp6(0.7 + q * 1.8, 0.7, 2.5) + depthError
+        carrier.x + clamp(0.7 + q * 1.8, 0.7, 2.5) + depthError
       );
-      y = clamp6(
+      y = clamp(
         carrier.y - side * insideGap + lateralError,
         0.65,
         fieldWidth - 0.65
@@ -865,11 +875,11 @@
     } else {
       const ahead = outsideThreat ? outwardSpeed * 0.16 * q : 0;
       x = Math.max(10, x + ahead + depthError);
-      y = clamp6(y + lateralError, 0.65, fieldWidth - 0.65);
+      y = clamp(y + lateralError, 0.65, fieldWidth - 0.65);
     }
     return {
       ...base,
-      x: clamp6(x, 10, 110),
+      x: clamp(x, 10, 110),
       y,
       mode,
       retreatRead,
@@ -927,7 +937,6 @@
   });
 
   // src/ai/tackle_intelligence.js
-  var clamp7 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   function direction(defender, stick) {
     if (stick && stick.mag > 0.14) {
       const n = Math.max(1e-3, Math.hypot(stick.x, stick.y));
@@ -947,23 +956,23 @@
     const competent = d.TAK >= 66 && d.AGI >= 59;
     if (desperate && competent && toward > 0.35 && geometry.freeLane)
       return "tackle-dive";
-    const leverage = clamp7(geometry.frontality, 0, 1);
+    const leverage = clamp(geometry.frontality, 0, 1);
     if (gap <= contact2 + 0.27 && closing > 2.5 && leverage > 0.65 && d.HIT >= 83 && d.TAK >= 71 && geometry.freeLane)
       return "hit-stick";
     return gap <= contact2 + 0.45 ? "wrap" : "pursue";
   }
   function impact(d, other, closing) {
-    const power = clamp7(
+    const power = clamp(
       ((d.HIT || 65) * 0.55 + (d.STR || 65) * 0.3 + (d.PMV || 65) * 0.15 - 50) / 45,
       0.18,
       1.35
     );
-    const resistance = clamp7(
+    const resistance = clamp(
       ((other.STR || 60) * 0.6 + (other.BLO || 55) * 0.4 - 50) / 45,
       0.2,
       1.4
     );
-    const strength = clamp7(
+    const strength = clamp(
       Math.max(0, closing) * (0.21 + 0.24 * power) / (1 + 0.32 * resistance),
       0,
       2.6
@@ -977,9 +986,8 @@
   });
 
   // src/physics/dive_reach.js
-  var clamp8 = (v2, a, b) => Math.max(a, Math.min(b, Number.isFinite(v2) ? v2 : a));
   var ease2 = (t) => {
-    t = clamp8(t, 0, 1);
+    t = clampFinite(t, 0, 1);
     return t * t * (3 - 2 * t);
   };
   function pose(p) {
@@ -987,7 +995,7 @@
     if (action !== "tackle-dive" && action !== "dive") return null;
     const age = Math.max(0, p.action?.age || 0);
     const duration = action === "tackle-dive" ? 0.53 : 0.44;
-    const progress = clamp8(age / duration, 0, 1);
+    const progress = clampFinite(age / duration, 0, 1);
     const extension = ease2((progress - 0.035) / 0.54);
     const engaged = action === "tackle-dive" && p.action?.used === true;
     const contactAge = Number.isFinite(p.action?.contactAge) ? p.action.contactAge : Math.max(0, age - 0.1);
@@ -1012,7 +1020,7 @@
     const engaging = (p.wrapReach || 0) > 0.01 || p.intent === "wrap" || p.technique === "wrap" && p.action?.kind === "conservative" && p.action?.time > 0;
     if (!engaging) return null;
     const extension = ease2(
-      p.wrapReach === void 0 ? 1 : clamp8(p.wrapReach, 0, 1)
+      p.wrapReach === void 0 ? 1 : clampFinite(p.wrapReach, 0, 1)
     );
     const gripped = p.intent === "wrap" && p.wrapLinked === true;
     const wrap = gripped ? extension * 0.45 : 0;
@@ -1057,13 +1065,11 @@
   var ChaosDiveReach = Object.freeze({ pose, standingPose, armPoints });
 
   // src/physics/low_contact.js
-  var clamp9 = (n, l, h) => Math.max(l, Math.min(h, Number.isFinite(n) ? n : l));
-  var hyp = (x, y) => Math.hypot(x, y);
   var isLowThreat = (p) => !!p && (!!p.ground || p.action?.time > 0 && ["tackle-dive", "cut-stick"].includes(p.action.kind));
   function height(p) {
     const air = p?.airState;
     if (!air || p.ground) return 0;
-    const t = clamp9((air.elapsed || 0) / air.duration, 0, 1);
+    const t = clampFinite((air.elapsed || 0) / air.duration, 0, 1);
     return (air.peak || 0) * Math.max(0, Math.sin(Math.PI * t));
   }
   function initiate(p, kind) {
@@ -1085,7 +1091,7 @@
   }
   function reachEligible(d, r) {
     if (!d.ground) return true;
-    const dx = r.x - d.x, dy = r.y - d.y, dist = hyp(dx, dy);
+    const dx = r.x - d.x, dy = r.y - d.y, dist = hypot(dx, dy);
     if (dist > 1.62) return false;
     const facing = (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / Math.max(0.01, dist);
     return facing > -0.32 && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
@@ -1093,27 +1099,27 @@
   function sweep(a0, a1, b0, b1) {
     const rx = a0.x - b0.x, ry = a0.y - b0.y;
     const vx = a1.x - a0.x - (b1.x - b0.x), vy = a1.y - a0.y - (b1.y - b0.y);
-    const t = clamp9(
+    const t = clampFinite(
       -(rx * vx + ry * vy) / Math.max(1e-8, vx * vx + vy * vy),
       0,
       1
     );
-    return { t, d: hyp(rx + vx * t, ry + vy * t) };
+    return { t, d: hypot(rx + vx * t, ry + vy * t) };
   }
   function evaluate2(runnerBefore, r, defBefore, d) {
     if (!isLowThreat(d) || !reachEligible(d, r))
       return { hit: false, kind: "not-low" };
     const near = sweep(runnerBefore, r, defBefore, d);
-    const distance3 = Math.min(near.d, hyp(r.x - d.x, r.y - d.y));
+    const distance2 = Math.min(near.d, hypot(r.x - d.x, r.y - d.y));
     const fX = Math.cos(r.face || 0), fY = Math.sin(r.face || 0);
     const forward = Math.max(
       -1,
       Math.min(1, (d.x - r.x) * fX + (d.y - r.y) * fY)
     );
-    const footBonus = clamp9(0.22 + forward * 0.18, 0.06, 0.4);
+    const footBonus = clampFinite(0.22 + forward * 0.18, 0.06, 0.4);
     const radius = (d.ground ? 0.92 : d.action?.kind === "tackle-dive" ? 1.02 : 0.83) + footBonus;
-    const overlap = radius - distance3;
-    if (overlap <= 0) return { hit: false, kind: "wide-miss", distance: distance3 };
+    const overlap = radius - distance2;
+    if (overlap <= 0) return { hit: false, kind: "wide-miss", distance: distance2 };
     const z = height(r);
     const maxLowHeight = d.ground ? 0.36 : d.action?.kind === "tackle-dive" ? 0.43 : 0.33;
     const heightOverlap = maxLowHeight + 0.055 - z;
@@ -1121,19 +1127,19 @@
       return {
         hit: false,
         kind: "cleared",
-        distance: distance3,
+        distance: distance2,
         clearance: z - maxLowHeight
       };
-    const heightRatio = clamp9(heightOverlap / 0.42, 0, 1);
-    const contact2 = clamp9(overlap / 0.56, 0, 1) * heightRatio;
-    if (contact2 < 0.055) return { hit: false, kind: "brush", distance: distance3 };
+    const heightRatio = clampFinite(heightOverlap / 0.42, 0, 1);
+    const contact2 = clampFinite(overlap / 0.56, 0, 1) * heightRatio;
+    if (contact2 < 0.055) return { hit: false, kind: "brush", distance: distance2 };
     const dvx = (d.vx || 0) - (r.vx || 0), dvy = (d.vy || 0) - (r.vy || 0);
-    const delta = hyp(d.x - r.x, d.y - r.y) || 1e-3;
+    const delta = hypot(d.x - r.x, d.y - r.y) || 1e-3;
     const closing = Math.max(0, (dvx * (r.x - d.x) + dvy * (r.y - d.y)) / delta);
     return {
       hit: true,
       kind: d.ground ? "grounded-grab" : d.action?.kind === "tackle-dive" ? "diving-ankle" : "low-cut",
-      distance: distance3,
+      distance: distance2,
       overlap,
       contact: contact2,
       closing,
@@ -1148,16 +1154,16 @@
   function shouldAutoHop(r, d) {
     if (!d.ground || !r || r.airState || r.ground || r.autoHopCooldown > 0 || r.stumbleTime > 0)
       return false;
-    const dx = d.x - r.x, dy = d.y - r.y, range = hyp(dx, dy);
+    const dx = d.x - r.x, dy = d.y - r.y, range = hypot(dx, dy);
     if (range < 0.72 || range > 2.08) return false;
-    const velocity = hyp(r.vx || 0, r.vy || 0);
+    const velocity = hypot(r.vx || 0, r.vy || 0);
     if (velocity < 2.85 || r.balance < 0.52 || r.stam < 0.12) return false;
     const toward = (dx * r.vx + dy * r.vy) / (range * velocity);
     const cross = Math.abs(dx * r.vy - dy * r.vx) / velocity;
     return toward > 0.72 && cross < 0.64 && (r.AWR || 65) > 0.46 * 100;
   }
   function bodyVulnerability(p) {
-    return height(p) > 0.1 ? 1 + clamp9(height(p) * 0.8, 0, 0.64) : 1;
+    return height(p) > 0.1 ? 1 + clampFinite(height(p) * 0.8, 0, 0.64) : 1;
   }
   var ChaosLowContact = Object.freeze({
     height,
@@ -1171,12 +1177,11 @@
   });
 
   // src/physics/anatomy_hitboxes.js
-  var clamp10 = (n, a, b) => Math.max(a, Math.min(b, Number.isFinite(n) ? n : a));
   var v = (x, y, z) => ({ x, y, z });
   function dimensions(p) {
-    const height2 = clamp10(p.h || 74, 60, 86), weight = clamp10(p.w || 205, 125, 450);
+    const height2 = clampFinite(p.h || 74, 60, 86), weight = clampFinite(p.w || 205, 125, 450);
     const stature = height2 / 74;
-    const build = clamp10(weight / 215, 0.76, 1.4);
+    const build = clampFinite(weight / 215, 0.76, 1.4);
     return {
       heightIn: height2,
       weightLb: weight,
@@ -1201,7 +1206,7 @@
     const facing = Number.isFinite(options.facing) ? options.facing : p.face || 0;
     const c = Math.cos(facing), s = Math.sin(facing);
     const action = p.action?.time > 0 ? p.action.kind : "";
-    const progress = clamp10(
+    const progress = clampFinite(
       (p.action?.age || 0) / Math.max(0.01, (p.action?.age || 0) + (p.action?.time || 0)),
       0,
       1
@@ -1209,8 +1214,8 @@
     const divePose = typeof ChaosDiveReach !== "undefined" ? ChaosDiveReach.pose(p) : null;
     const standingWrapPose = !divePose && typeof ChaosDiveReach !== "undefined" ? ChaosDiveReach.standingPose(p) : null;
     const dive = divePose ? Math.sin(Math.PI * 0.5 * divePose.progress) : 0;
-    const fallen = p.ground ? p.ground.stage === "rise" ? clamp10((p.ground.time || 0) / Math.max(0.05, p.ground.rise || 0.4), 0, 1) : 1 : 0;
-    const tilt = clamp10(
+    const fallen = p.ground ? p.ground.stage === "rise" ? clampFinite((p.ground.time || 0) / Math.max(0.05, p.ground.rise || 0.4), 0, 1) : 1 : 0;
+    const tilt = clampFinite(
       (pose2.lean || 0) + (pose2.stanceLean || 0) + (divePose ? divePose.bodyPitch : -1.28 * fallen),
       -1.57,
       0.35
@@ -1297,14 +1302,14 @@
     const A = dot(u, u), B = dot(u, vv), C = dot(vv, vv), D = dot(u, w), E = dot(vv, w);
     let sc = 0, tc = 0;
     if (A < 1e-10 && C < 1e-10) return dot(w, w);
-    if (A < 1e-10) tc = clamp10(E / C, 0, 1);
-    else if (C < 1e-10) sc = clamp10(-D / A, 0, 1);
+    if (A < 1e-10) tc = clampFinite(E / C, 0, 1);
+    else if (C < 1e-10) sc = clampFinite(-D / A, 0, 1);
     else {
       const den = A * C - B * B;
-      sc = den > 1e-10 ? clamp10((B * E - C * D) / den, 0, 1) : 0;
-      tc = clamp10((B * sc + E) / C, 0, 1);
-      sc = clamp10((B * tc - D) / A, 0, 1);
-      tc = clamp10((B * sc + E) / C, 0, 1);
+      sc = den > 1e-10 ? clampFinite((B * E - C * D) / den, 0, 1) : 0;
+      tc = clampFinite((B * sc + E) / C, 0, 1);
+      sc = clampFinite((B * tc - D) / A, 0, 1);
+      tc = clampFinite((B * sc + E) / C, 0, 1);
     }
     const x = v(
       w.x + sc * u.x - tc * vv.x,
@@ -1317,8 +1322,8 @@
     const hits = [];
     for (const x of a.regions)
       for (const y of b.regions) {
-        const distance3 = Math.sqrt(segmentDistanceSq(x.a, x.b, y.a, y.b));
-        const penetration = x.r + y.r - distance3;
+        const distance2 = Math.sqrt(segmentDistanceSq(x.a, x.b, y.a, y.b));
+        const penetration = x.r + y.r - distance2;
         if (penetration > 0)
           hits.push({
             a: x.region,
@@ -1331,7 +1336,7 @@
     return hits.sort((x, y) => y.penetration - x.penetration);
   }
   function sweptContacts(p0, p1, q0, q1, steps = 8) {
-    const n = Math.round(clamp10(steps, 1, 32)), out = [];
+    const n = Math.round(clampFinite(steps, 1, 32)), out = [];
     const blend = (a, b, t) => ({
       ...b,
       x: (a.x || 0) + ((b.x || 0) - (a.x || 0)) * t,
@@ -1470,10 +1475,10 @@
 
   // src/input/defensive_controls.js
   var DefensiveControls = Object.freeze({
-    choose(button, distance3, contactRadius) {
+    choose(button, distance2, contactRadius) {
       if (button === "A") return "conservative";
       if (button !== "X") return null;
-      return distance3 <= Math.max(1.35, contactRadius + 0.4) ? "hit-stick" : "tackle-dive";
+      return distance2 <= Math.max(1.35, contactRadius + 0.4) ? "hit-stick" : "tackle-dive";
     },
     diveRange(agi) {
       return 2.35 + Math.max(0, Math.min(99, agi) - 55) * 0.01;
@@ -1484,7 +1489,7 @@
   });
 
   // src/physics/air_contest_policy.js
-  var distance2 = (a, b) => Math.hypot((a?.x ?? 0) - (b?.x ?? 0), (a?.y ?? 0) - (b?.y ?? 0));
+  var distance = (a, b) => Math.hypot((a?.x ?? 0) - (b?.x ?? 0), (a?.y ?? 0) - (b?.y ?? 0));
   function evaluate3(player, receiver, flight, football, topSpeed, reach) {
     const not = (reason) => ({
       eligible: false,
@@ -1500,8 +1505,8 @@
       return not("not-coverage-player");
     const spot = { x: flight.catchX, y: flight.catchY };
     const remaining = Math.max(0, flight.remaining);
-    const gap = distance2(player, spot), ballGap = distance2(player, football);
-    const receiverGap = receiver ? distance2(player, receiver) : Infinity;
+    const gap = distance(player, spot), ballGap = distance(player, football);
+    const receiverGap = receiver ? distance(player, receiver) : Infinity;
     const paired = !!receiver && (player.assignment?.target === receiver.key || receiverGap <= 4.8);
     const dx = (spot.x - player.x) / (gap || 1), dy = (spot.y - player.y) / (gap || 1);
     const toward = Math.max(0, (player.vx || 0) * dx + (player.vy || 0) * dy);
@@ -1545,15 +1550,14 @@
   });
 
   // src/physics/contact_outcomes.js
-  var clamp11 = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(x) ? x : a));
   var core = /* @__PURE__ */ new Set(["torso", "pelvis", "thigh"]);
   var arms = /* @__PURE__ */ new Set(["upperArm", "forearm", "hand"]);
   var legs = /* @__PURE__ */ new Set(["thigh", "shin"]);
   function classify2(hits = [], options = {}) {
-    const approach = clamp11(options.approachAngle ?? 0, 0, 180);
-    const speed = clamp11(options.relativeSpeed ?? 0, 0, 30);
-    const grip = clamp11(options.grip ?? 0, 0, 3);
-    const age = clamp11(options.engagementAge ?? 0, 0, 8);
+    const approach = clampFinite(options.approachAngle ?? 0, 0, 180);
+    const speed = clampFinite(options.relativeSpeed ?? 0, 0, 30);
+    const grip = clampFinite(options.grip ?? 0, 0, 3);
+    const age = clampFinite(options.engagementAge ?? 0, 0, 8);
     const wrap = options.style === "wrap" || options.style === "dive" || options.style === "conservative";
     const penetration = hits.length ? Math.max(...hits.map((h) => h.penetration || 0)) : 0;
     const central = hits.some((h) => core.has(h.a) && core.has(h.b));
@@ -1592,7 +1596,7 @@
     const dx = (runner.x || 0) - (defender.x || 0), dy = (runner.y || 0) - (defender.y || 0);
     const facing = defender.face || 0;
     const cosine = (dx * Math.cos(facing) + dy * Math.sin(facing)) / Math.max(1e-3, Math.hypot(dx, dy));
-    return Math.acos(clamp11(cosine, -1, 1)) * 180 / Math.PI;
+    return angleFromCosine(Number.isFinite(cosine) ? cosine : -1) * 180 / Math.PI;
   }
   function evaluate4(runner, defender, link = null, hits = null) {
     const contacts2 = hits || AnatomyHitboxes.contacts(
@@ -1617,7 +1621,6 @@
   });
 
   // src/physics/dive_collision.js
-  var clamp12 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   var attackerRegions = /* @__PURE__ */ new Set(["upperArm", "forearm", "hand", "torso"]);
   var targetRegions = /* @__PURE__ */ new Set(["thigh", "shin", "pelvis"]);
   var nonHead = (h) => attackerRegions.has(h.b) && targetRegions.has(h.a);
@@ -1683,7 +1686,7 @@
       defender.vx -= nx * impact2 * m1 / (m1 + m2);
       defender.vy -= ny * impact2 * m1 / (m1 + m2);
       if (closing > 0.85) {
-        carrier.balance = clamp12(
+        carrier.balance = clamp(
           (carrier.balance ?? 1) - Math.min(0.095, closing * 0.01) * (info.wrapCandidate ? 1 : 0.7),
           0.3,
           1
@@ -1705,7 +1708,6 @@
   var ChaosDiveCollision = Object.freeze({ evaluate: evaluate5, response: response2 });
 
   // src/physics/escape_reactions.js
-  var clamp13 = (v2, min, max) => Math.max(min, Math.min(max, Number.isFinite(v2) ? v2 : min));
   function signSide(runner, defender) {
     const x = (runner.x || 0) - (defender.x || 0), y = (runner.y || 0) - (defender.y || 0);
     const f = runner.face || 0, cross = Math.cos(f) * y - Math.sin(f) * x;
@@ -1713,19 +1715,19 @@
   }
   function strain(runner, defender, link, contest) {
     const threshold = contest.kind === "wrap break" ? 0.62 : 0.19;
-    const fraction = clamp13((link.escapeProgress || 0) / threshold, 0, 1);
-    const grip = clamp13(link.grip || 0, 0, 1.6), effort = clamp13(contest.effort || 0, 0, 1);
-    const drag = clamp13(
+    const fraction = clampFinite((link.escapeProgress || 0) / threshold, 0, 1);
+    const grip = clampFinite(link.grip || 0, 0, 1.6), effort = clampFinite(contest.effort || 0, 0, 1);
+    const drag = clampFinite(
       (link.attachment?.force || 0) / 9 + (link.attachment?.stretch || 0),
       0,
       2
     );
-    const runnerStrain = clamp13(
-      (0.18 + 0.33 * effort + 0.3 * fraction + 0.12 * drag) * clamp13(grip / 0.52, 0, 1),
+    const runnerStrain = clampFinite(
+      (0.18 + 0.33 * effort + 0.3 * fraction + 0.12 * drag) * clampFinite(grip / 0.52, 0, 1),
       0,
       1
     );
-    const defenderStrain = clamp13(
+    const defenderStrain = clampFinite(
       0.22 + 0.26 * grip + 0.22 * fraction + 0.12 * drag,
       0,
       1
@@ -1739,20 +1741,20 @@
     };
   }
   function release(runner, defender, link, contest) {
-    const grip = clamp13(link.grip || 0, 0, 1.6), quality2 = clamp13(link.quality ?? 0.6, 0, 1.25);
+    const grip = clampFinite(link.grip || 0, 0, 1.6), quality2 = clampFinite(link.quality ?? 0.6, 0, 1.25);
     const dx = (runner.x || 0) - (defender.x || 0), dy = (runner.y || 0) - (defender.y || 0);
     const dist = Math.max(1e-3, Math.hypot(dx, dy)), nx = dx / dist, ny = dy / dist;
     const relVx = (runner.vx || 0) - (defender.vx || 0), relVy = (runner.vy || 0) - (defender.vy || 0);
     const separating = Math.max(0, relVx * nx + relVy * ny);
     const tangent = Math.abs(relVx * -ny + relVy * nx);
-    const effort = clamp13(contest?.effort || 0, 0, 1);
-    const attached = clamp13(
+    const effort = clampFinite(contest?.effort || 0, 0, 1);
+    const attached = clampFinite(
       (link.attachment?.force || 0) / 9 + (link.attachment?.stretch || 0),
       0,
       1.5
     );
-    const instability = clamp13(
-      (1 - clamp13(defender.balance ?? 1, 0, 1)) * 0.62 + separating * 0.05 + tangent * 0.044 + attached * 0.1 + effort * 0.06,
+    const instability = clampFinite(
+      (1 - clampFinite(defender.balance ?? 1, 0, 1)) * 0.62 + separating * 0.05 + tangent * 0.044 + attached * 0.1 + effort * 0.06,
       0,
       1.5
     );
@@ -1765,8 +1767,8 @@
       kind = "power-pull";
     else if (sideways !== 0 && tangent > 1.4) kind = "twist";
     else if (attached > 0.3 || separating > 3.4) kind = "drag-release";
-    const intensity = clamp13(0.25 + instability * 0.46 + effort * 0.18, 0.18, 0.9);
-    const tug = clamp13(separating * 0.105 + attached * 0.13, 0, 0.65);
+    const intensity = clampFinite(0.25 + instability * 0.46 + effort * 0.18, 0.18, 0.9);
+    const tug = clampFinite(separating * 0.105 + attached * 0.13, 0, 0.65);
     return {
       kind,
       fall,
@@ -1783,21 +1785,20 @@
   var ChaosEscapeReactions = Object.freeze({ strain, release });
 
   // src/physics/grip_attachment.js
-  var clamp14 = (x, lo, hi) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
   function contactQuality(contact2, defender, hit, style) {
     if (!contact2 || contact2.kind === "miss" || contact2.kind === "light contact")
       return 0;
     const placement = contact2.armOnBody ? 1 : contact2.bodyContact ? 0.74 : 0.3;
-    const overlap = clamp14((contact2.penetration || 0) / 0.3, 0, 1);
-    const facing = clamp14(1 - (contact2.approachAngle || 0) / 190, 0.05, 1);
-    const control = clamp14(0.55 + (hit?.advantage || 0) * 0.012, 0.28, 1);
-    const technique = clamp14(
+    const overlap = clampFinite((contact2.penetration || 0) / 0.3, 0, 1);
+    const facing = clampFinite(1 - (contact2.approachAngle || 0) / 190, 0.05, 1);
+    const control = clampFinite(0.55 + (hit?.advantage || 0) * 0.012, 0.28, 1);
+    const technique = clampFinite(
       ((defender?.TAK || 70) * 0.72 + (defender?.AWR || 70) * 0.28) / 85,
       0.55,
       1.16
     );
     const styleFit = style === "wrap" ? 1.08 : style === "dive" ? 0.93 : style === "hit" ? 0.59 : 0.79;
-    return clamp14(
+    return clampFinite(
       (0.22 + placement * 0.28 + overlap * 0.22 + facing * 0.16 + control * 0.12) * technique * styleFit,
       0.18,
       1.25
@@ -1807,43 +1808,42 @@
     if (!runner || !defender || !link || dt <= 0)
       return { active: false, reason: "missing" };
     const dx = runner.x - defender.x, dy = runner.y - defender.y;
-    const distance3 = Math.max(1e-4, Math.hypot(dx, dy));
-    const nx = dx / distance3, ny = dy / distance3;
-    const grip = clamp14(link.grip || 0, 0, 1.6);
-    if (grip < 0.3) return { active: false, reason: "unsecured", distance: distance3 };
-    const rest = clamp14((runnerRadius + defenderRadius) * 0.9 + 0.1, 0.44, 1.2);
-    const slack = clamp14(0.42 - (grip - 0.3) * 0.19, 0.18, 0.42);
-    const stretch = Math.max(0, distance3 - rest - slack);
-    const maxStretch = rest + slack + clamp14(0.52 + (1.6 - grip) * 0.19, 0.52, 0.82);
-    if (distance3 > maxStretch)
-      return { active: false, reason: "overextended", distance: distance3, maxStretch };
-    const massRunner = clamp14(runner.w || 215, 130, 400), massDef = clamp14(defender.w || 220, 130, 400);
-    const skill = clamp14(
+    const distance2 = Math.max(1e-4, Math.hypot(dx, dy));
+    const nx = dx / distance2, ny = dy / distance2;
+    const grip = clampFinite(link.grip || 0, 0, 1.6);
+    if (grip < 0.3) return { active: false, reason: "unsecured", distance: distance2 };
+    const rest = clampFinite((runnerRadius + defenderRadius) * 0.9 + 0.1, 0.44, 1.2);
+    const slack = clampFinite(0.42 - (grip - 0.3) * 0.19, 0.18, 0.42);
+    const stretch = Math.max(0, distance2 - rest - slack);
+    const maxStretch = rest + slack + clampFinite(0.52 + (1.6 - grip) * 0.19, 0.52, 0.82);
+    if (distance2 > maxStretch)
+      return { active: false, reason: "overextended", distance: distance2, maxStretch };
+    const massRunner = clampFinite(runner.w || 215, 130, 400), massDef = clampFinite(defender.w || 220, 130, 400);
+    const skill = clampFinite(
       0.32 + (defender.TAK || 70) * 4e-3 + (defender.STR || 70) * 25e-4,
       0.55,
       0.97
     );
-    const accuracy = clamp14(link.quality ?? 1, 0.18, 1.25);
-    const strength = clamp14((grip - 0.24) * skill * accuracy, 0, 1.25);
+    const accuracy = clampFinite(link.quality ?? 1, 0.18, 1.25);
+    const strength = clampFinite((grip - 0.24) * skill * accuracy, 0, 1.25);
     const separationRate = (runner.vx - defender.vx) * nx + (runner.vy - defender.vy) * ny;
-    const pull = clamp14(
+    const pull = clampFinite(
       (stretch * 17 + Math.max(0, separationRate) * 2.6) * strength,
       0,
       15
     );
     const impulse = pull * dt;
-    const defenderDelta = impulse * clamp14(massRunner / massDef, 0.58, 1.65);
-    const runnerDelta = impulse * clamp14(massDef / massRunner, 0.55, 1.45) * 0.32;
+    const defenderDelta = impulse * clampFinite(massRunner / massDef, 0.58, 1.65);
+    const runnerDelta = impulse * clampFinite(massDef / massRunner, 0.55, 1.45) * 0.32;
     defender.vx += nx * defenderDelta;
     defender.vy += ny * defenderDelta;
     runner.vx -= nx * runnerDelta;
     runner.vy -= ny * runnerDelta;
-    return { active: true, distance: distance3, stretch, force: pull, grip, rest, slack };
+    return { active: true, distance: distance2, stretch, force: pull, grip, rest, slack };
   }
   var ChaosGripAttachment = Object.freeze({ step, contactQuality });
 
   // src/physics/square_contact.js
-  var clamp15 = (v2, lo, hi) => Math.max(lo, Math.min(hi, Number.isFinite(v2) ? v2 : 0));
   function classify3(a, b, nx, ny) {
     const aNormal = (a.vx || 0) * nx + (a.vy || 0) * ny;
     const bNormal = -(b.vx || 0) * nx - (b.vy || 0) * ny;
@@ -1853,12 +1853,12 @@
       aNormal / Math.max(0.4, aSpeed),
       bNormal / Math.max(0.4, bSpeed)
     );
-    const force = clamp15(Math.min(aNormal, bNormal) / 3.4, 0, 1);
-    const square = oppose ? clamp15((accuracy - 0.63) / 0.31, 0, 1) * force : 0;
+    const force = clampFinite(Math.min(aNormal, bNormal) / 3.4, 0, 1);
+    const square = oppose ? clampFinite((accuracy - 0.63) / 0.31, 0, 1) * force : 0;
     return {
       square,
       opposing: oppose,
-      accuracy: clamp15(accuracy, 0, 1),
+      accuracy: clampFinite(accuracy, 0, 1),
       force,
       aNormal,
       bNormal
@@ -1867,9 +1867,9 @@
   function settleAge(square, grip, quality2, runnerBalance, runnerAction) {
     if (square < 0.43 || grip < 0.66 || quality2 < 0.55 || runnerAction === "truck" || runnerAction === "stiff")
       return 0;
-    const gripControl = clamp15((grip - 0.66) / 0.35, 0, 1);
-    const balanceLoss = clamp15((0.92 - runnerBalance) / 0.45, 0, 1);
-    return clamp15(
+    const gripControl = clampFinite((grip - 0.66) / 0.35, 0, 1);
+    const balanceLoss = clampFinite((0.92 - runnerBalance) / 0.45, 0, 1);
+    return clampFinite(
       square * (0.13 + 0.15 * gripControl + 0.1 * balanceLoss),
       0,
       0.34
@@ -1878,48 +1878,47 @@
   var ChaosSquareContact = Object.freeze({ classify: classify3, settleAge });
 
   // src/physics/tackle_escape.js
-  var clamp16 = (v2, a, b) => Math.max(a, Math.min(b, Number.isFinite(v2) ? v2 : a));
   function drive(runner, defender, link) {
     const forwardX = Math.cos(runner.face || 0), forwardY = Math.sin(runner.face || 0);
     const forwardSpeed = Math.max(
       0,
       (runner.vx || 0) * forwardX + (runner.vy || 0) * forwardY
     );
-    const stamina = clamp16(runner.stam ?? 1, 0, 1), balance = clamp16(runner.balance ?? 1, 0, 1);
-    const legPower = clamp16(
+    const stamina = clampFinite(runner.stam ?? 1, 0, 1), balance = clampFinite(runner.balance ?? 1, 0, 1);
+    const legPower = clampFinite(
       ((runner.STR || 55) * 0.51 + (runner.TRK || 55) * 0.31 + (runner.ACC || 55) * 0.18 - 44) / 55,
       0,
       1
     );
-    const traction = clamp16(0.2 + 0.8 * balance, 0, 1) * clamp16(0.3 + 0.7 * stamina, 0, 1);
-    const exertion = clamp16(runner.breakExertion || 0, 0, 1);
+    const traction = clampFinite(0.2 + 0.8 * balance, 0, 1) * clampFinite(0.3 + 0.7 * stamina, 0, 1);
+    const exertion = clampFinite(runner.breakExertion || 0, 0, 1);
     const appliedLegPower = runner.intent === "carry-coast" ? 0 : legPower;
-    const effort = clamp16(
-      appliedLegPower * traction * (0.55 + 0.45 * clamp16(forwardSpeed / 5, 0, 1)) * (1 - 0.36 * exertion),
+    const effort = clampFinite(
+      appliedLegPower * traction * (0.55 + 0.45 * clampFinite(forwardSpeed / 5, 0, 1)) * (1 - 0.36 * exertion),
       0,
       1
     );
-    const grip = clamp16(link.grip || 0, 0, 1.6), quality2 = clamp16(link.quality ?? 0.65, 0, 1.25);
+    const grip = clampFinite(link.grip || 0, 0, 1.6), quality2 = clampFinite(link.quality ?? 0.65, 0, 1.25);
     const secure = link.style === "wrap" && grip >= 0.78 && quality2 >= 0.76;
-    const hold = clamp16(
+    const hold = clampFinite(
       (defender.TAK || 65) * 0.5 + (defender.STR || 65) * 0.3 + (defender.AWR || 65) * 0.2,
       0,
       99
     );
-    const defenderLeverage = clamp16(
+    const defenderLeverage = clampFinite(
       (0.34 + 0.66 * quality2) * (0.4 + 0.6 * grip / 1.3),
       0,
       1.5
     );
     const difficulty = secure ? 1.48 : link.style === "wrap" ? 1.12 : link.style === "dive" ? 0.94 : 0.78;
-    const opposing = clamp16(hold / 100 * defenderLeverage * difficulty, 0, 1.7);
-    const runnerPower = effort * (0.64 + 0.36 * clamp16((runner.w || 210) / 230, 0.6, 1.5));
+    const opposing = clampFinite(hold / 100 * defenderLeverage * difficulty, 0, 1.7);
+    const runnerPower = effort * (0.64 + 0.36 * clampFinite((runner.w || 210) / 230, 0.6, 1.5));
     const dx = (runner.x || 0) - (defender.x || 0), dy = (runner.y || 0) - (defender.y || 0), len = Math.max(1e-3, Math.hypot(dx, dy));
     const separation = Math.max(
       0,
       ((runner.vx || 0) - (defender.vx || 0)) * dx / len + ((runner.vy || 0) - (defender.vy || 0)) * dy / len
     );
-    const tensile = clamp16(separation / 8, 0, 0.45);
+    const tensile = clampFinite(separation / 8, 0, 0.45);
     const margin = runnerPower + tensile * 0.25 - opposing;
     return {
       effort,
@@ -1941,7 +1940,7 @@
     const threshold = lightHold ? 0.19 : 0.62;
     const gain = Math.max(0, contest.margin - (lightHold ? -0.1 : 0.09));
     const recovery = Math.max(0, -contest.margin) * 0.5;
-    link.escapeProgress = clamp16(
+    link.escapeProgress = clampFinite(
       (link.escapeProgress || 0) + dt * (gain * 2 - recovery * 0.85),
       0,
       1.5
@@ -1957,7 +1956,6 @@
   var ChaosTackleEscape = Object.freeze({ drive, step: step2 });
 
   // src/physics/tackle_reengagement.js
-  var clamp17 = (v2, lo, hi) => Math.max(lo, Math.min(hi, Number.isFinite(v2) ? v2 : lo));
   function release2(defender, runner, bodyGap, clock) {
     const separation = Math.hypot(
       (runner.x || 0) - (defender.x || 0),
@@ -1965,7 +1963,7 @@
     );
     defender.reengage = {
       carrier: runner.key,
-      requiredGap: bodyGap + clamp17(0.32 + Math.max(0, 1 - (defender.balance ?? 1)) * 0.24, 0.32, 0.56),
+      requiredGap: bodyGap + clampFinite(0.32 + Math.max(0, 1 - (defender.balance ?? 1)) * 0.24, 0.32, 0.56),
       releasedAt: clock,
       hasSeparated: separation > bodyGap + 0.32,
       regainedControl: false,
@@ -1976,14 +1974,14 @@
   function observe(defender, runner, bodyGap, clock) {
     const state2 = defender.reengage;
     if (!state2 || state2.carrier !== runner.key) return true;
-    const distance3 = Math.hypot(runner.x - defender.x, runner.y - defender.y);
-    if (distance3 >= state2.requiredGap) state2.hasSeparated = true;
+    const distance2 = Math.hypot(runner.x - defender.x, runner.y - defender.y);
+    if (distance2 >= state2.requiredGap) state2.hasSeparated = true;
     const recovered = !defender.ground && (defender.stun || 0) <= 0 && (defender.diveRecovery || 0) <= 0 && (defender.tackleCooldown || 0) <= 0 && (defender.balance ?? 1) >= 0.27;
-    const dt = clamp17(clock - (state2.lastObservedAt ?? clock), 0, 0.06);
+    const dt = clampFinite(clock - (state2.lastObservedAt ?? clock), 0, 0.06);
     state2.lastObservedAt = clock;
     const slowRunner = Math.hypot(runner.vx || 0, runner.vy || 0) < 0.85;
     const settledDefender = Math.hypot(defender.vx - runner.vx, defender.vy - runner.vy) < 1.45;
-    const recontact = distance3 <= bodyGap + 0.035 && slowRunner && settledDefender;
+    const recontact = distance2 <= bodyGap + 0.035 && slowRunner && settledDefender;
     state2.contactRecovery = recovered && recontact ? Math.min(0.5, (state2.contactRecovery || 0) + dt) : 0;
     if ((state2.hasSeparated || state2.contactRecovery >= 0.24) && recovered) {
       defender.reengage = null;
@@ -1994,26 +1992,25 @@
   var ChaosTackleReengagement = Object.freeze({ release: release2, observe });
 
   // src/physics/tackle_struggle.js
-  var clamp18 = (v2, a, b) => Math.max(a, Math.min(b, v2));
   function state(runner, contacts2, velocity) {
     if (!contacts2.length) return { drive: 0, brakeMultiplier: 1, finishDelay: 0 };
     const totalHold = contacts2.reduce((n, c) => n + Math.max(0, c.t.grip), 0);
     const clean = contacts2.some((c) => c.t.quality >= 0.96 && c.t.grip > 0.9);
     const avgQuality = contacts2.reduce((n, c) => n + (c.t.quality || 0.65), 0) / contacts2.length;
-    const balance = clamp18(runner.balance ?? 1, 0, 1);
+    const balance = clamp(runner.balance ?? 1, 0, 1);
     const forward = Math.max(0, velocity);
-    const power = clamp18(
+    const power = clamp(
       (runner.TRK * 0.58 + runner.STR * 0.28 + runner.AGI * 0.14 - 62) / 35,
       0,
       1
     );
-    const drive2 = clamp18(
-      power * balance * clamp18(forward / 5, 0, 1) * (1 - clamp18((totalHold - 0.25) / 3, 0, 0.72)),
+    const drive2 = clamp(
+      power * balance * clamp(forward / 5, 0, 1) * (1 - clamp((totalHold - 0.25) / 3, 0, 0.72)),
       0,
       1
     );
-    const qualityPenalty = clamp18((avgQuality - 0.6) / 0.7, 0, 1);
-    const brakeMultiplier = clamp18(
+    const qualityPenalty = clamp((avgQuality - 0.6) / 0.7, 0, 1);
+    const brakeMultiplier = clamp(
       1 - drive2 * 0.52 * (1 - qualityPenalty * 0.65),
       0.54,
       1
@@ -2761,7 +2758,6 @@
   }
 
   // src/sim/special_teams.js
-  var clamp19 = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   var lanes = Object.freeze({ left: 13.5, middle: 26.65, right: 39.8 });
   function returnLaneY(call) {
     return lanes[call] ?? lanes.middle;
@@ -2776,17 +2772,17 @@
   }) {
     if (typeof random !== "function")
       throw new TypeError("A seeded random callback is required");
-    const intentX = kind === "punt" ? previousLandingX : kind === "safety-kick" ? clamp19(25 - (power - 80) * 0.18 + (random() - 0.5) * 7, 16, 30) : random() < 0.08 + clamp19((power - 82) / 300, 0, 0.06) ? 8.2 : clamp19(18.7 - (power - 75) * 0.34 + (random() - 0.5) * 12, 8, 36);
+    const intentX = kind === "punt" ? previousLandingX : kind === "safety-kick" ? clamp(25 - (power - 80) * 0.18 + (random() - 0.5) * 7, 16, 30) : random() < 0.08 + clamp((power - 82) / 300, 0, 0.06) ? 8.2 : clamp(18.7 - (power - 75) * 0.34 + (random() - 0.5) * 12, 8, 36);
     const intentY = 8 + random() * (fieldHeight - 16);
-    const miss = clamp19((99 - accuracy) / 99, 0, 1);
+    const miss = clamp((99 - accuracy) / 99, 0, 1);
     const errorX = (random() + random() - 1) * miss * (kind === "punt" ? 7 : 18);
     return {
-      x: clamp19(
+      x: clamp(
         intentX + errorX,
         kind === "punt" ? 7 : 6,
         kind === "punt" ? 109 : 38
       ),
-      y: clamp19(
+      y: clamp(
         intentY + (random() + random() - 1) * miss * 23,
         2,
         fieldHeight - 2
@@ -2813,9 +2809,9 @@
       );
       const laneGap = Math.abs(defender.y - carrier.y);
       const approaching = defender.x >= carrier.x - 2 && defender.x <= carrier.x + 27;
-      const threat2 = approaching ? clamp19((27 - carrierGap) / 27, 0, 1) : 0.15;
-      const laneThreat = clamp19(1 - laneGap / 17, 0, 1);
-      const closing = clamp19(
+      const threat2 = approaching ? clamp((27 - carrierGap) / 27, 0, 1) : 0.15;
+      const laneThreat = clamp(1 - laneGap / 17, 0, 1);
+      const closing = clamp(
         (carrier.x - defender.x) * 0.12 + speedOf(defender) * 0.11,
         0,
         2.5
@@ -2830,7 +2826,7 @@
     return best && bestScore >= -6 ? best : null;
   }
   function shedBypassY(aimY, side, fieldHeight = 53.333) {
-    return clamp19(aimY + (side < 0 ? -1 : 1) * 2.4, 1, fieldHeight - 1);
+    return clamp(aimY + (side < 0 ? -1 : 1) * 2.4, 1, fieldHeight - 1);
   }
   var specialTeams = Object.freeze({
     returnLaneY,
@@ -3465,28 +3461,28 @@
     };
     Object.assign(custom.QB, { VIS: 87, DEC: 81, TOR: 80, BSK: 73 });
     for (const p of Object.values(custom)) {
-      p.HIT = clamp20(
+      p.HIT = clamp(
         0.53 * p.TAK + 0.29 * p.STR + 0.18 * p.AWR + (p.w - 215) * 0.035,
         30,
         99
       );
-      p.PMV = clamp20(
+      p.PMV = clamp(
         0.39 * p.STR + 0.3 * p.AGI + 0.19 * p.AWR + 0.12 * p.TAK + (p.w - 220) * 0.032,
         30,
         99
       );
-      p.IBL = clamp20(
+      p.IBL = clamp(
         0.53 * p.BLO + 0.3 * p.STR + 0.17 * p.AWR + (p.w - 210) * 0.026,
         30,
         99
       );
-      p.PRC = clamp20(0.69 * p.AWR + 0.18 * p.TAK + 0.13 * p.COV, 30, 99);
-      p.PUR = clamp20(
+      p.PRC = clamp(0.69 * p.AWR + 0.18 * p.TAK + 0.13 * p.COV, 30, 99);
+      p.PUR = clamp(
         0.28 * p.AWR + 0.27 * p.SPD + 0.23 * p.ACC + 0.22 * p.TAK,
         30,
         99
       );
-      p.STA = clamp20(
+      p.STA = clamp(
         0.35 * p.ACC + 0.34 * p.SPD + 0.31 * p.AWR - (p.w > 280 ? 5 : 0),
         30,
         99
@@ -3511,23 +3507,23 @@
       Object.assign(custom[key], t);
     for (const p of Object.values(custom)) {
       if (p.team === 0) {
-        p.RTE ??= clamp20(p.AGI * 0.44 + p.AWR * 0.36 + p.ACC * 0.2, 30, 99);
-        p.CUT ??= clamp20(p.AGI * 0.6 + p.ACC * 0.27 + p.AWR * 0.13, 30, 99);
-        p.DBL ??= clamp20(p.RTE * 0.49 + p.CUT * 0.31 + p.AWR * 0.2, 30, 99);
-        p.REL ??= clamp20(p.AGI * 0.42 + p.STR * 0.28 + p.AWR * 0.3, 30, 99);
-        p.HND ??= clamp20(p.AGI * 0.25 + p.STR * 0.43 + p.AWR * 0.32, 30, 99);
+        p.RTE ??= clamp(p.AGI * 0.44 + p.AWR * 0.36 + p.ACC * 0.2, 30, 99);
+        p.CUT ??= clamp(p.AGI * 0.6 + p.ACC * 0.27 + p.AWR * 0.13, 30, 99);
+        p.DBL ??= clamp(p.RTE * 0.49 + p.CUT * 0.31 + p.AWR * 0.2, 30, 99);
+        p.REL ??= clamp(p.AGI * 0.42 + p.STR * 0.28 + p.AWR * 0.3, 30, 99);
+        p.HND ??= clamp(p.AGI * 0.25 + p.STR * 0.43 + p.AWR * 0.32, 30, 99);
       } else {
-        p.PRS ??= clamp20(p.COV * 0.49 + p.STR * 0.33 + p.AWR * 0.18, 30, 99);
-        p.JAM ??= clamp20(p.PRS * 0.54 + p.STR * 0.31 + p.AWR * 0.15, 30, 99);
-        p.MIR ??= clamp20(p.COV * 0.48 + p.AGI * 0.31 + p.PRC * 0.21, 30, 99);
-        p.RCR ??= clamp20(p.COV * 0.43 + p.AWR * 0.34 + p.MIR * 0.23, 30, 99);
-        p.DIS ??= clamp20(p.AWR * 0.42 + p.RCR * 0.36 + p.MIR * 0.22, 30, 99);
+        p.PRS ??= clamp(p.COV * 0.49 + p.STR * 0.33 + p.AWR * 0.18, 30, 99);
+        p.JAM ??= clamp(p.PRS * 0.54 + p.STR * 0.31 + p.AWR * 0.15, 30, 99);
+        p.MIR ??= clamp(p.COV * 0.48 + p.AGI * 0.31 + p.PRC * 0.21, 30, 99);
+        p.RCR ??= clamp(p.COV * 0.43 + p.AWR * 0.34 + p.MIR * 0.23, 30, 99);
+        p.DIS ??= clamp(p.AWR * 0.42 + p.RCR * 0.36 + p.MIR * 0.22, 30, 99);
       }
     }
     for (const p of Object.values(custom))
       if (p.team === 0) {
-        p.JUK = clamp20(p.AGI * 0.45 + p.CUT * 0.33 + p.AWR * 0.22, 30, 99);
-        p.SFA = clamp20(p.STR * 0.49 + p.TRK * 0.33 + p.AWR * 0.18, 30, 99);
+        p.JUK = clamp(p.AGI * 0.45 + p.CUT * 0.33 + p.AWR * 0.22, 30, 99);
+        p.SFA = clamp(p.STR * 0.49 + p.TRK * 0.33 + p.AWR * 0.18, 30, 99);
       }
     const keys = {}, players = [], off = [], def = [];
     const fatigueBank = /* @__PURE__ */ Object.create(null);
@@ -3783,7 +3779,7 @@
     }
     function chooseCPUPlay() {
       const style = TEAM_STYLES[possession];
-      const distance3 = Math.max(1, togo);
+      const distance2 = Math.max(1, togo);
       const chooseRun = down === 1 ? rand() < 0.47 : down === 2 ? rand() < 0.39 : rand() < 0.21;
       const pool = style.pool.filter(
         (p) => chooseRun ? RUNS.has(p) : !RUNS.has(p)
@@ -3805,7 +3801,7 @@
     }
     function setDriveSpot(team, x) {
       possession = team;
-      yard = clamp20(x, 11, 109);
+      yard = clamp(x, 11, 109);
       down = 1;
       togo = Math.min(10, 110 - yard);
       first = yard + togo;
@@ -4143,7 +4139,7 @@
       k.returnLaneY = lane;
       const blockers = off.filter((o) => o !== ret && o !== back);
       blockers.forEach((p, i) => {
-        p.x = isFreeKick(k) ? i < 5 ? 45 : 40 : clamp20(k.landingX + 13, 27, 64);
+        p.x = isFreeKick(k) ? i < 5 ? 45 : 40 : clamp(k.landingX + 13, 27, 64);
         p.y = i < 5 ? 5 + i * 10.75 : 10.1 + (i - 5) * 11.4;
         p.vx = 0;
         p.vy = 0;
@@ -4152,12 +4148,12 @@
         p.returnSlot = i;
         p.returnAssignment = null;
       });
-      ret.x = isFreeKick(k) ? 21 : clamp20(k.landingX + 3, 12, 42);
+      ret.x = isFreeKick(k) ? 21 : clamp(k.landingX + 3, 12, 42);
       ret.y = H * 0.32;
       ret.vx = 0;
       ret.vy = 0;
       ret.intent = "await-kick";
-      back.x = isFreeKick(k) ? 21 : clamp20(k.landingX + 3, 12, 42);
+      back.x = isFreeKick(k) ? 21 : clamp(k.landingX + 3, 12, 42);
       back.y = H * 0.68;
       back.vx = 0;
       back.vy = 0;
@@ -4175,7 +4171,7 @@
       if (!kicker)
         kicker = create(
           "K",
-          isFreeKick(k) ? kickLineX(k) : clamp20(120 - k.puntFrom + 7, 35, 108),
+          isFreeKick(k) ? kickLineX(k) : clamp(120 - k.puntFrom + 7, 35, 108),
           26.65
         );
       kicker.intent = "kick-align";
@@ -4183,7 +4179,7 @@
       kicker.vx = 0;
       kicker.vy = 0;
       def.filter((d) => d !== kicker).forEach((d, i) => {
-        d.x = k.kind === "punt" ? clamp20(120 - k.puntFrom + 1, 34, 107) : 50;
+        d.x = k.kind === "punt" ? clamp(120 - k.puntFrom + 1, 34, 107) : 50;
         d.y = 3.2 + i * 5.2;
         d.vx = 0;
         d.vy = 0;
@@ -4202,7 +4198,7 @@
       if (phase !== "presnap" || matchOver) return false;
       if (kind === "pat" && tryState) {
         const chance = 0.94 + (kickRatings().KAC - 80) * 2e-3;
-        const good = rand() < clamp20(chance, 0.65, 0.99);
+        const good = rand() < clamp(chance, 0.65, 0.99);
         if (good) {
           teamPoints[possession] += 1;
           score = teamPoints[possession];
@@ -4237,13 +4233,13 @@
         return beginPunt();
       }
       if (kind === "fg" && down === 4 && !tryState) {
-        const distance3 = Math.round(110 - yard + 17);
-        const pct = clamp20(
-          0.97 - (distance3 - 32) * 0.017 + (kickRatings().KAC - 85) * 3e-3,
+        const distance2 = Math.round(110 - yard + 17);
+        const pct = clamp(
+          0.97 - (distance2 - 32) * 0.017 + (kickRatings().KAC - 85) * 3e-3,
           0.06,
           0.985
         );
-        const good = distance3 <= Math.round(42 + (kickRatings().KPW - 70) * 0.9) && rand() < pct;
+        const good = distance2 <= Math.round(42 + (kickRatings().KPW - 70) * 0.9) && rand() < pct;
         const kickingTeam = possession;
         if (good) {
           teamPoints[kickingTeam] += 3;
@@ -4258,7 +4254,7 @@
         clockRunning = false;
         setResultUI(
           good ? "FIELD GOAL GOOD" : "FIELD GOAL NO GOOD",
-          distance3 + "-yard attempt · " + (good ? "+3 points" : "possession changes"),
+          distance2 + "-yard attempt · " + (good ? "+3 points" : "possession changes"),
           good ? "KICKOFF" : "NEXT DRIVE"
         );
         hidePlaybook();
@@ -4269,12 +4265,12 @@
     }
     function beginPunt() {
       const oldSpot = yard, oldTeam = possession;
-      const distance3 = clamp20(
+      const distance2 = clamp(
         35 + kickRatings().PUNT * 0.14 + (rand() - 0.5) * 15,
         32,
         58
       );
-      const landingOriginal = oldSpot + distance3;
+      const landingOriginal = oldSpot + distance2;
       const receives = 1 - oldTeam;
       const landing = 120 - Math.min(110, landingOriginal);
       setDriveSpot(receives, Math.max(11, landing));
@@ -4285,11 +4281,11 @@
         receivingTeam: receives,
         landingX: landing,
         elapsed: 0,
-        airtime: clamp20(2.1 + distance3 * 0.035, 2.2, 4),
+        airtime: clamp(2.1 + distance2 * 0.035, 2.2, 4),
         returning: false,
         started: false,
         puntFrom: oldSpot,
-        netDistance: distance3
+        netDistance: distance2
       };
       setup();
       organizeReturnUnit();
@@ -4316,7 +4312,7 @@
       const k = specialState, landing = kickerLanding2(k);
       k.landingX = landing.x;
       k.targetY = landing.y;
-      const sourceX = isFreeKick(k) ? kickLineX(k) : clamp20(120 - k.puntFrom + 7, landing.x + 12, 109);
+      const sourceX = isFreeKick(k) ? kickLineX(k) : clamp(120 - k.puntFrom + 7, landing.x + 12, 109);
       const specialist = P("K");
       if (specialist) {
         specialist.x = sourceX;
@@ -4339,7 +4335,7 @@
         flying: true
       };
       const deep = [P("RB"), P("WR2")].filter(Boolean);
-      const tArrival = (p) => dist(p, landing) / Math.max(3, maxSpeed(p)) + (1 - p.ACC / 100) * 0.2;
+      const tArrival = (p) => distance2D(p, landing) / Math.max(3, maxSpeed(p)) + (1 - p.ACC / 100) * 0.2;
       deep.sort((a, b) => tArrival(a) - tArrival(b));
       k.returnerKey = deep[0]?.key || "RB";
       k.backupReturnerKey = deep[1]?.key || "WR2";
@@ -4367,10 +4363,10 @@
       }
       for (const p of players) {
         const recovery = (p === ballCarrier ? 0.015 : 0.345) * (0.85 + p.STA / 500);
-        fatigueBank[p.key] = clamp20(p.stam + recovery, 0.045, 1);
+        fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
       }
       ball = null;
-      const mark = clamp20(x, 10, 110);
+      const mark = clamp(x, 10, 110);
       const touchdown = type === "touchdown" || mark >= 109.8;
       if (touchdown) {
         teamPoints[possession] += 6;
@@ -4378,7 +4374,7 @@
         tryState = { team: possession };
         postWhistle = "try";
       } else {
-        setDriveSpot(possession, clamp20(mark, 11, 109));
+        setDriveSpot(possession, clamp(mark, 11, 109));
         postWhistle = "scrimmage";
       }
       gameFlowNote = touchdown ? "Return touchdown" : type === "touchback" ? "Touchback — receiving team ball" : "Special-teams play complete";
@@ -4407,17 +4403,17 @@
       const threat2 = forwardThreats.sort(
         (a, b) => Math.abs(a.x - (ret.x + 5)) + Math.abs(a.y - ret.y) * 0.5 - (Math.abs(b.x - (ret.x + 5)) + Math.abs(b.y - ret.y) * 0.5)
       )[0];
-      const leadX = clamp20(ret.x + 4.2, ret.x + 2.5, 109);
-      const leadY = clamp20(ret.y * 0.68 + k.returnLaneY * 0.32, 3, H - 3);
+      const leadX = clamp(ret.x + 4.2, ret.x + 2.5, 109);
+      const leadY = clamp(ret.y * 0.68 + k.returnLaneY * 0.32, 3, H - 3);
       const trailing = o.x < ret.x - 2.2;
       if (trailing) {
         const side = o.y <= ret.y ? -1 : 1;
-        const catchY = clamp20(ret.y + side * 2.4, 3, H - 3);
+        const catchY = clamp(ret.y + side * 2.4, 3, H - 3);
         o.intent = "return-escort-catchup";
         o.intentTarget = ret.key;
         steer(
           o,
-          clamp20(ret.x + 2.4, ret.x + 1.8, 109) - o.x,
+          clamp(ret.x + 2.4, ret.x + 1.8, 109) - o.x,
           catchY - o.y,
           dt,
           1.08
@@ -4436,11 +4432,11 @@
       o.intentTarget = threat2.key;
       claimed.add(threat2.key);
       steer(o, projectedX - o.x, projectedY - o.y, dt, 1.06);
-      if (dist(o, threat2) < 2.15) blockBattle(o, threat2, dt);
+      if (distance2D(o, threat2) < 2.15) blockBattle(o, threat2, dt);
     }
     function returnBlockerAI(o, ret, dt, claimed) {
       const k = specialState;
-      const progress = clamp20((ret.x - k.landingX) / 20, 0, 1);
+      const progress = clamp((ret.x - k.landingX) / 20, 0, 1);
       const preferred = k.targetY * (0.75 - 0.68 * progress) + k.returnLaneY * (0.25 + 0.68 * progress);
       const locked = blockLinks.get(o.key);
       const kept = locked ? P(locked.defender) : null;
@@ -4453,10 +4449,10 @@
         returnLaneY: preferred,
         speedOf: speed
       });
-      const best = kept && !kept.ground && dist(o, kept) < 2.5 ? kept : picked;
-      const wedgeY = clamp20(preferred + (o.returnSlot - 4) * 1.7, 4, H - 4);
-      const wedgeX = clamp20(
-        ret.x + clamp20(3 + o.returnSlot % 3 * 1.2, 3, 6),
+      const best = kept && !kept.ground && distance2D(o, kept) < 2.5 ? kept : picked;
+      const wedgeY = clamp(preferred + (o.returnSlot - 4) * 1.7, 4, H - 4);
+      const wedgeX = clamp(
+        ret.x + clamp(3 + o.returnSlot % 3 * 1.2, 3, 6),
         ret.x + 2,
         ret.x + 9
       );
@@ -4469,7 +4465,7 @@
       claimed.add(best.key);
       o.intent = "return-block";
       o.intentTarget = best.key;
-      if (speed(o) < 0.25 && dist(o, ret) > 10) {
+      if (speed(o) < 0.25 && distance2D(o, ret) > 10) {
         o.returnStall = (o.returnStall || 0) + dt;
       } else o.returnStall = 0;
       if (o.returnStall > 0.9) {
@@ -4479,17 +4475,17 @@
         steer(o, ret.x + 4 - o.x, k.returnLaneY - o.y, dt, 0.96);
         return;
       }
-      const lead = clamp20(
-        dist(o, best) / Math.max(3, speed(o) + speed(best)),
+      const lead = clamp(
+        distance2D(o, best) / Math.max(3, speed(o) + speed(best)),
         0.12,
         0.58
       );
       const projectedX = best.x + best.vx * lead, projectedY = best.y + best.vy * lead;
-      const targetX = projectedX + clamp20((ret.x - projectedX) * 0.1, -0.4, 0.8);
-      const laneBlend = clamp20((dist(best, ret) - 6) / 16, 0, 0.26);
+      const targetX = projectedX + clamp((ret.x - projectedX) * 0.1, -0.4, 0.8);
+      const laneBlend = clamp((distance2D(best, ret) - 6) / 16, 0, 0.26);
       const targetY = projectedY * (1 - laneBlend) + preferred * laneBlend;
       steer(o, targetX - o.x, targetY - o.y, dt, 1.06);
-      if (dist(o, best) < 2.15) blockBattle(o, best, dt);
+      if (distance2D(o, best) < 2.15) blockBattle(o, best, dt);
     }
     function returnEscapeSide(d, blocker) {
       if (d.y < 7) return 1;
@@ -4498,7 +4494,7 @@
     }
     function returnBypassTarget(d, blocker, aimY) {
       const side = d.returnBypassSide || 1;
-      return clamp20(
+      return clamp(
         blocker ? blocker.y + side * 3.4 : aimY + side * 3.4,
         2.5,
         H - 2.5
@@ -4518,7 +4514,7 @@
       }
       if (track.still > 0.9 && d.returnBypassUntil <= playClock) {
         const link = [...blockLinks].find(([key, e]) => e.defender === d.key);
-        const blocker = link ? P(link[1].blocker) : off.filter((o) => o !== ret).sort((a, b) => dist(a, d) - dist(b, d))[0];
+        const blocker = link ? P(link[1].blocker) : off.filter((o) => o !== ret).sort((a, b) => distance2D(a, d) - distance2D(b, d))[0];
         if (link) blockLinks.delete(link[0]);
         d.blocked = 0;
         d.shedCooldown = Math.max(d.shedCooldown, 0.4);
@@ -4609,7 +4605,7 @@
           steer(ret, aim2.x - ret.x, aim2.y - ret.y, dt, 1.01);
           if (secondary) {
             const offSide = secondary.y < ret.y ? -1 : 1;
-            const backupY = clamp20(aim2.y + offSide * 2.6, 2, H - 2);
+            const backupY = clamp(aim2.y + offSide * 2.6, 2, H - 2);
             secondary.intent = k.landed ? "recover-loose-kick" : "second-returner";
             steer(
               secondary,
@@ -4676,7 +4672,7 @@
         if (ball) {
           const candidates = [ret, secondary].filter(Boolean);
           const touched = candidates.find(
-            (p) => !p.ground && dist(p, ball) < 1.55 && ball.z < 1.25
+            (p) => !p.ground && distance2D(p, ball) < 1.55 && ball.z < 1.25
           );
           if (touched) {
             if (returnFairCatch && k.kind === "punt") {
@@ -4863,7 +4859,7 @@
           chooseCPUPlay();
           scrimmagePlayCalled = true;
           playSeconds = PRESNAP_PLAY_SECONDS;
-          cpuSnapAt = clamp20(11 + rand() * 5, 11, 16);
+          cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
           hidePlaybook();
         } else showPlaybook();
       }
@@ -4885,7 +4881,7 @@
       playSeconds = possession === 1 && gameStarted ? PRESNAP_PLAY_SECONDS : 40;
       scrimmagePlayCalled = possession === 1 && gameStarted;
       if (scrimmagePlayCalled) {
-        cpuSnapAt = clamp20(11 + rand() * 5, 11, 16);
+        cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
         hidePlaybook();
       } else showPlaybook();
       message(
@@ -4949,15 +4945,6 @@
     function seed(v2) {
       seq = v2 >>> 0;
     }
-    function clamp20(v2, lo, hi) {
-      return Math.max(lo, Math.min(hi, v2));
-    }
-    function hypot(dx, dy) {
-      return Math.hypot(dx, dy);
-    }
-    function dist(a, b) {
-      return hypot(a.x - b.x, a.y - b.y);
-    }
     function speed(p) {
       return hypot(p.vx, p.vy);
     }
@@ -4965,8 +4952,8 @@
       return p.w * 0.45359237;
     }
     function maxSpeed(p) {
-      const energy = clamp20(p.stam ?? 1, 0, 1);
-      const fatigue = clamp20((0.35 - energy) / 0.35, 0, 1);
+      const energy = clamp(p.stam ?? 1, 0, 1);
+      const fatigue = clamp((0.35 - energy) / 0.35, 0, 1);
       return (6.6 + (p.SPD - 55) * 0.089) * (1 - 0.26 * Math.pow(fatigue, 1.35));
     }
     function acceleration(p) {
@@ -4998,9 +4985,9 @@
     }
     function launchAssist(p, speedFraction) {
       const tier = takeoffTier(p);
-      const technique = clamp20((p.ACC - 45) / 54, 0.2, 1);
+      const technique = clamp((p.ACC - 45) / 54, 0.2, 1);
       const strength = (0.12 + 0.025 * (tier - 50)) * (0.75 + 0.25 * technique);
-      const fade = Math.pow(clamp20((0.76 - speedFraction) / 0.76, 0, 1), 1.1);
+      const fade = Math.pow(clamp((0.76 - speedFraction) / 0.76, 0, 1), 1.1);
       return 1 + strength * fade;
     }
     function radius(p) {
@@ -5125,19 +5112,19 @@
     }
     function snapVariation(p) {
       const rating3 = p.team === 0 ? 0.55 * p.RTE + 0.45 * p.CUT : 0.45 * p.MIR + 0.3 * p.RCR + 0.25 * p.DIS;
-      const spread = clamp20((112 - rating3) / 75, 0.16, 0.95);
+      const spread = clamp((112 - rating3) / 75, 0.16, 0.95);
       const roll = () => (rand() + rand() + rand() - 1.5) / 0.75;
       if (p.team === 0) {
         p.routeVariation = {
           breakY: roll() * 0.9 * spread,
           breakX: roll() * 0.62 * spread,
-          tempo: clamp20(1 + roll() * 0.09 * spread, 0.88, 1.12),
-          plant: clamp20(1 + roll() * 0.16 * spread, 0.78, 1.19)
+          tempo: clamp(1 + roll() * 0.09 * spread, 0.88, 1.12),
+          plant: clamp(1 + roll() * 0.16 * spread, 0.78, 1.19)
         };
       } else {
         p.coverageVariation = {
           react: roll() * 0.095 * spread,
-          mirror: clamp20(1 + roll() * 0.1 * spread, 0.83, 1.17),
+          mirror: clamp(1 + roll() * 0.1 * spread, 0.83, 1.17),
           cushion: roll() * 0.4 * spread
         };
       }
@@ -5187,10 +5174,10 @@
         d.passRushLane = d.spawnY;
         d.rushEngaged = 0;
         const rating3 = 0.55 * d.PMV + 0.3 * d.AWR + 0.15 * d.ACC;
-        const variance = clamp20((100 - rating3) / 60, 0.16, 0.85);
+        const variance = clamp((100 - rating3) / 60, 0.16, 0.85);
         const styleRoll = rand(), style = styleRoll < 0.34 ? "power" : styleRoll < 0.7 ? "speed" : "counter";
         d.passRushStyle = style;
-        d.rushExecution = clamp20(
+        d.rushExecution = clamp(
           1 + (rand() + rand() - 1) * variance * 0.19,
           0.83,
           1.16
@@ -5225,9 +5212,9 @@
     }
     function quarterbackSpyAI(d, qb, dt) {
       const nearLOS = qb.x >= playStart - 2.4;
-      const near = dist(d, qb) < 4.2;
+      const near = distance2D(d, qb) < 4.2;
       const tx = nearLOS || near ? qb.x + 0.3 : Math.max(playStart + 1, qb.x + 3);
-      const ty = clamp20(qb.y + qb.vy * (nearLOS ? 0.1 : 0.2), 4, H - 4);
+      const ty = clamp(qb.y + qb.vy * (nearLOS ? 0.1 : 0.2), 4, H - 4);
       d.intent = nearLOS || near ? "spy-close" : "qb-spy";
       d.intentTarget = "QB";
       steer(d, tx - d.x, ty - d.y, dt, nearLOS ? 1.17 : 0.96);
@@ -5241,8 +5228,8 @@
       if (isEdge) {
         const outside = left ? -1 : 1;
         const offset2 = selectedPressure === "contain" ? 3.6 : 2.65;
-        ty = clamp20(qb.y + outside * (threat2 ? 1 : offset2), 1.8, H - 1.8);
-        tx = qb.x + clamp20(qb.x - d.x, -0.3, 0.9);
+        ty = clamp(qb.y + outside * (threat2 ? 1 : offset2), 1.8, H - 1.8);
+        tx = qb.x + clamp(qb.x - d.x, -0.3, 0.9);
         mode = threat2 ? "edge-close" : "edge-contain";
         if (threat2 && (left && qb.y < 26.65 || !left && qb.y >= 26.65)) {
           ty = qb.y + outside * 0.45;
@@ -5254,11 +5241,11 @@
         tx = qb.x + 0.4;
         mode = "stunt";
       } else if (d.blitz) {
-        ty = clamp20(qb.y + (d.spawnY < 26.65 ? -1.2 : 1.2), 2, H - 2);
+        ty = clamp(qb.y + (d.spawnY < 26.65 ? -1.2 : 1.2), 2, H - 2);
         mode = "blitz";
       } else {
-        const lane = clamp20((d.spawnY - 26.65) * 0.42, -3, 3);
-        ty = clamp20(qb.y + lane, 3, H - 3);
+        const lane = clamp((d.spawnY - 26.65) * 0.42, -3, 3);
+        ty = clamp(qb.y + lane, 3, H - 3);
         mode = "inside-rush";
       }
       const liveQB = RushAwareness.target(d, qb, playStart, playClock);
@@ -5395,19 +5382,19 @@
             route = [
               [x + 5, yy],
               [x + 7, yy],
-              [x + 7, clamp20(yy + (yy < 26 ? -4 : 4), 3, 50)]
+              [x + 7, clamp(yy + (yy < 26 ? -4 : 4), 3, 50)]
             ];
           else if (p === wr1)
             route = [
               [x + 5, yy],
-              [x + 9, clamp20(yy + 7, 2, 51)],
-              [x + 15, clamp20(yy + 8, 2, 51)]
+              [x + 9, clamp(yy + 7, 2, 51)],
+              [x + 15, clamp(yy + 8, 2, 51)]
             ];
           else if (p === wr2)
             route = [
               [x + 3, yy],
-              [x + 5, clamp20(yy - 6, 2, 51)],
-              [x + 9, clamp20(yy - 7, 2, 51)]
+              [x + 5, clamp(yy - 6, 2, 51)],
+              [x + 9, clamp(yy - 7, 2, 51)]
             ];
           else
             route = [
@@ -5420,7 +5407,7 @@
             route = [
               [x + 10, yy],
               [x + 21, yy],
-              [x + 30, clamp20(yy + 15, 3, 50)]
+              [x + 30, clamp(yy + 15, 3, 50)]
             ];
           else if (p === wr2)
             route = [
@@ -5431,27 +5418,27 @@
           else if (p === te)
             route = [
               [x + 7, yy],
-              [x + 13, clamp20(yy - 8, 3, 50)],
-              [x + 18, clamp20(yy - 8, 3, 50)]
+              [x + 13, clamp(yy - 8, 3, 50)],
+              [x + 18, clamp(yy - 8, 3, 50)]
             ];
           else
             route = [
               [x + 6, yy],
-              [x + 13, clamp20(yy + 6, 3, 50)],
-              [x + 18, clamp20(yy + 8, 3, 50)]
+              [x + 13, clamp(yy + 6, 3, 50)],
+              [x + 18, clamp(yy + 8, 3, 50)]
             ];
         } else if (selectedPlay === "smash") {
           if (p === wr1 || p === wr2)
             route = [
               [x + 5, yy],
-              [x + 7, clamp20(yy + (yy < 26 ? 5 : -5), 2, 51)],
-              [x + 8, clamp20(yy + (yy < 26 ? 8 : -8), 2, 51)]
+              [x + 7, clamp(yy + (yy < 26 ? 5 : -5), 2, 51)],
+              [x + 8, clamp(yy + (yy < 26 ? 8 : -8), 2, 51)]
             ];
           else if (p === te)
             route = [
               [x + 7, yy],
-              [x + 17, clamp20(yy + (yy < 26 ? -9 : 9), 2, 51)],
-              [x + 25, clamp20(yy + (yy < 26 ? -13 : 13), 2, 51)]
+              [x + 17, clamp(yy + (yy < 26 ? -9 : 9), 2, 51)],
+              [x + 25, clamp(yy + (yy < 26 ? -13 : 13), 2, 51)]
             ];
           else
             route = [
@@ -5471,7 +5458,7 @@
             const taper = i === route.length - 1 ? 0.55 : 1;
             route[i] = [
               route[i][0] + variation.breakX * taper,
-              clamp20(route[i][1] + variation.breakY * taper, 1.4, H - 1.4)
+              clamp(route[i][1] + variation.breakY * taper, 1.4, H - 1.4)
             ];
           }
         }
@@ -5581,7 +5568,7 @@
         );
         if (!db)
           return p.key + " · zone coverage · RTE " + Math.round(p.RTE) + " / CUT " + Math.round(p.CUT);
-        const gap = phase === "presnap" ? "" : " · " + dist(p, db).toFixed(1) + " yd apart";
+        const gap = phase === "presnap" ? "" : " · " + distance2D(p, db).toFixed(1) + " yd apart";
         const released = p.pressResult ? " · " + p.pressResult.replaceAll("-", " ") : "";
         return p.key + " ↔ " + db.key + " · REL " + Math.round(p.REL) + "/PRS " + Math.round(db.PRS) + " · CUT " + Math.round(p.CUT) + "/MIR " + Math.round(db.MIR) + gap + released;
       });
@@ -5759,12 +5746,12 @@
       for (const d of def) {
         d.rush = ["EDGE1", "EDGE2", "DT", "DT2", "DE3A", "DE3B", "NT"].includes(d.key) || selectedFront === "base34" && d.key === "SAM";
         d.assignment = null;
-        d.recognition = clamp20(0.08 + (100 - d.AWR) * 5e-3, 0.08, 0.37);
+        d.recognition = clamp(0.08 + (100 - d.AWR) * 5e-3, 0.08, 0.37);
         d.fit = runFitFor(d);
         d.runRead = false;
         d.readAtTime = -1;
         const secondary = d.pos === "CB" || d.pos === "FS" || d.pos === "SS";
-        d.readAt = clamp20(
+        d.readAt = clamp(
           0.11 + (100 - d.PRC) * 9e-3 + (100 - d.AWR) * 2e-3 + (secondary ? 0.18 : 0),
           0.16,
           1.05
@@ -5782,7 +5769,7 @@
           if (d.assignment?.kind !== "man" || d.PRS < 75) continue;
           const t = P(d.assignment.target);
           if (!t || t.pos !== "WR") continue;
-          d.x = Math.min(d.x, t.x + clamp20(2.5 - (d.PRS - 75) * 0.017, 1.75, 2.5));
+          d.x = Math.min(d.x, t.x + clamp(2.5 - (d.PRS - 75) * 0.017, 1.75, 2.5));
           d.y = t.y + Math.sign(d.y - t.y || 1) * 0.25;
         }
       }
@@ -5940,9 +5927,9 @@
         currentMemoryPlay = null;
       }
       for (const p of players) {
-        const hadBall = p.touches > 0, effort = clamp20((p.travel || 0) / 35, 0, 1);
+        const hadBall = p.touches > 0, effort = clamp((p.travel || 0) / 35, 0, 1);
         const recovery = (hadBall ? 0.015 : 0.345) * (0.85 + p.STA / 500) * (1 - effort * 0.12);
-        fatigueBank[p.key] = clamp20(p.stam + recovery, 0.045, 1);
+        fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
       }
       pendingPass = null;
       const progressMark = pileState?.maxX ?? null;
@@ -5962,7 +5949,7 @@
       }
       if (type === "touchdown") x = 110;
       else if (ballCarrier && type !== "incomplete" && type !== "intercept") {
-        x = clamp20(
+        x = clamp(
           type === "tackle" && progressMark !== null ? Math.max(ballCarrier.x, progressMark) : ballCarrier.x,
           10,
           110
@@ -5993,14 +5980,14 @@
       result = heading;
       message("<strong>" + heading + ".</strong> " + detail);
       $("resultText").textContent = heading;
-      $("resultDetail").textContent = detail + " · " + (type === "intercept" ? "Next drive: " + spotText(clamp20(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained");
+      $("resultDetail").textContent = detail + " · " + (type === "intercept" ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained");
       $("overlay").classList.add("visible");
       $("targets").style.display = "none";
       $("receiverPins").style.display = "none";
       $("snap").disabled = false;
       $("snap").textContent = "NEXT SNAP";
       log(
-        heading + " · " + (type === "intercept" ? "change of possession at " + spotText(clamp20(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yd")
+        heading + " · " + (type === "intercept" ? "change of possession at " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yd")
       );
       const nYd = Math.max(10, Math.round(x * 10) / 10);
       if (tryState || postWhistle === "kickoff" || postWhistle === "try") {
@@ -6077,7 +6064,7 @@
         setup();
         playSeconds = gameStarted && possession === 1 ? PRESNAP_PLAY_SECONDS : 40;
         scrimmagePlayCalled = gameStarted && possession === 1;
-        cpuSnapAt = clamp20(11 + rand() * 5, 11, 16);
+        cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
         if (gameStarted && possession === 1) hidePlaybook();
         else showPlaybook();
       }
@@ -6137,7 +6124,7 @@
     }
     function steer(p, dx, dy, dt, boost = 1) {
       if (p.jukeRecovery > 0) {
-        const skill = clamp20(
+        const skill = clamp(
           (p.JUK * 0.36 + p.CUT * 0.29 + p.AGI * 0.23 + p.ACC * 0.12 - 50) / 49,
           0,
           1
@@ -6146,7 +6133,7 @@
         p.jukeRecovery = Math.max(0, p.jukeRecovery - dt);
       }
       if (p === active2 && burstTime > 0)
-        boost *= 1 + 0.68 * clamp20(p.stam / 0.48, 0.15, 1);
+        boost *= 1 + 0.68 * clamp(p.stam / 0.48, 0.15, 1);
       if (p.stun > 0) {
         p.stun = Math.max(0, p.stun - dt);
         dx = 0;
@@ -6227,31 +6214,31 @@
       const sprinting = (aiSprint || userSteering && sprintHeld() && norm > 0.1) && p.stam > 0.055;
       p.sprinting = sprinting;
       if (aiSprint)
-        boost *= clamp20(1.2 + (p.ACC - 75) * 12e-4, 1.15, 1.24) * clamp20(0.68 + p.stam * 0.32, 0.68, 1);
+        boost *= clamp(1.2 + (p.ACC - 75) * 12e-4, 1.15, 1.24) * clamp(0.68 + p.stam * 0.32, 0.68, 1);
       if (norm > 0.1) {
         const targetAngle = Math.atan2(dy, dx);
         const faceDifference = Math.atan2(
           Math.sin(targetAngle - p.face),
           Math.cos(targetAngle - p.face)
         );
-        const routeFoot = p.intent.startsWith("route") && p.routeBreakTime > 0 ? clamp20(0.83 + (p.CUT - 65) * 9e-3 + (p.RTE - 70) * 3e-3, 0.63, 1.3) : 1;
+        const routeFoot = p.intent.startsWith("route") && p.routeBreakTime > 0 ? clamp(0.83 + (p.CUT - 65) * 9e-3 + (p.RTE - 70) * 3e-3, 0.63, 1.3) : 1;
         const maxTurn = (4 + (p.AGI - 55) * 0.105) * routeFoot / (1 + spd * 0.065 + Math.max(0, p.h - 72) * 8e-3) * dt;
-        p.face += clamp20(faceDifference, -maxTurn, maxTurn);
+        p.face += clamp(faceDifference, -maxTurn, maxTurn);
         if (p.team === 1 && fullPursuit && spd > 0.65) {
           const heading = Math.atan2(vy, vx), desired = Math.atan2(dy, dx);
           const mismatch = Math.atan2(
             Math.sin(desired - heading),
             Math.cos(desired - heading)
           );
-          const technique = clamp20(
+          const technique = clamp(
             (p.AGI * 0.52 + p.PUR * 0.33 + p.PRC * 0.15 - 50) / 49,
             0,
             1
           );
           const bodyTurn = Math.pow(90 / mass2(p), 0.13);
           const turnSpeed = (2.25 + 2.15 * technique) * bodyTurn / (1 + Math.max(0, spd - 6) * 0.075);
-          const eligibility = clamp20((Math.PI - Math.abs(mismatch)) / 0.95, 0, 1);
-          const angle2 = clamp20(mismatch, -turnSpeed * dt, turnSpeed * dt) * eligibility;
+          const eligibility = clamp((Math.PI - Math.abs(mismatch)) / 0.95, 0, 1);
+          const angle2 = clamp(mismatch, -turnSpeed * dt, turnSpeed * dt) * eligibility;
           const c = Math.cos(angle2), t = Math.sin(angle2);
           const preserved = 1 - Math.abs(angle2) * (0.18 - 0.11 * technique);
           const rotatedX = vx * c - vy * t, rotatedY = vx * t + vy * c;
@@ -6259,23 +6246,23 @@
           vy = rotatedY * preserved;
         }
         const alignment = spd > 0.15 ? (vx * dx + vy * dy) / (Math.hypot(vx, vy) * norm) : 1;
-        const traction = clamp20(0.9 + (p.AGI - 70) * 27e-4, 0.74, 1);
-        const turnLoad = clamp20(1 - alignment, 0, 2);
-        const planting = clamp20(
+        const traction = clamp(0.9 + (p.AGI - 70) * 27e-4, 0.74, 1);
+        const turnLoad = clamp(1 - alignment, 0, 2);
+        const planting = clamp(
           1 - turnLoad * (0.1 + (95 - p.AGI) * 31e-4),
           0.56,
           1
         );
-        const footwork = clamp20(
+        const footwork = clamp(
           (0.6 + p.AGI * 9e-3) * Math.pow(98 / mass2(p), 0.2) * p.balance * routeFoot,
           0.5,
           2
         );
         const lateral = vx * -dy + vy * dx;
-        const pursuitBrake = p.team === 1 && fullPursuit ? clamp20(0.5 - (p.AGI - 60) * 4e-3, 0.35, 0.55) : 1;
+        const pursuitBrake = p.team === 1 && fullPursuit ? clamp(0.5 - (p.AGI - 60) * 4e-3, 0.35, 0.55) : 1;
         const tackleApproach = p.team === 1 && fullPursuit && ballCarrier && goalDistance < 3.4;
         const closeControl = tackleApproach ? 1.65 : 1;
-        const sidewaysBrake = clamp20(
+        const sidewaysBrake = clamp(
           (2.5 + footwork * 2.9) * dt * (alignment < 0.8 ? 1 : 0.43) * pursuitBrake * closeControl,
           0,
           tackleApproach ? 0.34 : 0.22
@@ -6284,15 +6271,15 @@
         vy -= dx * lateral * sidewaysBrake;
         if (alignment < 0.05) {
           const backwards = Math.max(0, -(vx * dx + vy * dy));
-          const brake = clamp20((0.85 + footwork * 0.95) * dt, 0, 0.1);
+          const brake = clamp((0.85 + footwork * 0.95) * dt, 0, 0.1);
           vx += dx * backwards * brake;
           vy += dy * backwards * brake;
         }
-        const turnAssist = 1 + clamp20(turnLoad * 0.44 * footwork, 0, 0.6);
-        const releaseDrive = p.releaseSlow > 0 ? clamp20(0.36 + (p.REL - 30) * 45e-4, 0.37, 0.69) : p.releaseBurst > 0 ? clamp20(1.08 + (p.REL - 65) * 2e-3, 1.02, 1.17) : 1;
-        const routeDrive = p.intent.startsWith("route") && p.routeBreakTime > 0 ? clamp20(0.93 + (p.CUT - 70) * 48e-4, 0.76, 1.07) : 1;
-        const earlyStride = 1 + 0.16 * clamp20((3.2 - spd) / 3.2, 0, 1);
-        const speedFraction = clamp20(spd / Math.max(0.1, maxSpeed(p)), 0, 1);
+        const turnAssist = 1 + clamp(turnLoad * 0.44 * footwork, 0, 0.6);
+        const releaseDrive = p.releaseSlow > 0 ? clamp(0.36 + (p.REL - 30) * 45e-4, 0.37, 0.69) : p.releaseBurst > 0 ? clamp(1.08 + (p.REL - 65) * 2e-3, 1.02, 1.17) : 1;
+        const routeDrive = p.intent.startsWith("route") && p.routeBreakTime > 0 ? clamp(0.93 + (p.CUT - 70) * 48e-4, 0.76, 1.07) : 1;
+        const earlyStride = 1 + 0.16 * clamp((3.2 - spd) / 3.2, 0, 1);
+        const speedFraction = clamp(spd / Math.max(0.1, maxSpeed(p)), 0, 1);
         const accelerationCurve = speedFraction <= 0.84 ? 1.43 : speedFraction <= 0.9 ? 1.43 - (speedFraction - 0.84) / 0.06 * 0.25 : speedFraction <= 0.95 ? 1.18 - (speedFraction - 0.9) / 0.05 * 0.2 : 0.98 - (speedFraction - 0.95) / 0.05 * 0.17;
         const launch = launchAssist(p, speedFraction);
         const force = acceleration(p) * earlyStride * accelerationCurve * launch * (0.67 + 0.33 * p.stam) * boost * norm * traction * planting * turnAssist * releaseDrive * routeDrive;
@@ -6300,18 +6287,18 @@
         vy += dy / norm * force * dt;
         p.dirX = dx;
         p.dirY = dy;
-        const endurance = clamp20(0.79 + (p.STA - 65) * 85e-4, 0.7, 1.13);
-        const gear = clamp20(
+        const endurance = clamp(0.79 + (p.STA - 65) * 85e-4, 0.7, 1.13);
+        const gear = clamp(
           speed(p) / Math.max(0.01, maxSpeed({ ...p, stam: 1 })),
           0,
           1
         );
-        const topEnd = clamp20((gear - 0.72) / 0.28, 0, 1);
-        const eliteTop = clamp20((p.SPD - 89) / 10, 0, 1);
+        const topEnd = clamp((gear - 0.72) / 0.28, 0, 1);
+        const eliteTop = clamp((p.SPD - 89) / 10, 0, 1);
         const spent = p.sprinting ? 0.033 + 0.017 * topEnd + 0.012 * topEnd * topEnd * eliteTop : boost > 1.05 ? 0.024 : 7e-3;
         p.stam = Math.max(0, p.stam - dt * spent / endurance);
         if (!p.sprinting && norm > 0.15 && p.stam < 1) {
-          const easyPace = clamp20(1 - speed(p) / Math.max(1, maxSpeed(p)), 0, 1);
+          const easyPace = clamp(1 - speed(p) / Math.max(1, maxSpeed(p)), 0, 1);
           p.stam = Math.min(
             1,
             p.stam + dt * (0.017 + 0.024 * easyPace) * endurance
@@ -6319,26 +6306,26 @@
         }
       } else {
         p.sprinting = false;
-        p.stam = Math.min(1, p.stam + dt * 7e-3 * clamp20(p.STA / 75, 0.7, 1.3));
+        p.stam = Math.min(1, p.stam + dt * 7e-3 * clamp(p.STA / 75, 0.7, 1.3));
       }
       const drag = norm > 0.1 ? p.team === 1 && fullPursuit ? 0.245 : 0.28 : 3.7;
       vx *= Math.max(0, 1 - drag * dt);
       vy *= Math.max(0, 1 - drag * dt);
       if (p.jukeDrive && p.jukeDrive.remaining > 0) {
         const j = p.jukeDrive, progress = 1 - j.remaining / j.duration;
-        const agility = clamp20(0.67 + (p.AGI - 60) * 0.012, 0.36, 1.16);
+        const agility = clamp(0.67 + (p.AGI - 60) * 0.012, 0.36, 1.16);
         const effort = (0.36 + 0.64 * j.power) * agility;
         const targetLateral = (8 + Math.max(0, p.CUT - 70) * 0.023 + Math.max(0, p.JUK - 70) * 0.022) * effort;
-        const envelope = progress < 0.11 ? progress / 0.11 : progress < 0.7 ? 1 : clamp20((1 - progress) / 0.3, 0, 1);
+        const envelope = progress < 0.11 ? progress / 0.11 : progress < 0.7 ? 1 : clamp((1 - progress) / 0.3, 0, 1);
         const currentLateral = vx * j.nx + vy * j.ny;
-        const delta = clamp20(
+        const delta = clamp(
           targetLateral * envelope - currentLateral,
           -60 * dt,
           60 * dt
         );
         vx += j.nx * delta;
         vy += j.ny * delta;
-        const plantSkill = clamp20(
+        const plantSkill = clamp(
           (p.JUK * 0.4 + p.CUT * 0.29 + p.AGI * 0.21 + p.ACC * 0.1 - 48) / 51,
           0,
           1
@@ -6353,7 +6340,7 @@
         j.remaining = Math.max(0, j.remaining - dt);
         if (j.remaining <= 0) {
           p.jukeDrive = null;
-          p.jukeRecovery = clamp20(0.18 + 0.21 * plantSkill, 0.18, 0.39);
+          p.jukeRecovery = clamp(0.18 + 0.21 * plantSkill, 0.18, 0.39);
         }
       }
       let s = Math.hypot(vx, vy);
@@ -6361,9 +6348,9 @@
       const targetCap = maxSpeed(p) * (p.sprinting ? 1 : 0.84) * (p.covering ? 0.92 : 1) * burstCeiling;
       if (p.gaitCap === null || !Number.isFinite(p.gaitCap))
         p.gaitCap = targetCap;
-      const capRise = dt * clamp20(5 + (p.ACC - 65) * 0.065, 3, 8);
-      const capFall = dt * clamp20(4.4 + (p.AGI - 65) * 0.04, 3.2, 6.2);
-      p.gaitCap += clamp20(targetCap - p.gaitCap, -capFall, capRise);
+      const capRise = dt * clamp(5 + (p.ACC - 65) * 0.065, 3, 8);
+      const capFall = dt * clamp(4.4 + (p.AGI - 65) * 0.04, 3.2, 6.2);
+      p.gaitCap += clamp(targetCap - p.gaitCap, -capFall, capRise);
       if (s > p.gaitCap) {
         vx *= p.gaitCap / s;
         vy *= p.gaitCap / s;
@@ -6391,20 +6378,20 @@
       for (const d of def) {
         if (d.assignment?.kind !== "man" || d.ground) continue;
         const p = P(d.assignment.target);
-        if (!p || !["WR", "TE"].includes(p.pos) || dist(d, p) > 3.9) continue;
+        if (!p || !["WR", "TE"].includes(p.pos) || distance2D(d, p) > 3.9) continue;
         const win = p.REL * 0.44 + p.HND * 0.28 + p.AGI * 0.16 + p.STR * 0.12;
         const resist = d.PRS * 0.47 + d.JAM * 0.29 + d.STR * 0.15 + d.MIR * 0.09;
         const margin = win - resist + (rand() - 0.5) * 8;
         p.pressOpponent = d.key;
         if (margin < -2) {
-          p.releaseSlow = clamp20(0.22 + (-margin - 2) * 8e-3, 0.22, 0.58);
+          p.releaseSlow = clamp(0.22 + (-margin - 2) * 8e-3, 0.22, 0.58);
           p.pressResult = "jammed";
           d.pressResult = "jammed";
         } else if (margin > 2) {
-          p.releaseBurst = clamp20(0.19 + (margin - 2) * 6e-3, 0.19, 0.47);
+          p.releaseBurst = clamp(0.19 + (margin - 2) * 6e-3, 0.19, 0.47);
           p.pressResult = "clean-release";
           d.pressResult = "beaten-release";
-          d.mirrorDelay = clamp20((margin - 2) * 2e-3, 0, 0.12);
+          d.mirrorDelay = clamp((margin - 2) * 2e-3, 0, 0.12);
         } else {
           p.pressResult = "even";
           d.pressResult = "even";
@@ -6421,11 +6408,11 @@
       const bx = to[0] - vertex[0], by = to[1] - vertex[1];
       const ma = Math.hypot(ax, ay), mb = Math.hypot(bx, by);
       if (ma < 0.01 || mb < 0.01) return;
-      const bend = Math.acos(clamp20((ax * bx + ay * by) / (ma * mb), -1, 1));
+      const bend = angleFromCosine((ax * bx + ay * by) / (ma * mb));
       if (bend < 0.34) return;
       const isDouble = selectedPlay === "sluggo" && newIdx === 2 && (p.key === "WR1" || p.key === "WR2");
       p.routeBreaks++;
-      p.routeBreakTime = clamp20(
+      p.routeBreakTime = clamp(
         (0.2 + bend * 0.15) * (p.routeVariation?.tempo || 1),
         0.2,
         0.49
@@ -6439,7 +6426,7 @@
         const fakeSkill = p.DBL * 0.55 + p.RTE * 0.25 + p.HND * 0.2;
         const discipline = matched.DIS * 0.54 + matched.RCR * 0.29 + matched.AWR * 0.17;
         const fake = isDouble ? fakeSkill - discipline : 0;
-        const delay = clamp20(
+        const delay = clamp(
           0.078 + bend * 0.034 + (skill - guard) * 4e-3 + (isDouble ? Math.max(-8, fake) * 43e-4 : 0) + (matched.coverageVariation?.react || 0),
           0.025,
           0.39
@@ -6448,11 +6435,11 @@
         matched.routeReadCount++;
         if (isDouble && fake > 12) {
           const direction2 = Math.sign(ay) || 1;
-          const duration = clamp20(0.1 + (fake - 12) * 6e-3, 0.1, 0.27);
+          const duration = clamp(0.1 + (fake - 12) * 6e-3, 0.1, 0.27);
           matched.falseStep = {
             until: playClock + duration,
             x: matched.x + 0.35,
-            y: matched.y + direction2 * clamp20(0.55 + (fake - 12) * 0.04, 0.55, 1.6)
+            y: matched.y + direction2 * clamp(0.55 + (fake - 12) * 0.04, 0.55, 1.6)
           };
           p.doubleMoveWins++;
         }
@@ -6461,7 +6448,7 @@
     function scrambleOpenSpace(p) {
       const qb = P("QB"), forward = qb && qb.x > playStart - 3 && qb.vx > 1.2;
       const options = [];
-      const longBreak = clamp20(
+      const longBreak = clamp(
         (p.RTE * 0.48 + p.AWR * 0.33 + p.CUT * 0.19 - 60) / 39,
         0.2,
         1
@@ -6471,14 +6458,14 @@
       const minX = Math.max(playStart + 1.2, (qb?.x || playStart) + 2);
       for (const dx of depth)
         for (const dy of lateral) {
-          const x = clamp20(p.x + dx, Math.min(minX, 108.2), 108.2), y = clamp20(p.y + dy, 2.4, H - 2.4);
+          const x = clamp(p.x + dx, Math.min(minX, 108.2), 108.2), y = clamp(p.y + dy, 2.4, H - 2.4);
           const move2 = Math.hypot(x - p.x, y - p.y);
           if (move2 < 1.3 || move2 > 12.5) continue;
           const threats = def.filter((d) => !d.ground).map(
             (d) => Math.hypot(x - (d.x + d.vx * 0.17), y - (d.y + d.vy * 0.17))
           ).sort((a, b) => a - b);
           const separation = (threats[0] || 10) * 0.84 + (threats[1] || 12) * 0.18;
-          const others = off.filter((o) => o !== p && o.pos !== "QB" && o.pos !== "RB").map((o) => dist(o, { x, y }));
+          const others = off.filter((o) => o !== p && o.pos !== "QB" && o.pos !== "RB").map((o) => distance2D(o, { x, y }));
           const spacing = others.length ? Math.min(...others) : 10;
           const nearSide = Math.min(y, H - y);
           const qbProximity = qb ? Math.hypot(x - qb.x, y - qb.y) : 15;
@@ -6488,15 +6475,15 @@
         }
       options.sort((a, b) => b.score - a.score);
       return options[0] || {
-        x: clamp20(p.x + 2, 7, 108),
-        y: clamp20(p.y + (p.y < 26.6 ? 3 : -3), 2.4, H - 2.4)
+        x: clamp(p.x + 2, 7, 108),
+        y: clamp(p.y + (p.y < 26.6 ? 3 : -3), 2.4, H - 2.4)
       };
     }
     function scrambleRouteAI(p, dt) {
-      const done = !p.scrambleTarget || playClock >= p.scrambleReplanAt || dist(p, p.scrambleTarget) < 1.4;
+      const done = !p.scrambleTarget || playClock >= p.scrambleReplanAt || distance2D(p, p.scrambleTarget) < 1.4;
       if (done) {
         p.scrambleTarget = scrambleOpenSpace(p);
-        p.scrambleReplanAt = playClock + clamp20(0.5 + (100 - p.AWR) * 6e-3, 0.5, 0.82);
+        p.scrambleReplanAt = playClock + clamp(0.5 + (100 - p.AWR) * 6e-3, 0.5, 0.82);
         p.scrambleStepCount = (p.scrambleStepCount || 0) + 1;
       }
       p.intent = "scramble-open";
@@ -6507,7 +6494,7 @@
         t.x - p.x,
         t.y - p.y,
         dt,
-        clamp20(0.92 + (p.CUT - 70) * 4e-3 + (p.RTE - 70) * 2e-3, 0.78, 1.14)
+        clamp(0.92 + (p.CUT - 70) * 4e-3 + (p.RTE - 70) * 2e-3, 0.78, 1.14)
       );
     }
     function AIroute(p, dt) {
@@ -6551,7 +6538,7 @@
     function closestThreat(p, filter) {
       let best = null, bd = 999;
       for (let d of filter) {
-        let dd = dist(p, d);
+        let dd = distance2D(p, d);
         if (dd < bd) {
           bd = dd;
           best = d;
@@ -6597,7 +6584,7 @@
     function recognizeRun(d) {
       if (!RUNS.has(selectedPlay)) return false;
       if (d.runRead) return true;
-      const local = ballCarrier && dist(d, ballCarrier) < 3.4;
+      const local = ballCarrier && distance2D(d, ballCarrier) < 3.4;
       const confirmedHandoff = ballCarrier === P("RB") && playClock >= d.readAt + (d.pos === "FS" || d.pos === "SS" ? 0.16 : 0.12);
       if ((local || playClock >= d.readAt) && hasRunCue() && (InsideZoneIQ.visible(d, ballCarrier || P("RB")) || local || confirmedHandoff)) {
         d.runRead = true;
@@ -6614,14 +6601,14 @@
       const a = ballCarrier || P("RB");
       const seesRunner = a && InsideZoneIQ.visible(d, a);
       if (a && d.runRead && seesRunner) {
-        const weight = clamp20((d.PRC - 35) / 80, 0.2, 0.78);
-        if (inner) y += clamp20(a.y - y, -5.5, 5.5) * weight;
-        else if (role === "cutback") y += clamp20(a.y - y, -6, 6) * 0.26;
-        else if (role === "alley") y += clamp20(a.y - y, -7, 7) * 0.43;
+        const weight = clamp((d.PRC - 35) / 80, 0.2, 0.78);
+        if (inner) y += clamp(a.y - y, -5.5, 5.5) * weight;
+        else if (role === "cutback") y += clamp(a.y - y, -6, 6) * 0.26;
+        else if (role === "alley") y += clamp(a.y - y, -7, 7) * 0.43;
       }
       d.intent = "run-fit";
       d.intentTarget = role;
-      if (selectedPlay === "inside" && d.runRead && seesRunner && !d.ground && d.blocked < 0.2 && playClock > 0.29 && dist(d, a) > 3.4 && dist(d, a) < 13) {
+      if (selectedPlay === "inside" && d.runRead && seesRunner && !d.ground && d.blocked < 0.2 && playClock > 0.29 && distance2D(d, a) > 3.4 && distance2D(d, a) < 13) {
         const response3 = InsideZoneIQ.response(
           d,
           off.filter(
@@ -6641,7 +6628,7 @@
       else arrive(d, x, y, dt, 1.05);
     }
     function interceptT(d, a) {
-      const sep = dist(d, a), spd = Math.max(2, maxSpeed(d) * (0.87 + 0.13 * d.stam));
+      const sep = distance2D(d, a), spd = Math.max(2, maxSpeed(d) * (0.87 + 0.13 * d.stam));
       const rx = a.x - d.x, ry = a.y - d.y, vx = a.vx, vy = a.vy;
       const aa = vx * vx + vy * vy - spd * spd, bb = 2 * (rx * vx + ry * vy), cc = rx * rx + ry * ry;
       let t = sep / spd;
@@ -6653,11 +6640,11 @@
         );
         if (good.length) t = Math.min(...good);
       }
-      return clamp20(t, 0.045, 0.85);
+      return clamp(t, 0.045, 0.85);
     }
     function pursuitAim(d, a) {
-      const sep = dist(d, a), fit = d.fit || runFitFor(d), role = fit.role;
-      const pur = clamp20((d.PUR - 35) / 64, 0.08, 1);
+      const sep = distance2D(d, a), fit = d.fit || runFitFor(d), role = fit.role;
+      const pur = clamp((d.PUR - 35) / 64, 0.08, 1);
       let t;
       if (sep <= 4.5) t = 0.035;
       else if (sep <= 9) t = 0.065 + 0.11 * pur;
@@ -6686,8 +6673,8 @@
         mode = "tackle";
       }
       if (d.x < a.x - 1 && a.vx > 1.2) tx = Math.max(tx, a.x + 0.1);
-      tx = clamp20(tx, 10, 110);
-      ty = clamp20(ty, 0.45, H - 0.45);
+      tx = clamp(tx, 10, 110);
+      ty = clamp(ty, 0.45, H - 0.45);
       const base = { x: tx, y: ty, lead: t, mode, sep, role };
       if (ballCarrier === a && !specialState && Number.isFinite(a.x)) {
         if (!Number.isFinite(a.pursuitHighX)) a.pursuitHighX = a.x;
@@ -6709,7 +6696,7 @@
     function pursuitAI(d, a, dt) {
       const aim2 = pursuitAim(d, a);
       d.pursuitPoint = aim2;
-      const rating3 = clamp20(0.95 + (d.PUR - 70) * 32e-4, 0.82, 1.11);
+      const rating3 = clamp(0.95 + (d.PUR - 70) * 32e-4, 0.82, 1.11);
       d.intent = ["edge-contain", "retreat-contain"].includes(aim2.mode) ? "contain" : aim2.mode === "last-line" ? "safety-angle" : "pursue";
       d.intentTarget = aim2.role;
       steer(d, aim2.x - d.x, aim2.y - d.y, dt, rating3 * (d.blocked > 0 ? 0.54 : 1));
@@ -6746,7 +6733,7 @@
       const engaged = blockLinks.get(o.key);
       const laneWidth = o.key === "WR3" ? 9 : 8;
       const homeY = o.spawnY;
-      const onAssignmentSide = (d) => d && !d.ground && d.beatenUntil < playClock && Math.abs(d.y - homeY) <= laneWidth && Math.sign(d.y - 26.65) === Math.sign(homeY - 26.65) && dist(o, d) < 15.5;
+      const onAssignmentSide = (d) => d && !d.ground && d.beatenUntil < playClock && Math.abs(d.y - homeY) <= laneWidth && Math.sign(d.y - 26.65) === Math.sign(homeY - 26.65) && distance2D(o, d) < 15.5;
       let target = null;
       if (engaged) {
         const existing = P(engaged.defender);
@@ -6762,7 +6749,7 @@
           (d) => onAssignmentSide(d) && !claims.has(d.key) && d.key !== o.beatenTarget && !otherAssignments.has(d.key) && ["CB", "SS", "FS", "LB", "OLB", "MLB"].includes(d.pos)
         );
         inLane.sort((a, b) => {
-          const score2 = (d) => dist(o, d) + Math.abs(d.y - homeY) * 0.18 + (d.pos === "CB" ? -1.4 : 0);
+          const score2 = (d) => distance2D(o, d) + Math.abs(d.y - homeY) * 0.18 + (d.pos === "CB" ? -1.4 : 0);
           return score2(a) - score2(b);
         });
         target = inLane[0] || null;
@@ -6771,55 +6758,55 @@
         claims.add(target.key);
         o.intent = "run-block";
         o.intentTarget = target.key;
-        const lead = clamp20(0.12 + dist(o, target) / 35, 0.16, 0.37);
+        const lead = clamp(0.12 + distance2D(o, target) / 35, 0.16, 0.37);
         const tx = target.x + target.vx * lead - 0.48;
-        const lane = clamp20(
+        const lane = clamp(
           target.y + target.vy * lead,
           Math.max(0.8, homeY - laneWidth),
           Math.min(H - 0.8, homeY + laneWidth)
         );
-        if (dist(o, target) > 1.1) steer(o, tx - o.x, lane - o.y, dt, 1.12);
+        if (distance2D(o, target) > 1.1) steer(o, tx - o.x, lane - o.y, dt, 1.12);
         else arrive(o, tx, lane, dt, 1);
-        if (dist(o, target) < 2.12) blockBattle(o, target, dt);
+        if (distance2D(o, target) < 2.12) blockBattle(o, target, dt);
       } else {
         o.intent = "edge-stalk";
         o.intentTarget = primary?.key || "outside-lane";
         const advance2 = carrier ? Math.min(carrier.x + 3.1, playStart + 13) : playStart + 6;
-        const x = clamp20(Math.max(o.x, advance2), playStart + 0.6, 109);
+        const x = clamp(Math.max(o.x, advance2), playStart + 0.6, 109);
         arrive(o, x, homeY, dt, 0.93);
       }
     }
     function defenderTackleThreat(d, a) {
-      const sep = Math.max(0.1, dist(d, a)), nx = (a.x - d.x) / sep, ny = (a.y - d.y) / sep;
+      const sep = Math.max(0.1, distance2D(d, a)), nx = (a.x - d.x) / sep, ny = (a.y - d.y) / sep;
       const defenderMax = Math.max(2, maxSpeed(d));
       const currentToward = d.vx * nx + d.vy * ny;
       const carrierAway = a.vx * nx + a.vy * ny;
-      const approach = clamp20(currentToward / defenderMax, -1, 1);
-      const anticipation = clamp20((d.PUR - 40) / 60, 0.08, 0.94);
-      const look = clamp20(
+      const approach = clamp(currentToward / defenderMax, -1, 1);
+      const anticipation = clamp((d.PUR - 40) / 60, 0.08, 0.94);
+      const look = clamp(
         sep / (defenderMax + 2) * (0.25 + 0.27 * anticipation),
         0.08,
         0.58
       );
       const tx = a.x + a.vx * look, ty = a.y + a.vy * look;
       const interceptGap = Math.hypot(tx - d.x, ty - d.y);
-      const attainable = clamp20(
+      const attainable = clamp(
         Math.max(0, currentToward) + acceleration(d) * 0.62,
         2.6,
         defenderMax
       );
-      const eta = clamp20(Math.max(0, interceptGap - 1.15) / attainable, 0.04, 5);
-      const tackles = clamp20(
+      const eta = clamp(Math.max(0, interceptGap - 1.15) / attainable, 0.04, 5);
+      const tackles = clamp(
         (d.TAK * 0.42 + d.PUR * 0.33 + d.ACC * 0.18 + d.AWR * 0.07) / 100,
         0.25,
         0.99
       );
       const behind = a.x > d.x + 3 && a.vx > 1.5;
       const relativeClosing = currentToward - carrierAway;
-      const trailing = behind && relativeClosing < 0 ? clamp20(0.58 + relativeClosing * 0.055, 0.22, 0.75) : 1;
-      const readiness = clamp20(0.76 + approach * 0.24, 0.52, 1);
+      const trailing = behind && relativeClosing < 0 ? clamp(0.58 + relativeClosing * 0.055, 0.22, 0.75) : 1;
+      const readiness = clamp(0.76 + approach * 0.24, 0.52, 1);
       const timeUrgency = 1 / (0.32 + Math.pow(eta, 1.2));
-      const risk = clamp20(
+      const risk = clamp(
         44 * tackles * timeUrgency * readiness * trailing,
         0,
         100
@@ -6827,14 +6814,14 @@
       return { risk, eta, sep, closing: relativeClosing };
     }
     function blockTargetMerit(o, d, a, assigned = null) {
-      const danger = defenderTackleThreat(d, a), reach = dist(o, d);
+      const danger = defenderTackleThreat(d, a), reach = distance2D(o, d);
       const blockerVelocity = Math.max(
         2.2,
         Math.min(maxSpeed(o), speed(o) + acceleration(o) * 0.65)
       );
       const blockEta = Math.max(0, reach - 1.4) / blockerVelocity;
-      const chance = clamp20(0.73 + (danger.eta - blockEta) * 0.3, 0.22, 1.12);
-      const physical = clamp20(
+      const chance = clamp(0.73 + (danger.eta - blockEta) * 0.3, 0.22, 1.12);
+      const physical = clamp(
         o.BLO * 0.47 + o.IBL * 0.25 + o.STR * 0.28 - (d.PMV * 0.5 + d.STR * 0.5),
         -35,
         35
@@ -6850,23 +6837,23 @@
         2,
         Math.min(maxSpeed(o), speed(o) + acceleration(o) * 0.38)
       );
-      const arrival = clamp20((dist(o, d) - 1.3) / blockerSpeed, 0.05, 0.46);
-      const lead = clamp20(Math.min(arrival, incoming.eta * 0.62), 0.045, 0.38);
+      const arrival = clamp((distance2D(o, d) - 1.3) / blockerSpeed, 0.05, 0.46);
+      const lead = clamp(Math.min(arrival, incoming.eta * 0.62), 0.045, 0.38);
       const velocityX = d.x + d.vx * lead, velocityY = d.y + d.vy * lead;
       const towardX = a.x - d.x, towardY = a.y - d.y, sep = Math.max(0.1, Math.hypot(towardX, towardY));
-      const align = clamp20(
+      const align = clamp(
         (d.vx * towardX + d.vy * towardY) / (Math.max(0.1, speed(d)) * sep),
         -1,
         1
       );
-      const anticipation = clamp20((d.PUR - 45) / 55, 0.1, 0.95);
-      const more = align > 0.15 ? clamp20(0.12 * anticipation * (1 - arrival / 0.6), 0, 0.11) : 0;
+      const anticipation = clamp((d.PUR - 45) / 55, 0.1, 0.95);
+      const more = align > 0.15 ? clamp(0.12 * anticipation * (1 - arrival / 0.6), 0, 0.11) : 0;
       const projectedX = velocityX + towardX / sep * maxSpeed(d) * more;
       const projectedY = velocityY + towardY / sep * maxSpeed(d) * more;
-      const angle2 = Math.atan2(a.y - projectedY, a.x - projectedX), offset2 = clamp20(0.36 + (o.BLO - 65) * 2e-3, 0.3, 0.48);
+      const angle2 = Math.atan2(a.y - projectedY, a.x - projectedX), offset2 = clamp(0.36 + (o.BLO - 65) * 2e-3, 0.3, 0.48);
       return {
-        x: clamp20(projectedX + Math.cos(angle2) * offset2, 10, 109.5),
-        y: clamp20(projectedY + Math.sin(angle2) * offset2, 0.5, H - 0.5),
+        x: clamp(projectedX + Math.cos(angle2) * offset2, 10, 109.5),
+        y: clamp(projectedY + Math.sin(angle2) * offset2, 0.5, H - 0.5),
         eta: incoming.eta,
         threat: incoming.risk
       };
@@ -6880,9 +6867,9 @@
       const assigned = def.find(
         (d) => d.assignment?.kind === "man" && d.assignment.target === o.key
       );
-      const eligible = (d) => d && !d.ground && d.stun < 0.65 && d.beatenUntil < playClock && d.key !== o.beatenTarget && dist(o, d) < 11.5 && d.x >= a.x - 9 && d.x <= a.x + 17;
+      const eligible = (d) => d && !d.ground && d.stun < 0.65 && d.beatenUntil < playClock && d.key !== o.beatenTarget && distance2D(o, d) < 11.5 && d.x >= a.x - 9 && d.x <= a.x + 17;
       let target = null;
-      if (current && !current.ground && dist(o, current) < 2.75) target = current;
+      if (current && !current.ground && distance2D(o, current) < 2.75) target = current;
       if (!target) {
         const options = def.filter(eligible);
         const best = bestLiveBlockTarget(o, a, options, claims, assigned);
@@ -6901,18 +6888,18 @@
         o.intentTarget = target.key;
         const intercept = blockInterceptPoint(o, target, a);
         o.blockApproach = intercept;
-        if (dist(o, target) > 1.12)
+        if (distance2D(o, target) > 1.12)
           steer(o, intercept.x - o.x, intercept.y - o.y, dt, 1.13);
         else arrive(o, intercept.x, intercept.y, dt, 1);
-        if (dist(o, target) < 2.12) blockBattle(o, target, dt);
+        if (distance2D(o, target) < 2.12) blockBattle(o, target, dt);
         return;
       }
       o.supportTarget = null;
       o.supportUntil = 0;
       o.intent = "catch-screen";
       o.intentTarget = a.key;
-      const tx = clamp20(Math.max(o.x, a.x + 1.2), 10, 109);
-      const ty = clamp20(o.y + (a.y - o.y) * 0.075, 0.8, H - 0.8);
+      const tx = clamp(Math.max(o.x, a.x + 1.2), 10, 109);
+      const ty = clamp(o.y + (a.y - o.y) * 0.075, 0.8, H - 0.8);
       arrive(o, tx, ty, dt, 0.95);
     }
     function runSupportAI(o, a, dt, claims) {
@@ -6924,7 +6911,7 @@
       );
       const livePassSupport = !RUNS.has(selectedPlay) && a.x >= playStart;
       const candidates = def.filter(
-        (d) => !d.ground && d.stun < 0.65 && d.beatenUntil < playClock && d.key !== o.beatenTarget && d.x > a.x - (livePassSupport ? 9 : 5.5) && d.x < a.x + 16 && dist(d, a) < (livePassSupport ? scope + 3 : scope) && dist(d, o) < maxReach && (livePassSupport || !reserved.has(d.key) || dist(d, a) < 2.4)
+        (d) => !d.ground && d.stun < 0.65 && d.beatenUntil < playClock && d.key !== o.beatenTarget && d.x > a.x - (livePassSupport ? 9 : 5.5) && d.x < a.x + 16 && distance2D(d, a) < (livePassSupport ? scope + 3 : scope) && distance2D(d, o) < maxReach && (livePassSupport || !reserved.has(d.key) || distance2D(d, a) < 2.4)
       );
       let chosen = null;
       const current = blockLinks.get(o.key), engaged = current ? P(current.defender) : null;
@@ -6934,13 +6921,13 @@
         const keep = candidates.find(
           (d) => d.key === o.supportTarget && !claims.has(d.key)
         );
-        if (keep && (livePassSupport ? playClock < (o.supportUntil || 0) && (!best || blockTargetMerit(o, keep, a) >= blockTargetMerit(o, best, a) - 8) : dist(keep, o) < maxReach * 0.85))
+        if (keep && (livePassSupport ? playClock < (o.supportUntil || 0) && (!best || blockTargetMerit(o, keep, a) >= blockTargetMerit(o, best, a) - 8) : distance2D(keep, o) < maxReach * 0.85))
           chosen = keep;
         if (!chosen && best) chosen = best;
       }
       if (!chosen && !livePassSupport) {
         const ranked = candidates.filter((d) => !claims.has(d.key)).sort((d, e) => {
-          const merit = (t) => dist(t, a) * 1.15 + dist(t, o) * 0.65 + Math.max(0, o.x - t.x) * 0.3 - (t.rush && lineman ? 2 : 0);
+          const merit = (t) => distance2D(t, a) * 1.15 + distance2D(t, o) * 0.65 + Math.max(0, o.x - t.x) * 0.3 - (t.rush && lineman ? 2 : 0);
           return merit(d) - merit(e);
         });
         chosen = ranked[0] || null;
@@ -6953,8 +6940,8 @@
         o.intentTarget = chosen.key;
         const intercept = blockInterceptPoint(o, chosen, a);
         o.blockApproach = intercept;
-        if (dist(o, chosen) < 1.75) blockBattle(o, chosen, dt);
-        if (dist(o, chosen) > 1.8)
+        if (distance2D(o, chosen) < 1.75) blockBattle(o, chosen, dt);
+        if (distance2D(o, chosen) > 1.8)
           steer(
             o,
             intercept.x - o.x,
@@ -6970,7 +6957,7 @@
       const side = o.spawnY < a.y ? -1 : 1;
       const forward = lineman ? 2.2 : o.pos === "WR" ? 5.5 : 3.3;
       const spacing = lineman ? 1.8 : o.pos === "WR" ? 4.8 : 2.7;
-      const homeX = clamp20(a.x + forward, 10, 109), homeY = clamp20(a.y + side * spacing, 0.8, H - 0.8);
+      const homeX = clamp(a.x + forward, 10, 109), homeY = clamp(a.y + side * spacing, 0.8, H - 0.8);
       o.intent = "escort";
       o.intentTarget = a.key;
       arrive(o, homeX, homeY, dt, lineman ? 0.91 : 0.98);
@@ -6978,14 +6965,14 @@
     function quarterbackSupport(q, a, dt) {
       q.intent = "trail";
       q.intentTarget = a.key;
-      const x = clamp20(playStart - 3.6, 10, 109);
-      const y = clamp20(q.spawnY + (a.y < q.spawnY ? 2.8 : -2.8), 1, H - 1);
+      const x = clamp(playStart - 3.6, 10, 109);
+      const y = clamp(q.spawnY + (a.y < q.spawnY ? 2.8 : -2.8), 1, H - 1);
       arrive(q, x, y, dt, 0.82);
     }
     function chooseDefenderCommitment(d, a) {
       if (!a || d.action?.time > 0 || d.tackleCooldown > 0 || d.diveRecovery > 0 || d.ground || d.blocked > 0.25 || d.stun > 0)
         return;
-      const gap = dist(d, a), dx = a.x - d.x, dy = a.y - d.y, along = Math.max(0.01, gap);
+      const gap = distance2D(d, a), dx = a.x - d.x, dy = a.y - d.y, along = Math.max(0.01, gap);
       const closing = ((d.vx - a.vx) * dx + (d.vy - a.vy) * dy) / along;
       const facing = (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / along;
       const choice = ChaosTackleIntelligence.selection(d, a, {
@@ -7030,9 +7017,9 @@
         return;
       }
       const read = recognizeRun(d);
-      if (ballCarrier && (!RUNS.has(selectedPlay) || read || dist(d, ballCarrier) < 3.4)) {
+      if (ballCarrier && (!RUNS.has(selectedPlay) || read || distance2D(d, ballCarrier) < 3.4)) {
         const seen = InsideZoneIQ.visible(d, ballCarrier);
-        if (seen || dist(d, ballCarrier) < 1.65 || selectedPlay !== "inside") {
+        if (seen || distance2D(d, ballCarrier) < 1.65 || selectedPlay !== "inside") {
           if (seen)
             d.lastVisibleRunner = {
               x: ballCarrier.x,
@@ -7066,7 +7053,7 @@
         return;
       }
       const qb = P("QB");
-      if (!RUNS.has(selectedPlay) && !passThrown && !ballCarrier && qb && (qb.x >= playStart - 1.9 || RushAwareness.assess(qb, playStart, playClock).escape) && d.assignment?.kind === "zone" && d.assignment.depth < 12 && dist(d, qb) < 12) {
+      if (!RUNS.has(selectedPlay) && !passThrown && !ballCarrier && qb && (qb.x >= playStart - 1.9 || RushAwareness.assess(qb, playStart, playClock).escape) && d.assignment?.kind === "zone" && d.assignment.depth < 12 && distance2D(d, qb) < 12) {
         d.intent = "scramble-alert";
         d.intentTarget = "QB";
         steer(d, qb.x + 0.3 - d.x, qb.y - d.y, dt, 1.06);
@@ -7093,21 +7080,21 @@
         }
         d.intent = "cover-man";
         d.intentTarget = t.key;
-        const shadow = clamp20(
+        const shadow = clamp(
           (100 - d.COV) * 0.012 + (d.coverageVariation?.cushion || 0),
           0.06,
           0.5
         ), isCB = d.pos === "CB";
         const lead = 0.14 + (d.AWR - 70) * 5e-3;
         const deepThreat = CoverageRoutePolicy.isVerticalThreat(t, playStart);
-        const tx2 = t.x + clamp20(t.vx * lead, -1, 2) + (isCB ? deepThreat ? 1.8 : 1 : 0.6), ty2 = t.y + t.vy * lead + Math.sign(d.y - t.y) * shadow;
+        const tx2 = t.x + clamp(t.vx * lead, -1, 2) + (isCB ? deepThreat ? 1.8 : 1 : 0.6), ty2 = t.y + t.vy * lead + Math.sign(d.y - t.y) * shadow;
         d.mirrorDelay = Math.max(0, d.mirrorDelay - dt);
-        const mirror = clamp20(
+        const mirror = clamp(
           (0.9 + (d.MIR - 75) * 5e-3) * (d.coverageVariation?.mirror || 1),
           0.67,
           1.09
         );
-        const effort = clamp20(0.92 + (d.COV - 75) * 3e-3, 0.86, 1.06) * mirror;
+        const effort = clamp(0.92 + (d.COV - 75) * 3e-3, 0.86, 1.06) * mirror;
         if (d.falseStep && d.falseStep.until > playClock) {
           d.intent = "cover-fake";
           steer(d, d.falseStep.x - d.x, d.falseStep.y - d.y, dt, effort);
@@ -7127,7 +7114,7 @@
         const deep = as.depth >= 12;
         const t = CoverageRoutePolicy.zoneThreat(candidates, as, playStart);
         const predicted = deep ? CoverageRoutePolicy.deepIntercept(d, t, as, playStart) : null;
-        tx = clamp20(
+        tx = clamp(
           predicted ? predicted.x : t.x + (deep ? 2.2 : 0.6),
           deep ? Math.min(
             playStart + Math.max(1.5, Math.min(8, (110 - playStart) * 0.6 + 1)),
@@ -7135,7 +7122,7 @@
           ) : playStart + 2,
           deep ? 114.65 : Math.min(114.65, playStart + 16)
         );
-        ty = clamp20(
+        ty = clamp(
           predicted ? predicted.y : t.y,
           as.baseY - as.width * 0.76,
           as.baseY + as.width * 0.76
@@ -7146,7 +7133,7 @@
       d.intentTarget = as.tag;
       tx += d.coverageVariation?.react || 0;
       ty += d.coverageVariation?.cushion || 0;
-      const coverEffort = clamp20(
+      const coverEffort = clamp(
         (0.92 + (d.COV - 75) * 2e-3) * (d.coverageVariation?.mirror || 1),
         0.82,
         1.1
@@ -7163,19 +7150,19 @@
       const impactRating = attacker.team === 1 ? attacker.HIT * 0.62 + attacker.TAK * 0.18 + attacker.STR * 0.2 : attacker.IBL * 0.52 + attacker.BLO * 0.24 + attacker.STR * 0.24;
       const resistance = victim.STR * 0.33 + victim.AWR * 0.25 + victim.AGI * 0.2 + victim.STA * 0.22;
       const facing = Math.cos(victim.face) * -nx + Math.sin(victim.face) * -ny;
-      const penalty = clamp20(facing, -1, 1) * 45;
+      const penalty = clamp(facing, -1, 1) * 45;
       const base = 430 + (resistance - 75) * 2.2 + (mass2(victim) - 100) * 0.46 - (impactRating - 75) * 2.7 + penalty;
-      const threshold = clamp20(base, 270, 660);
+      const threshold = clamp(base, 270, 660);
       const quality2 = impulse / threshold;
       if (quality2 < 1) return false;
-      const excess = clamp20(quality2 - 1, 0, 1.4);
-      const fall = clamp20(0.16 + 0.06 * excess, 0.16, 0.25);
-      const rest = clamp20(
+      const excess = clamp(quality2 - 1, 0, 1.4);
+      const fall = clamp(0.16 + 0.06 * excess, 0.16, 0.25);
+      const rest = clamp(
         0.4 + 0.32 * excess + (100 - victim.STA) * 35e-4,
         0.38,
         0.92
       );
-      const rise = clamp20(0.23 + (100 - victim.AGI) * 1e-3, 0.22, 0.31);
+      const rise = clamp(0.23 + (100 - victim.AGI) * 1e-3, 0.22, 0.31);
       victim.ground = {
         stage: "fall",
         time: fall,
@@ -7192,9 +7179,9 @@
       victim.groundLock = 0;
       victim.stam = Math.max(
         0.045,
-        victim.stam - clamp20(0.075 + 0.065 * excess, 0.075, 0.17)
+        victim.stam - clamp(0.075 + 0.065 * excess, 0.075, 0.17)
       );
-      victim.balance = clamp20(victim.balance - 0.3 - 0.1 * excess, 0.25, 0.65);
+      victim.balance = clamp(victim.balance - 0.3 - 0.1 * excess, 0.25, 0.65);
       victim.technique = "winded";
       victim.intent = "fall";
       victim.intentTarget = attacker.key;
@@ -7229,7 +7216,7 @@
         } else {
           p.ground = null;
           p.groundLock = 0.65;
-          p.balance = clamp20(p.balance + 0.2, 0.5, 1);
+          p.balance = clamp(p.balance + 0.2, 0.5, 1);
           standUps++;
           p.intent = "rejoin";
           p.intentTarget = ballCarrier?.key || "assignment";
@@ -7245,11 +7232,11 @@
       return true;
     }
     function blockBattle(o, d, dt) {
-      if (!o || !d || o.ground || d.ground || o.team === d.team || dist(o, d) > (specialState?.returning ? 2.15 : 1.95) || d.shedCooldown > 0 || tackleLinks.has(d.key) || specialState?.returning && d.returnBypassBlocker === o.key && d.returnBypassUntil > playClock)
+      if (!o || !d || o.ground || d.ground || o.team === d.team || distance2D(o, d) > (specialState?.returning ? 2.15 : 1.95) || d.shedCooldown > 0 || tackleLinks.has(d.key) || specialState?.returning && d.returnBypassBlocker === o.key && d.returnBypassUntil > playClock)
         return;
       let link = blockLinks.get(o.key);
       if (link && link.defender !== d.key) {
-        if (link.age < 0.52 && dist(o, P(link.defender)) < 2.25) return;
+        if (link.age < 0.52 && distance2D(o, P(link.defender)) < 2.25) return;
         blockLinks.delete(o.key);
         link = null;
       }
@@ -7273,7 +7260,7 @@
     function resolveBlocks(dt) {
       for (const [key, e] of blockLinks) {
         const o = P(e.blocker), d = P(e.defender);
-        if (!o || !d || o.ground || d.ground || dist(o, d) > 2.7 || d.shedCooldown > 0) {
+        if (!o || !d || o.ground || d.ground || distance2D(o, d) > 2.7 || d.shedCooldown > 0) {
           if (o && d && selectedPlay === "inside" && o.insideZonePlan && d.ground) {
             o.beatenTarget = d.key;
             o.beatenUntil = playClock + 0.7;
@@ -7303,7 +7290,7 @@
           const choice = BlockingPolicy.decideDefender(
             d,
             o,
-            ballCarrier ? dist(d, ballCarrier) : 12
+            ballCarrier ? distance2D(d, ballCarrier) : 12
           );
           e.decision = choice;
           if (choice === "maneuver" && e.age > 0.24 && e.secured < 0.74) {
@@ -7317,7 +7304,7 @@
             d.intentTarget = ballCarrier?.key || "RB";
             continue;
           }
-          const shedAt = clamp20(
+          const shedAt = clamp(
             0.75 + (o.BLO - d.PMV) * 9e-3 + (o.STR - d.AGI) * 3e-3 + Math.min(helpers, 2) * 0.2,
             0.35,
             1.48
@@ -7327,7 +7314,7 @@
             d.shedCooldown = 0.45;
             d.blocked = 0;
             d.returnBypassBlocker = o.key;
-            d.returnBypassUntil = playClock + clamp20(0.68 + d.AGI / 400, 0.72, 1);
+            d.returnBypassUntil = playClock + clamp(0.68 + d.AGI / 400, 0.72, 1);
             d.returnBypassSide = returnEscapeSide(d, o);
             o.beatenTarget = d.key;
             o.beatenUntil = playClock + 0.6;
@@ -7337,23 +7324,23 @@
             continue;
           }
         }
-        const dd0 = Math.max(0.01, dist(o, d)), ix = (d.x - o.x) / dd0, iy = (d.y - o.y) / dd0;
+        const dd0 = Math.max(0.01, distance2D(o, d)), ix = (d.x - o.x) / dd0, iy = (d.y - o.y) / dd0;
         const approach = Math.max(0, (o.vx - d.vx) * ix + (o.vy - d.vy) * iy);
         if (!e.impactDone && (approach > 1 || o.action?.kind === "impact-block" && o.action.time > 0)) {
           e.impactDone = true;
-          const strike = clamp20(
+          const strike = clamp(
             (o.IBL * 0.54 + o.STR * 0.28 + o.BLO * 0.18 - 45) / 55,
             0.2,
             1.2
-          ) * clamp20(approach / 4, 0.22, 1.4) * (o.action?.kind === "impact-block" ? 1.35 : 1);
-          const delivered = clamp20(approach * 0.3 * strike, 0, 2.4);
+          ) * clamp(approach / 4, 0.22, 1.4) * (o.action?.kind === "impact-block" ? 1.35 : 1);
+          const delivered = clamp(approach * 0.3 * strike, 0, 2.4);
           d.vx += ix * delivered * mass2(o) / (mass2(o) + mass2(d));
           d.vy += iy * delivered * mass2(o) / (mass2(o) + mass2(d));
           o.vx -= ix * delivered * mass2(d) / (mass2(o) + mass2(d));
           o.vy -= iy * delivered * mass2(d) / (mass2(o) + mass2(d));
-          d.balance = clamp20(d.balance - 0.1 * strike, 0.3, 1);
+          d.balance = clamp(d.balance - 0.1 * strike, 0.3, 1);
           d.stun = Math.max(d.stun, 0.08 * strike);
-          e.secured = clamp20(e.secured + strike * 0.24, 0, 1);
+          e.secured = clamp(e.secured + strike * 0.24, 0, 1);
           o.technique = "impact-block";
           o.pulse = 0.25;
           impactBlockCount++;
@@ -7367,30 +7354,30 @@
             "impact-block"
           );
         }
-        e.secured = clamp20(e.secured + dt * (0.72 + mismatch * 55e-4), 0, 1);
+        e.secured = clamp(e.secured + dt * (0.72 + mismatch * 55e-4), 0, 1);
         if (!e.breakAt) {
-          e.breakAt = clamp20(
+          e.breakAt = clamp(
             0.99 + mismatch * 0.016 - powerEdge * 0.012,
             0.34,
             2.55
           );
         }
         if (d.PMV >= 69 && e.age > 0.12 && powerEdge > -17) {
-          const drive2 = clamp20((powerEdge + 24) * 0.018, 0.1, 0.95) * clamp20(mass2(d) / 117, 0.7, 1.4);
+          const drive2 = clamp((powerEdge + 24) * 0.018, 0.1, 0.95) * clamp(mass2(d) / 117, 0.7, 1.4);
           o.vx -= ix * drive2 * dt * 3.5;
           o.vy -= iy * drive2 * dt * 3.5;
           d.technique = "power-move";
-          d.lean = clamp20(d.lean + 0.05 * dt, -0.5, 0.5);
+          d.lean = clamp(d.lean + 0.05 * dt, -0.5, 0.5);
           if (!e.powerUsed) {
             e.powerUsed = true;
             powerMoveCount++;
           }
         }
-        const nearRunLane = selectedPlay === "inside" && ballCarrier && o.insideZonePlan && dist(d, ballCarrier) < 5.2;
-        const earnedHold = nearRunLane && e.secured > 0.35 ? clamp20((e.secured - 0.35) * 0.72, 0, 0.36) * clamp20((30 - powerEdge) / 28, 0.25, 1) : 0;
+        const nearRunLane = selectedPlay === "inside" && ballCarrier && o.insideZonePlan && distance2D(d, ballCarrier) < 5.2;
+        const earnedHold = nearRunLane && e.secured > 0.35 ? clamp((e.secured - 0.35) * 0.72, 0, 0.36) * clamp((30 - powerEdge) / 28, 0.25, 1) : 0;
         if (e.age > e.breakAt + earnedHold && (mismatch < 25 || powerEdge > 16)) {
           blockLinks.delete(key);
-          d.shedCooldown = clamp20(0.35 + (d.AGI - 65) * 3e-3, 0.3, 0.5);
+          d.shedCooldown = clamp(0.35 + (d.AGI - 65) * 3e-3, 0.3, 0.5);
           d.blocked = Math.max(d.blocked, nearRunLane ? 0.44 : 0.22);
           d.tackleCooldown = Math.max(
             d.tackleCooldown,
@@ -7401,7 +7388,7 @@
           continue;
         }
         const a = ballCarrier || P("RB");
-        const cleanWin = (RUNS.has(selectedPlay) || ballCarrier && ballCarrier.x >= playStart) && e.age > 0.47 && e.secured > 0.74 && mismatch > 9 && a && (d.ground || d.stun > 0.12 || d.x < a.x - 1.8 && dist(d, a) > 3 || Math.abs(d.y - a.y) > 4.5 && d.x < a.x + 2);
+        const cleanWin = (RUNS.has(selectedPlay) || ballCarrier && ballCarrier.x >= playStart) && e.age > 0.47 && e.secured > 0.74 && mismatch > 9 && a && (d.ground || d.stun > 0.12 || d.x < a.x - 1.8 && distance2D(d, a) > 3 || Math.abs(d.y - a.y) > 4.5 && d.x < a.x + 2);
         if (cleanWin) {
           o.blockWins++;
           o.beatenTarget = d.key;
@@ -7418,7 +7405,7 @@
           o.intentTarget = "next-threat";
           continue;
         }
-        const dd = Math.max(0.01, dist(o, d)), nx = (d.x - o.x) / dd, ny = (d.y - o.y) / dd;
+        const dd = Math.max(0.01, distance2D(o, d)), nx = (d.x - o.x) / dd, ny = (d.y - o.y) / dd;
         const contact2 = BlockingPolicy.contact({
           blocker: o,
           defender: d,
@@ -7428,7 +7415,7 @@
           runner: ballCarrier || P("RB")
         });
         e.mode = contact2.state;
-        const desired = clamp20(radius(o) + radius(d) + 0.36, 1.28, 1.76);
+        const desired = clamp(radius(o) + radius(d) + 0.36, 1.28, 1.76);
         if (dd < desired) {
           const separate = Math.min(0.105, (desired - dd) * 0.43);
           const sum = mass2(o) + mass2(d);
@@ -7437,45 +7424,45 @@
           d.x += nx * separate * mass2(o) / sum;
           d.y += ny * separate * mass2(o) / sum;
         }
-        const distanceError = clamp20(dd - desired, -0.4, 0.85);
+        const distanceError = clamp(dd - desired, -0.4, 0.85);
         const normalRelative = (d.vx - o.vx) * nx + (d.vy - o.vy) * ny;
         const tangentX = -ny, tangentY = nx;
         const slip = (d.vx - o.vx) * tangentX + (d.vy - o.vy) * tangentY;
         const hold = contact2.strength;
-        const connected = clamp20(distanceError * 3 + normalRelative * 0.32, -2.2, 2.2) * hold * dt;
-        const slipBrake = clamp20(slip * hold * dt * 0.95, -0.12, 0.12);
+        const connected = clamp(distanceError * 3 + normalRelative * 0.32, -2.2, 2.2) * hold * dt;
+        const slipBrake = clamp(slip * hold * dt * 0.95, -0.12, 0.12);
         d.vx -= nx * connected * 0.52 + tangentX * slipBrake * 0.6;
         d.vy -= ny * connected * 0.52 + tangentY * slipBrake * 0.6;
         o.vx += nx * connected * 0.35 + tangentX * slipBrake * 0.33;
         o.vy += ny * connected * 0.35 + tangentY * slipBrake * 0.33;
         if (selectedPlay === "inside" && o.insideZonePlan && d.x >= o.x - 0.1 && e.secured > 0.18) {
-          const push = clamp20((contact2.advantage + 5) / 34, 0, 1) * clamp20((e.secured - 0.1) * 1.35, 0, 1) * (1 + Math.min(1, helpers) * 0.23);
-          d.vx += push * 2.35 * dt * clamp20(mass2(o) / Math.max(70, mass2(d)), 0.65, 1.35);
+          const push = clamp((contact2.advantage + 5) / 34, 0, 1) * clamp((e.secured - 0.1) * 1.35, 0, 1) * (1 + Math.min(1, helpers) * 0.23);
+          d.vx += push * 2.35 * dt * clamp(mass2(o) / Math.max(70, mass2(d)), 0.65, 1.35);
           o.vx += push * 0.23 * dt;
           o.technique = helpers ? "double-team" : "zone-drive";
         }
         if (contact2.state === "drive" || contact2.state === "double-team") {
-          const drive2 = clamp20((contact2.advantage - 5) * 0.028, 0.02, 0.65) * dt;
+          const drive2 = clamp((contact2.advantage - 5) * 0.028, 0.02, 0.65) * dt;
           d.vx += nx * drive2 * mass2(o) / Math.max(100, mass2(d));
           d.vy += ny * drive2 * mass2(o) / Math.max(100, mass2(d));
         }
         o.blockMode = e.mode;
         d.blockMode = e.mode;
         o.technique = e.mode === "drive" ? "drive-block" : e.mode === "seal" ? "seal-block" : e.mode === "double-team" ? "double-team" : "engaged-block";
-        const force = clamp20(0.45 + mismatch * 0.015 + e.secured * 0.72, 0.2, 1.9);
+        const force = clamp(0.45 + mismatch * 0.015 + e.secured * 0.72, 0.2, 1.9);
         const penetration = d.vx * nx + d.vy * ny;
         if (penetration > 0) {
-          d.vx -= nx * penetration * clamp20(force * dt, 0, 0.2);
-          d.vy -= ny * penetration * clamp20(force * dt, 0, 0.2);
+          d.vx -= nx * penetration * clamp(force * dt, 0, 0.2);
+          d.vy -= ny * penetration * clamp(force * dt, 0, 0.2);
         }
-        const obstruct = clamp20(
+        const obstruct = clamp(
           0.25 + mismatch * 8e-3 + e.secured * 0.4,
           0.12,
           0.95
         );
         d.vx *= Math.max(0, 1 - obstruct * dt);
         d.vy *= Math.max(0, 1 - obstruct * dt);
-        const impulse = clamp20(mismatch * 0.025, -0.35, 1.1) * dt;
+        const impulse = clamp(mismatch * 0.025, -0.35, 1.1) * dt;
         d.vx += nx * impulse * mass2(o) / mass2(d);
         d.vy += ny * impulse * mass2(o) / mass2(d);
         o.vx -= nx * impulse * 0.28;
@@ -7540,20 +7527,20 @@
       return [...rushing].filter((d) => d.shedCooldown <= 0 || d.key !== same).sort((a, b) => {
         const rating3 = (d) => {
           const assigned = blockLinks.get(o.key)?.defender === d.key ? -5 : 0;
-          const home = Math.abs(d.y - lane), distance3 = dist(o, d);
+          const home = Math.abs(d.y - lane), distance2 = distance2D(o, d);
           const competing = [...blockLinks.values()].some(
             (link) => link.blocker !== o.key && link.defender === d.key
           );
           const extra = competing ? 3.5 : 0;
           const overreach = home > 6.2 ? (home - 6.2) * 2 : 0;
           const runSide = run && selectedPlay === "power" && o.key === "RG" ? d.y < 23 ? -2 : 3 : run && selectedPlay === "counter" && o.key === "LG" ? d.y > 30 ? -2 : 3 : 0;
-          return distance3 * 0.7 + home * 0.8 + overreach + extra + assigned + runSide;
+          return distance2 * 0.7 + home * 0.8 + overreach + extra + assigned + runSide;
         };
         return rating3(a) - rating3(b);
       });
     }
     function passThreatPriority(d, qb) {
-      const gap = dist(d, qb), approach = ((qb.x - d.x) * d.vx + (qb.y - d.y) * d.vy) / Math.max(0.2, gap);
+      const gap = distance2D(d, qb), approach = ((qb.x - d.x) * d.vx + (qb.y - d.y) * d.vy) / Math.max(0.2, gap);
       return (12 - gap) * 1.4 + Math.max(0, approach) * 0.8 + (d.blitz ? 2.2 : 0) + (d.x < playStart ? 2 : 0) - (d.blocked > 0.2 ? 3 : 0);
     }
     function passProtectAI(o, dt) {
@@ -7562,7 +7549,7 @@
       let t = locked ? def.find((d) => d.key === locked.defender && !d.ground) : null;
       if (!t && own) {
         const outside = Math.abs(own.y - lane) > 6.7;
-        if (!outside || dist(own, qb) < 5.4) t = own;
+        if (!outside || distance2D(own, qb) < 5.4) t = own;
       }
       if (!t && o.protectionAlert) {
         const alert = def.find((d) => d.key === o.protectionAlert && !d.ground);
@@ -7571,7 +7558,7 @@
       }
       if (!t) {
         const leaks = def.filter(
-          (d) => d.rush && !d.ground && Math.abs(d.y - lane) < (o.key === "C" ? 5.2 : 4.3) && d.x < playStart + 2.4 && dist(d, qb) < 7.3 && (!d.passProtector || d.passProtector === o.key || !blockLinks.has(d.passProtector) && dist(P(d.passProtector) || o, d) > 3.6)
+          (d) => d.rush && !d.ground && Math.abs(d.y - lane) < (o.key === "C" ? 5.2 : 4.3) && d.x < playStart + 2.4 && distance2D(d, qb) < 7.3 && (!d.passProtector || d.passProtector === o.key || !blockLinks.has(d.passProtector) && distance2D(P(d.passProtector) || o, d) > 3.6)
         );
         leaks.sort(
           (a, b) => passThreatPriority(b, qb) - passThreatPriority(a, qb)
@@ -7584,7 +7571,7 @@
         const depth = o.key === "LT" || o.key === "RT" ? 1.25 : 2.45;
         arrive(
           o,
-          clamp20(qb.x + depth, playStart - 3, playStart - 0.1),
+          clamp(qb.x + depth, playStart - 3, playStart - 0.1),
           lane,
           dt,
           0.93
@@ -7593,15 +7580,15 @@
       }
       o.blockTarget = t.key;
       const edge = o.key === "LT" || o.key === "RT";
-      const predict = clamp20(dist(o, t) / 22, 0.07, 0.23);
-      const ty = clamp20(
+      const predict = clamp(distance2D(o, t) / 22, 0.07, 0.23);
+      const ty = clamp(
         t.y + t.vy * predict,
         lane - (edge ? 7 : 4.3),
         lane + (edge ? 7 : 4.3)
       );
-      const tx = clamp20(t.x + t.vx * predict - 0.68, qb.x + 0.55, playStart + 1.2);
+      const tx = clamp(t.x + t.vx * predict - 0.68, qb.x + 0.55, playStart + 1.2);
       steer(o, tx - o.x, ty - o.y, dt, 1.04);
-      if (dist(o, t) < 1.98) blockBattle(o, t, dt);
+      if (distance2D(o, t) < 1.98) blockBattle(o, t, dt);
     }
     function insideZoneBlockerAI(o, dt, claims, runner) {
       const info = o.insideZonePlan || {
@@ -7613,13 +7600,13 @@
       const contact2 = engaged ? P(engaged.defender) : null;
       const assigned = info.target ? P(info.target) : null;
       const liveRunner = runner || P("RB");
-      const primaryAvailable = assigned && !assigned.ground && assigned.beatenUntil < playClock && assigned.key !== o.beatenTarget && dist(o, assigned) < 6.1;
+      const primaryAvailable = assigned && !assigned.ground && assigned.beatenUntil < playClock && assigned.key !== o.beatenTarget && distance2D(o, assigned) < 6.1;
       let target = contact2 && !contact2.ground ? contact2 : null;
-      if (!target && primaryAvailable && (playClock < 1.08 || !runner || dist(o, assigned) < 3))
+      if (!target && primaryAvailable && (playClock < 1.08 || !runner || distance2D(o, assigned) < 3))
         target = assigned;
       if (!target && runner && playClock >= (o.insideZoneReadAfter || 0)) {
         const nearby = def.filter(
-          (d) => !d.ground && d.beatenUntil < playClock && d.key !== o.beatenTarget && dist(o, d) < 11.5 && d.x > playStart - 0.8 && d.x < runner.x + 15 && (d.pos === "MLB" || d.pos === "OLB" || d.pos === "LB" || d.pos === "WILL" || d.pos === "SAM" || d.pos === "FS" || d.pos === "SS" || d.rush)
+          (d) => !d.ground && d.beatenUntil < playClock && d.key !== o.beatenTarget && distance2D(o, d) < 11.5 && d.x > playStart - 0.8 && d.x < runner.x + 15 && (d.pos === "MLB" || d.pos === "OLB" || d.pos === "LB" || d.pos === "WILL" || d.pos === "SAM" || d.pos === "FS" || d.pos === "SS" || d.rush)
         );
         const options = nearby.filter((d) => !claims.has(d.key) && InsideZoneIQ.visible(o, d)).map((d) => ({
           d,
@@ -7639,29 +7626,29 @@
         o.intentTarget = target.key;
         if (!initial) {
           o.supportTarget = target.key;
-          o.supportUntil = playClock + clamp20(0.35 + (100 - o.AWR) * 4e-3, 0.35, 0.54);
+          o.supportUntil = playClock + clamp(0.35 + (100 - o.AWR) * 4e-3, 0.35, 0.54);
         }
         const lane = InsideZoneIQ.runnerProjection(liveRunner, playStart);
         const targetX = target.x - 0.62;
-        const targetY = initial ? clamp20(target.y, info.homeY - 2.45, info.homeY + 2.45) : clamp20(
+        const targetY = initial ? clamp(target.y, info.homeY - 2.45, info.homeY + 2.45) : clamp(
           target.y + (lane.y - target.y) * 0.1,
           Math.max(0.7, o.y - 2.6),
           Math.min(H - 0.7, o.y + 2.6)
         );
         steer(o, targetX - o.x, targetY - o.y, dt, initial ? 1.07 : 1.02);
-        if (dist(o, target) < 2.12) blockBattle(o, target, dt);
+        if (distance2D(o, target) < 2.12) blockBattle(o, target, dt);
         return;
       }
       o.blockTarget = null;
       o.supportTarget = null;
       const p = InsideZoneIQ.runnerProjection(liveRunner, playStart);
-      const forward = clamp20(
+      const forward = clamp(
         playStart + Math.min(6, playClock * 2.2),
         playStart + 1,
         109
       );
-      const home = clamp20(
-        info.homeY + clamp20(p.y - info.homeY, -1.5, 1.5) * 0.22,
+      const home = clamp(
+        info.homeY + clamp(p.y - info.homeY, -1.5, 1.5) * 0.22,
         0.7,
         H - 0.7
       );
@@ -7705,14 +7692,14 @@
         o.beatenTarget = null;
       }
       let t = preferred || o.blockTarget && rushing.find(
-        (d) => d.key === o.blockTarget && dist(d, o) < 4.2 && d.shedCooldown <= 0
+        (d) => d.key === o.blockTarget && distance2D(d, o) < 4.2 && d.shedCooldown <= 0
       ) || candidates[0];
       if (!t) {
         o.intent = "climb-second-level";
         o.intentTarget = "find-linebacker";
         arrive(
           o,
-          playStart + clamp20(playClock * 2, 2, 9),
+          playStart + clamp(playClock * 2, 2, 9),
           26.65 + protectionLane(o),
           dt,
           0.92
@@ -7721,11 +7708,11 @@
       }
       o.blockTarget = t.key;
       o.intentTarget = t.key;
-      const lane = 26.65 + protectionLane(o), tY = clamp20(t.y, lane - 3.4, lane + 3.4);
+      const lane = 26.65 + protectionLane(o), tY = clamp(t.y, lane - 3.4, lane + 3.4);
       const tx = Math.max(playStart + 0.15, t.x - 0.6);
       const ty = tY + (selectedPlay === "stretch" ? -0.35 : 0);
       steer(o, tx - o.x, ty - o.y, dt, 0.96);
-      if (dist(o, t) < 1.9) blockBattle(o, t, dt);
+      if (distance2D(o, t) < 1.9) blockBattle(o, t, dt);
     }
     function rbPassProtection(p, dt) {
       const qb = P("QB"), rushers = def.filter((d) => d.rush && !d.ground);
@@ -7736,31 +7723,31 @@
       let target = locked ? rushers.find((d) => d.key === locked.defender) : null;
       if (!target && p.passAssignment)
         target = rushers.find((d) => d.key === p.passAssignment);
-      if (!target && extra && dist(extra, qb) < 9) target = extra;
+      if (!target && extra && distance2D(extra, qb) < 9) target = extra;
       if (!target) {
         const unblocked = rushers.filter(
-          (d) => !d.passProtector || d.passProtector === "RB" || !blockLinks.has(d.passProtector) && dist(P(d.passProtector) || p, d) > 3.6
+          (d) => !d.passProtector || d.passProtector === "RB" || !blockLinks.has(d.passProtector) && distance2D(P(d.passProtector) || p, d) > 3.6
         );
         unblocked.sort(
           (a, b) => passThreatPriority(b, qb) - passThreatPriority(a, qb)
         );
-        if (unblocked.length && dist(unblocked[0], qb) < 9) target = unblocked[0];
+        if (unblocked.length && distance2D(unblocked[0], qb) < 9) target = unblocked[0];
       }
       p.intent = "pass-protect";
       p.intentTarget = target?.key || "pocket-check";
       if (!target) {
-        arrive(p, qb.x + 1.6, clamp20(qb.y + 1.9, 4, H - 4), dt, 1);
+        arrive(p, qb.x + 1.6, clamp(qb.y + 1.9, 4, H - 4), dt, 1);
         return;
       }
       const future = 0.14;
-      const tx = clamp20(
+      const tx = clamp(
         target.x + target.vx * future - 0.68,
         qb.x + 0.6,
         playStart + 1
       );
-      const ty = clamp20(target.y + target.vy * future, 2, H - 2);
+      const ty = clamp(target.y + target.vy * future, 2, H - 2);
       steer(p, tx - p.x, ty - p.y, dt, 1.09);
-      if (dist(p, target) < 1.98) blockBattle(p, target, dt);
+      if (distance2D(p, target) < 1.98) blockBattle(p, target, dt);
     }
     function rbLeadBlock(p, dt) {
       p.intent = "lead-block";
@@ -7771,7 +7758,7 @@
           def.filter((d) => !d.rush && d.x > playStart)
         ).p;
         let ty = 22.3, tx = playStart + Math.min(8, playClock * 3);
-        if (target && dist(p, target) < 3) {
+        if (target && distance2D(p, target) < 3) {
           tx = target.x - 0.65;
           ty = target.y;
           blockBattle(p, target, dt);
@@ -7781,7 +7768,7 @@
       }
       const rushers = def.filter((d) => d.rush);
       const t = closestThreat(p, rushers).p;
-      if (t && dist(p, t) < 2.3) {
+      if (t && distance2D(p, t) < 2.3) {
         steer(p, t.x - 0.45 - p.x, t.y - p.y, dt, 0.94);
         blockBattle(p, t, dt);
       } else {
@@ -7793,16 +7780,16 @@
       p.intentTarget = "endzone";
       const inBackfield = p.x < playStart + 5.5 && playClock < 2.5;
       const lane = selectedPlay === "stretch" ? 16 : selectedPlay === "sweep" ? 39 : selectedPlay === "counter" ? 35 : selectedPlay === "power" ? 22.5 : 24.2;
-      let targetY = inBackfield && p === P("RB") ? p.y + clamp20(lane - p.y, -3, 3) * 0.62 : p.y;
+      let targetY = inBackfield && p === P("RB") ? p.y + clamp(lane - p.y, -3, 3) * 0.62 : p.y;
       if (specialState?.returning && p === P("RB") && specialState.elapsed < 8)
-        targetY = p.y + clamp20(specialState.returnLaneY - p.y, -6, 6) * 0.65;
-      targetY = clamp20(targetY, 1.35, H - 1.35);
+        targetY = p.y + clamp(specialState.returnLaneY - p.y, -6, 6) * 0.65;
+      targetY = clamp(targetY, 1.35, H - 1.35);
       const inFront = def.filter(
         (d) => d.stun <= 0 && d.x > p.x + 0.9 && d.x < p.x + 5 && Math.abs(d.y - p.y) < 2.1
       ).sort((a, b) => a.x - b.x)[0];
       if (inFront) {
         const side = p.y <= 3.7 ? 1 : p.y >= H - 3.7 ? -1 : inFront.y >= p.y ? -1 : 1;
-        const candidate = clamp20(p.y + side * 2.2, 1.35, H - 1.35);
+        const candidate = clamp(p.y + side * 2.2, 1.35, H - 1.35);
         if (Math.abs(candidate - inFront.y) > Math.abs(targetY - inFront.y) + 0.5)
           targetY = candidate;
       }
@@ -7820,7 +7807,7 @@
             (d) => !d.ground && d.x > p.x - 1 && d.x < p.x + 6 && d.y >= p.y && d.y < p.y + 7
           ).length;
           const side = left === right ? p.y < H / 2 ? -1 : 1 : left < right ? -1 : 1;
-          targetY = clamp20(p.y + side * 4, 1.35, H - 1.35);
+          targetY = clamp(p.y + side * 4, 1.35, H - 1.35);
           p.intent = "cutback";
           p.intentTarget = "escape-congestion";
         }
@@ -7904,8 +7891,8 @@
         const spot = airborne ? intended || flightMarkers() : carrier;
         const point = airborne && !intended ? { x: spot.catchX, y: spot.catchY } : spot;
         const order = [...def].filter((d) => !d.ground).sort((a, b) => {
-          const distance3 = dist(a, point) - dist(b, point);
-          return Math.abs(distance3) > 0.01 ? distance3 : a.key.localeCompare(b.key);
+          const distance2 = distance2D(a, point) - distance2D(b, point);
+          return Math.abs(distance2) > 0.01 ? distance2 : a.key.localeCompare(b.key);
         });
         next = order.find((d) => d.key !== selectedDefenderKey);
       }
@@ -7980,7 +7967,7 @@
       if (!d || d.team !== 1 || d.stun > 0 || d.ground || d.tackleCooldown > 0 || d.diveRecovery > 0 || d.action?.time > 0)
         return false;
       const dir = ChaosTackleIntelligence.direction(d, stickInput());
-      const nearest = off.filter((o) => !o.ground).map((o) => ({ o, gap: dist(d, o) })).sort((a, b) => a.gap - b.gap)[0];
+      const nearest = off.filter((o) => !o.ground).map((o) => ({ o, gap: distance2D(d, o) })).sort((a, b) => a.gap - b.gap)[0];
       const near = nearest && nearest.gap <= radius(d) + radius(nearest.o) + 0.5;
       const kind = mode === "cut-stick" ? "cut-stick" : mode === "hit-stick" || near ? "hit-stick" : "tackle-dive";
       d.action = {
@@ -8048,8 +8035,8 @@
     }
     function quarterbackWindow(qb, rec) {
       const rough = Math.max(0.35, Math.hypot(rec.x - qb.x, rec.y - qb.y) / 23);
-      const predicted = projectedReceiver(rec, clamp20(rough * 1.35, 0.4, 2));
-      const flight = clamp20(
+      const predicted = projectedReceiver(rec, clamp(rough * 1.35, 0.4, 2));
+      const flight = clamp(
         Math.hypot(predicted.x - qb.x, predicted.y - qb.y) / (23 + (qb.THP - 65) * 0.22) * 1.35,
         0.38,
         2.2
@@ -8063,18 +8050,18 @@
         const distNow = Math.hypot(arrival.x - d.x, arrival.y - d.y);
         const avail = Math.max(
           0,
-          flight - clamp20(0.12 + (100 - d.AWR) * 6e-3, 0.12, 0.55)
+          flight - clamp(0.12 + (100 - d.AWR) * 6e-3, 0.12, 0.55)
         );
-        const advance2 = clamp20(
+        const advance2 = clamp(
           speed(d) * 0.4 * avail,
           0,
           Math.max(0, distNow - 0.35)
         );
         const atCatch = Math.max(0.3, distNow - advance2);
         nearest = Math.min(nearest, atCatch);
-        const catchRisk = clamp20((3.2 - atCatch) / 2.8, 0, 1) * (d.COV * 5e-3 + d.CAT * 2e-3 + 0.3);
+        const catchRisk = clamp((3.2 - atCatch) / 2.8, 0, 1) * (d.COV * 5e-3 + d.CAT * 2e-3 + 0.3);
         const deltaX = arrival.x - qb.x, deltaY = arrival.y - qb.y, length2 = Math.max(0.01, deltaX * deltaX + deltaY * deltaY);
-        const t = clamp20(
+        const t = clamp(
           ((d.x - qb.x) * deltaX + (d.y - qb.y) * deltaY) / length2,
           0,
           1
@@ -8083,11 +8070,11 @@
           d.x - (qb.x + t * deltaX),
           d.y - (qb.y + t * deltaY)
         );
-        const trajectoryRisk = t > 0.16 && t < 0.91 ? clamp20((1.4 - lineDist) / 1.4, 0, 1) * (0.65 * (1 - t)) : 0;
+        const trajectoryRisk = t > 0.16 && t < 0.91 ? clamp((1.4 - lineDist) / 1.4, 0, 1) * (0.65 * (1 - t)) : 0;
         danger = Math.max(danger, catchRisk + trajectoryRisk);
         if (atCatch < 1.7) inside++;
       }
-      const openness = clamp20((nearest - 0.7) / 3.7, 0, 1);
+      const openness = clamp((nearest - 0.7) / 3.7, 0, 1);
       const catchSkill = rec.CAT * 0.07 + rec.RTE * 0.025;
       const progress = Math.max(0, arrival.x - playStart);
       const score2 = 16 * openness + catchSkill + Math.min(15, progress * 0.35) - danger * 25 - ballDepth * 10;
@@ -8096,14 +8083,14 @@
     function cpuQuarterback(qb, dt) {
       if (passThrown || ballCarrier) return;
       const activeRush = def.filter(
-        (d) => !d.ground && (d.rush || dist(d, qb) < 5.8 && d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) > Math.max(0.6, dist(d, qb) * 0.42))
+        (d) => !d.ground && (d.rush || distance2D(d, qb) < 5.8 && d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) > Math.max(0.6, distance2D(d, qb) * 0.42))
       );
       const rush = closestThreat(qb, activeRush);
-      const pressure = clamp20((5.2 - rush.d) / 4.7, 0, 1);
+      const pressure = clamp((5.2 - rush.d) / 4.7, 0, 1);
       let wantX = playStart - 4.2, wantY = 26.65;
       if (rush.p && rush.d < 4) {
         wantX = qb.x - (0.6 + pressure * 0.8);
-        wantY = clamp20(
+        wantY = clamp(
           qb.y + (qb.y >= rush.p.y ? 1 : -1) * (1.5 + qb.BSK * 0.015),
           10,
           H - 10
@@ -8116,7 +8103,7 @@
       cpuQB.reads++;
       const options = eligibleTargets().map((r) => quarterbackWindow(qb, r));
       options.sort((a, b) => b.score - a.score);
-      const recognition = clamp20((qb.VIS - 30) / 69, 0, 1);
+      const recognition = clamp((qb.VIS - 30) / 69, 0, 1);
       let chosen = options[0];
       if (options.length > 1 && rand() > recognition * 0.93 + 0.05) {
         const chance = rand();
@@ -8125,7 +8112,7 @@
       cpuQB.choice = chosen?.rec || null;
       cpuQB.lastScore = chosen?.score || 0;
       cpuQB.lastRisk = chosen?.danger || 0;
-      const patience = clamp20((100 - qb.DEC) / 100, 0, 1);
+      const patience = clamp((100 - qb.DEC) / 100, 0, 1);
       const timeDemand = CpuQBPolicy.minimumSettle(selectedPlay, qb.DEC, qb.VIS);
       const progress = chosen ? Math.max(0, chosen.arrival.x - playStart) : 0;
       const developed = chosen && CpuQBPolicy.hasDeveloped(selectedPlay, playClock, progress, pressure);
@@ -8150,12 +8137,12 @@
         arrive(
           qb,
           playStart + 3,
-          clamp20(qb.y + (qb.y >= rush.p.y ? 5 : -5), 5, H - 5),
+          clamp(qb.y + (qb.y >= rush.p.y ? 5 : -5), 5, H - 5),
           dt,
           1.1
         );
       }
-      cpuQB.nextRead = playClock + clamp20(0.19 + (100 - qb.DEC) * 4e-3, 0.18, 0.49);
+      cpuQB.nextRead = playClock + clamp(0.19 + (100 - qb.DEC) * 4e-3, 0.18, 0.49);
     }
     function qbAI(p, dt) {
       p.intent = "qb-control";
@@ -8211,7 +8198,7 @@
           if (victim !== ballCarrier && !(victim.key === "QB" && !ballCarrier && !passThrown)) {
             victim.vx += dir.x * impulse.strength * mass2(attacker) / (ma + mb);
             victim.vy += dir.y * impulse.strength * mass2(attacker) / (ma + mb);
-            victim.balance = clamp20(
+            victim.balance = clamp(
               victim.balance - impulse.strength * 0.085,
               0.2,
               1
@@ -8266,14 +8253,14 @@
       const relX = b.vx - a.vx, relY = b.vy - a.vy, closing = relX * nx + relY * ny;
       if (closing >= -0.025) return penetration > 0;
       const normalSpeed = -closing, slide = relX * -ny + relY * nx;
-      const restitution = normalSpeed < 1 ? 0.02 : clamp20(0.06 + 8e-3 * normalSpeed, 0.06, 0.16);
+      const restitution = normalSpeed < 1 ? 0.02 : clamp(0.06 + 8e-3 * normalSpeed, 0.06, 0.16);
       const J = -(1 + restitution) * closing / (invA + invB);
       a.vx -= J * invA * nx;
       a.vy -= J * invA * ny;
       b.vx += J * invB * nx;
       b.vy += J * invB * ny;
       const lateralScale = candidate?.square > 0.5 ? 0.42 : 0.19;
-      const jt = clamp20(
+      const jt = clamp(
         -slide / (invA + invB),
         -J * lateralScale,
         J * lateralScale
@@ -8340,32 +8327,32 @@
         lastContact = Math.round(hit);
         const sideA = Math.sin(a.face) * nx - Math.cos(a.face) * ny;
         const sideB = -Math.sin(b.face) * nx + Math.cos(b.face) * ny;
-        const angularA = clamp20(
+        const angularA = clamp(
           (slide * 0.09 + sideA * normalSpeed * 0.13) * J / ma,
           -1.9,
           1.9
         );
-        const angularB = clamp20(
+        const angularB = clamp(
           (slide * 0.09 - sideB * normalSpeed * 0.13) * J / mb,
           -1.9,
           1.9
         );
-        a.spin = clamp20(a.spin - angularA, -3, 3);
-        b.spin = clamp20(b.spin + angularB, -3, 3);
-        a.lean = clamp20(a.lean + angularA * 0.18, -0.56, 0.56);
-        b.lean = clamp20(b.lean + angularB * 0.18, -0.56, 0.56);
-        a.balance = clamp20(
+        a.spin = clamp(a.spin - angularA, -3, 3);
+        b.spin = clamp(b.spin + angularB, -3, 3);
+        a.lean = clamp(a.lean + angularA * 0.18, -0.56, 0.56);
+        b.lean = clamp(b.lean + angularB * 0.18, -0.56, 0.56);
+        a.balance = clamp(
           a.balance - hit * ChaosLowContact.bodyVulnerability(a) / (ma * 35),
           0.2,
           1
         );
-        b.balance = clamp20(
+        b.balance = clamp(
           b.balance - hit * ChaosLowContact.bodyVulnerability(b) / (mb * 35),
           0.2,
           1
         );
-        a.impact = Math.max(a.impact, clamp20(hit / 700, 0.1, 0.8));
-        b.impact = Math.max(b.impact, clamp20(hit / 700, 0.1, 0.8));
+        a.impact = Math.max(a.impact, clamp(hit / 700, 0.1, 0.8));
+        b.impact = Math.max(b.impact, clamp(hit / 700, 0.1, 0.8));
         a.pulse = Math.max(a.pulse, 0.16);
         b.pulse = Math.max(b.pulse, 0.16);
       }
@@ -8395,8 +8382,8 @@
         }
         ChaosLowContact.advance(p, dt);
         p.travel += Math.hypot(p.vx, p.vy) * dt;
-        p.x = clamp20(p.x + p.vx * dt, 0, 120);
-        p.y = clamp20(p.y + p.vy * dt, -0.3, H + 0.3);
+        p.x = clamp(p.x + p.vx * dt, 0, 120);
+        p.y = clamp(p.y + p.vy * dt, -0.3, H + 0.3);
         p.diveRecovery = Math.max(0, (p.diveRecovery || 0) - dt);
         p.blocked = Math.max(0, p.blocked - dt);
         p.tackleCooldown = Math.max(0, p.tackleCooldown - dt);
@@ -8412,7 +8399,7 @@
           if (p.escapeReaction.time <= 0) p.escapeReaction = null;
         }
         p.lean *= Math.max(0, 1 - dt * 2);
-        p.balance = clamp20(p.balance + dt * 0.34, 0.3, 1);
+        p.balance = clamp(p.balance + dt * 0.34, 0.3, 1);
       }
       if (phase === "live" && ballCarrier && !ballCarrier.ground && ballCarrier.team === 0) {
         const r = ballCarrier;
@@ -8486,30 +8473,30 @@
           d.lowContactCooldown = 0.28;
           const velocity = Math.hypot(r.vx, r.vy);
           const raw = hit.contact * (0.46 + 0.07 * Math.min(7, velocity) + 0.034 * Math.min(7, hit.closing));
-          const resistance = clamp20(
+          const resistance = clamp(
             (r.AGI * 0.43 + r.STR * 0.22 + r.TRK * 0.2 + r.AWR * 0.15 - 65) / 175,
             -0.08,
             0.19
           );
-          const grip = clamp20(
+          const grip = clamp(
             (d.TAK * 0.62 + d.STR * 0.23 + d.AWR * 0.15 - 65) / 150,
             -0.08,
             0.22
           );
           const airRisk = ChaosLowContact.bodyVulnerability(r);
-          const severity = clamp20(
+          const severity = clamp(
             raw * (1 + grip - resistance) * airRisk,
             0,
             1.65
           );
           r.vx *= Math.max(0.57, 1 - severity * 0.28);
           r.vy *= Math.max(0.57, 1 - severity * 0.28);
-          r.balance = clamp20(r.balance - severity * 0.32, 0.16, 1);
+          r.balance = clamp(r.balance - severity * 0.32, 0.16, 1);
           r.impact = Math.max(r.impact, Math.min(0.6, 0.2 + severity * 0.3));
           r.stumbleTime = Math.max(r.stumbleTime, 0.21 + severity * 0.3);
           const dir = Math.atan2(r.y - d.y, r.x - d.x);
-          r.lean = clamp20(r.lean - 0.22 * severity, -0.56, 0.56);
-          r.spin = clamp20(
+          r.lean = clamp(r.lean - 0.22 * severity, -0.56, 0.56);
+          r.spin = clamp(
             r.spin + Math.sin(dir - (r.face || 0)) * severity * 0.4,
             -3,
             3
@@ -8574,8 +8561,8 @@
           { all: ChaosContactEvidence.isFullScan() }
         );
       for (const p of players) {
-        p.x = clamp20(p.x, 0, 120);
-        p.y = clamp20(p.y, -0.3, H + 0.3);
+        p.x = clamp(p.x, 0, 120);
+        p.y = clamp(p.y, -0.3, H + 0.3);
         const v2 = speed(p), limit2 = maxSpeed(p) * 1.32;
         if (v2 > limit2) {
           p.vx *= limit2 / v2;
@@ -8586,14 +8573,14 @@
     function pileSupport(o, a, dt) {
       if (o === a || o.team !== 0 || o.pos === "QB" || !(o.pos === "FB" || o.pos === "TE" || o.pos === "OL" || ["LT", "LG", "C", "RG", "RT"].includes(o.key)))
         return false;
-      if (dist(o, a) > 14) return false;
+      if (distance2D(o, a) > 14) return false;
       const eligible = off.filter(
         (p) => p !== a && (p.pos === "TE" || p.pos === "FB" || ["LT", "LG", "C", "RG", "RT"].includes(p.key))
-      ).sort((p, q) => dist(p, a) - dist(q, a)).slice(0, 4);
+      ).sort((p, q) => distance2D(p, a) - distance2D(q, a)).slice(0, 4);
       const slot = eligible.indexOf(o);
       if (slot < 0) return false;
       const targetX = a.x - radius(a) - radius(o) * 0.85 - 0.08;
-      const targetY = clamp20(a.y + (slot - 1.5) * 0.36, 1, H - 1);
+      const targetY = clamp(a.y + (slot - 1.5) * 0.36, 1, H - 1);
       o.intent = "pile-support";
       o.intentTarget = a.key;
       steer(o, targetX - o.x, (targetY - o.y) * 1.2, dt, 1.12);
@@ -8608,22 +8595,22 @@
         if (p === a || p.intent !== "pile-support") continue;
         const dx = a.x - p.x, side = Math.abs(a.y - p.y);
         const maxReach = radius(a) + radius(p) + 0.29;
-        if (dist(p, a) > maxReach || dx < -0.1 || side > 1.1) continue;
-        const body = clamp20(mass2(p) / 135, 0.64, 1.3);
-        const technique = clamp20(
+        if (distance2D(p, a) > maxReach || dx < -0.1 || side > 1.1) continue;
+        const body = clamp(mass2(p) / 135, 0.64, 1.3);
+        const technique = clamp(
           0.3 + p.BLO * 57e-4 + p.STR * 34e-4,
           0.57,
           1.29
         );
-        const leverage = clamp20((p.h - a.h) * 0.012 + 0.99, 0.84, 1.13) * clamp20(p.balance, 0.5, 1);
-        const angle2 = Math.max(0.16, dx / Math.max(0.1, dist(p, a)));
-        const output = body * technique * leverage * angle2 * clamp20(p.stam, 0.3, 1) * (p.action?.kind === "impact-block" && p.action.time > 0 ? 1.23 : 1);
+        const leverage = clamp((p.h - a.h) * 0.012 + 0.99, 0.84, 1.13) * clamp(p.balance, 0.5, 1);
+        const angle2 = Math.max(0.16, dx / Math.max(0.1, distance2D(p, a)));
+        const output = body * technique * leverage * angle2 * clamp(p.stam, 0.3, 1) * (p.action?.kind === "impact-block" && p.action.time > 0 ? 1.23 : 1);
         p.vx += acceleration(p) * output * 0.82 * dt;
         p.vy += (a.y - p.y) * dt * 0.9;
         p.stam = Math.max(0.25, p.stam - dt * 0.047 * output);
         p.pushing = true;
         p.intent = "pile-drive";
-        p.lean = clamp20(p.lean * 0.92 - 0.1 * output, -0.42, 0.42);
+        p.lean = clamp(p.lean * 0.92 - 0.1 * output, -0.42, 0.42);
         pile.pushers.push({ key: p.key, output: Number(output.toFixed(3)) });
       }
       const grips = [...tackleLinks.values()].map((e) => P(e.defender)).filter(Boolean);
@@ -8631,9 +8618,9 @@
       for (const d of grips) {
         const forwardFacing = d.x >= a.x - 0.1;
         if (!forwardFacing) continue;
-        const hold = clamp20(0.25 + d.TAK * 42e-4 + d.STR * 34e-4, 0.52, 1.15) * clamp20(mass2(d) / 112, 0.72, 1.45) * (1 + Math.max(0, grips.length - 2) * 0.16);
+        const hold = clamp(0.25 + d.TAK * 42e-4 + d.STR * 34e-4, 0.52, 1.15) * clamp(mass2(d) / 112, 0.72, 1.45) * (1 + Math.max(0, grips.length - 2) * 0.16);
         d.vx -= acceleration(d) * hold * 0.38 * dt;
-        d.lean = clamp20(d.lean + 0.06 * hold, -0.4, 0.4);
+        d.lean = clamp(d.lean + 0.06 * hold, -0.4, 0.4);
       }
     }
     function maintainPile(a, engaged, grip, dt) {
@@ -8647,7 +8634,7 @@
       const advance2 = a.x - pile.lastX;
       if (advance2 > 0) pilePushYards += advance2;
       const progress = advance2 > dt * 0.34;
-      pile.stalled = clamp20(pile.stalled + (progress ? -dt * 1.4 : dt), 0, 5);
+      pile.stalled = clamp(pile.stalled + (progress ? -dt * 1.4 : dt), 0, 5);
       pile.lastX = a.x;
       pile.maxX = Math.max(pile.maxX, a.x);
       pile.wrappers = [...tackleLinks.keys()];
@@ -8670,11 +8657,11 @@
       return true;
     }
     function tackleLeverage(a, d) {
-      const delta = Math.max(0.01, dist(a, d)), nx = (a.x - d.x) / delta, ny = (a.y - d.y) / delta;
+      const delta = Math.max(0.01, distance2D(a, d)), nx = (a.x - d.x) / delta, ny = (a.y - d.y) / delta;
       const closing = (d.vx - a.vx) * nx + (d.vy - a.vy) * ny;
       const impact2 = Math.hypot((d.vx - a.vx) * YARD_M, (d.vy - a.vy) * YARD_M);
       const impulse = mass2(a) * mass2(d) / (mass2(a) + mass2(d)) * impact2 * 1.08;
-      const fromBehind = clamp20(
+      const fromBehind = clamp(
         (a.vx * nx + a.vy * ny) / Math.max(0.4, speed(a)),
         -1,
         1
@@ -8682,13 +8669,13 @@
       const technique = 0.49 * d.TAK + 0.18 * d.STR + 0.17 * d.AWR + 0.08 * d.AGI + 0.08 * d.HIT;
       const resistance = 0.48 * a.TRK + 0.26 * a.STR + 0.15 * a.AGI + 0.11 * a.AWR;
       const weight = (mass2(d) - mass2(a)) * 0.105;
-      const leverage = clamp20((d.h - a.h) * 0.48, -5, 5);
+      const leverage = clamp((d.h - a.h) * 0.48, -5, 5);
       const advantage = (technique - resistance) * 0.48 + weight + leverage + closing * 1 - fromBehind * 7;
       return {
         closing,
         impulse,
         advantage,
-        quality: clamp20(0.8 + advantage * 0.016, 0.43, 1.43)
+        quality: clamp(0.8 + advantage * 0.016, 0.43, 1.43)
       };
     }
     function releaseTackle(d, a, reason, contest = null) {
@@ -8709,13 +8696,13 @@
         );
         d.tackleCooldown = Math.max(
           d.tackleCooldown,
-          clamp20(reaction.recovery, 0.14, 0.65)
+          clamp(reaction.recovery, 0.14, 0.65)
         );
         d.stun = Math.max(
           d.stun,
-          reaction.fall ? 0.17 : clamp20(0.05 + reaction.instability * 0.18, 0.05, 0.23)
+          reaction.fall ? 0.17 : clamp(0.05 + reaction.instability * 0.18, 0.05, 0.23)
         );
-        d.balance = clamp20(d.balance - reaction.instability * 0.09, 0.23, 1);
+        d.balance = clamp(d.balance - reaction.instability * 0.09, 0.23, 1);
         d.vx += reaction.nx * reaction.tug;
         d.vy += reaction.ny * reaction.tug;
         d.escapeReaction = {
@@ -8750,11 +8737,11 @@
           d.technique = "broken-grip-fall";
           d.intent = "fall";
         } else d.technique = "grip-slip";
-        const prior = clamp20(a.breakExertion || 0, 0, 1);
-        a.breakExertion = clamp20(prior + 0.17 + 0.11 * reaction.intensity, 0, 1);
+        const prior = clamp(a.breakExertion || 0, 0, 1);
+        a.breakExertion = clamp(prior + 0.17 + 0.11 * reaction.intensity, 0, 1);
         const cost = (link.style === "wrap" ? 0.045 : 0.025) + 0.016 * prior + 0.014 * reaction.intensity;
         a.stam = Math.max(0.045, a.stam - cost);
-        a.balance = clamp20(
+        a.balance = clamp(
           a.balance - (link.style === "wrap" ? 0.035 : 0.014) * reaction.intensity,
           0.25,
           1
@@ -8829,7 +8816,7 @@
           d.wrapLinked = false;
           continue;
         }
-        const proximity = dist(a, d);
+        const proximity = distance2D(a, d);
         if (!ChaosTackleReengagement.observe(d, a, radius(a) + radius(d), playClock)) {
           report2?.push({ defender: d.key, reason: "reengagement" });
           d.wrapReach = 0;
@@ -8842,15 +8829,15 @@
         const lookDot = (Math.cos(d.face || 0) * towardX + Math.sin(d.face || 0) * towardY) / Math.max(1e-3, proximity);
         const establishedBodyContact = proximity <= radius(a) + radius(d) - 0.025;
         const nearbyBlock = [...blockLinks.values()].some(
-          (link) => link.defender === d.key && P(link.blocker) && dist(P(link.blocker), d) < 2.15 && link.secured > 0.28
+          (link) => link.defender === d.key && P(link.blocker) && distance2D(P(link.blocker), d) < 2.15 && link.secured > 0.28
         );
         if (proximity < radius(a) + radius(d) + 0.16 && !nearbyBlock && d.blocked > 0.25 && d.shedCooldown <= 0)
           d.blocked = 0;
         const eligible = !committedDive && (!d.action?.time || ["conservative"].includes(d.action.kind)) && (lookDot > -0.1 || linkActive || establishedBodyContact) && d.blocked < 0.28;
         const contactReach = proximity <= radius(a) + radius(d) + 0.2 || linkActive;
-        const desired = eligible && contactReach ? clamp20((radius(a) + radius(d) + 0.25 - proximity) / 0.65, 0.12, 1) : 0;
-        d.wrapReach = clamp20(
-          (d.wrapReach || 0) + clamp20(desired - (d.wrapReach || 0), -dt * 5.4, dt * 5.4),
+        const desired = eligible && contactReach ? clamp((radius(a) + radius(d) + 0.25 - proximity) / 0.65, 0.12, 1) : 0;
+        d.wrapReach = clamp(
+          (d.wrapReach || 0) + clamp(desired - (d.wrapReach || 0), -dt * 5.4, dt * 5.4),
           0,
           1
         );
@@ -8859,14 +8846,14 @@
         const physicalContact = liveTackleContacts.get(d.key) || null;
         const touching = !!physicalContact || proximity < radius(a) + radius(d) + 0.2 || committedDive && anatomical && anatomical.potential && proximity < 1.45;
         const activeBlock = [...blockLinks.values()].find(
-          (link) => link.defender === d.key && link.secured > 0.42 && dist(P(link.blocker), d) < 2.15
+          (link) => link.defender === d.key && link.secured > 0.42 && distance2D(P(link.blocker), d) < 2.15
         );
         if (activeBlock)
           d.blocked = Math.max(d.blocked, 0.34 + activeBlock.secured * 0.15);
         if (touching && specialState?.returning && d.blocked >= 0.25) {
           const link = [...blockLinks].find(([, e]) => e.defender === d.key);
           const blocker = link ? P(link[1].blocker) : null;
-          if (!blocker || dist(d, blocker) > 2.05) {
+          if (!blocker || distance2D(d, blocker) > 2.05) {
             if (link) blockLinks.delete(link[0]);
             d.blocked = 0;
           }
@@ -8933,14 +8920,14 @@
               style,
               category: contactState.kind
             };
-          const techniqueBonus = style === "cut" ? clamp20((d.TAK - 70) * 3e-3 - (a.w - 220) * 3e-4, -0.06, 0.12) : d.conservativeHeld || d.conservativeUntil > playClock || d.action?.kind === "conservative" ? DefensiveControls.conservativeGrip(d.TAK) : style === "dive" ? -clamp20((95 - d.TAK) * 25e-4, 0.015, 0.13) : 0;
+          const techniqueBonus = style === "cut" ? clamp((d.TAK - 70) * 3e-3 - (a.w - 220) * 3e-4, -0.06, 0.12) : d.conservativeHeld || d.conservativeUntil > playClock || d.action?.kind === "conservative" ? DefensiveControls.conservativeGrip(d.TAK) : style === "dive" ? -clamp((95 - d.TAK) * 25e-4, 0.015, 0.13) : 0;
           const placementQuality = ChaosGripAttachment.contactQuality(
             contactState,
             d,
             hit,
             style
           );
-          const handPosition = clamp20(
+          const handPosition = clamp(
             (0.24 + hit.advantage * 0.011 + (style === "hit" ? 0.05 : 0) + techniqueBonus) * (0.72 + 0.28 * placementQuality),
             0.055,
             0.72
@@ -8983,13 +8970,13 @@
           d.technique = style === "hit" ? "hit-stick" : "wrap";
           if (style === "hit") {
             hitStickCount++;
-            const gap = Math.max(0.05, dist(a, d)), nx = (a.x - d.x) / gap, ny = (a.y - d.y) / gap;
-            const strike = clamp20(
+            const gap = Math.max(0.05, distance2D(a, d)), nx = (a.x - d.x) / gap, ny = (a.y - d.y) / gap;
+            const strike = clamp(
               (d.HIT * 0.58 + d.STR * 0.28 + d.TAK * 0.14 - 55) / 48,
               0.25,
               1.15
             );
-            const hitVelocity = clamp20(
+            const hitVelocity = clamp(
               Math.max(0, hit.closing) * strike * 0.52,
               0,
               2.6
@@ -8998,7 +8985,7 @@
             a.vy += ny * hitVelocity * mass2(d) / (mass2(a) + mass2(d));
             d.vx -= nx * hitVelocity * mass2(a) / (mass2(a) + mass2(d));
             d.vy -= ny * hitVelocity * mass2(a) / (mass2(a) + mass2(d));
-            a.balance = clamp20(
+            a.balance = clamp(
               a.balance - 0.09 * strike - hitVelocity * 0.035,
               0.3,
               1
@@ -9018,14 +9005,14 @@
           tackleLinks.delete(key);
           continue;
         }
-        const gap = dist(a, d), rad = radius(a) + radius(d);
+        const gap = distance2D(a, d), rad = radius(a) + radius(d);
         if (gap > rad + 1.07) {
           releaseTackle(d, a, "distance");
           continue;
         }
         t.age += dt;
         if (t.square > 0.42 && t.grip > 0.3) {
-          const brace = t.square * clamp20((t.grip - 0.22) / 0.55, 0, 1);
+          const brace = t.square * clamp((t.grip - 0.22) / 0.55, 0, 1);
           a.standContact = Math.max(a.standContact || 0, brace);
           d.standContact = Math.max(d.standContact || 0, brace);
         }
@@ -9040,8 +9027,8 @@
           hit,
           t.style
         );
-        t.quality = clamp20(
-          (t.quality ?? observedQuality) + clamp20(
+        t.quality = clamp(
+          (t.quality ?? observedQuality) + clamp(
             observedQuality - (t.quality ?? observedQuality),
             -dt * 0.85,
             dt * 0.85
@@ -9049,17 +9036,17 @@
           0.18,
           1.25
         );
-        const gripRate = clamp20(
+        const gripRate = clamp(
           (1.83 + hit.advantage * 0.027 - escape * 0.012 - drive2 * 0.11 + (t.style === "hit" ? 0.12 : 0)) * (0.68 + 0.32 * t.quality),
           0.32,
           3.45
         );
-        const security = clamp20(
+        const security = clamp(
           1.15 + (d.TAK - a.TRK) * 9e-3 + (d.STR - a.STR) * 3e-3 + hit.advantage * 4e-3 + Math.max(0, hit.closing - 2) * 0.026 + (speed(a) < 2 ? 0.2 : 0) + (a.balance < 0.65 ? 0.16 : 0),
           0.45,
           1.6
-        ) * clamp20(0.78 + 0.22 * t.quality, 0.6, 1.2);
-        t.grip = clamp20(t.grip + dt * gripRate, 0, security);
+        ) * clamp(0.78 + 0.22 * t.quality, 0.6, 1.2);
+        t.grip = clamp(t.grip + dt * gripRate, 0, security);
         t.attachment = ChaosGripAttachment.step(
           a,
           d,
@@ -9080,10 +9067,10 @@
           releaseTackle(d, a, "escape", escapeContest);
           continue;
         }
-        const contribution = clamp20(t.grip, 0.06, 1.6);
+        const contribution = clamp(t.grip, 0.06, 1.6);
         engaged++;
         combinedGrip += contribution;
-        totalBrake += clamp20(
+        totalBrake += clamp(
           0.3 + contribution * 1.23 + mass2(d) / mass2(a) * 0.37,
           0.35,
           2.45
@@ -9093,7 +9080,7 @@
         d.intentTarget = a.key;
         d.pulse = Math.max(0.12, d.pulse);
         const dMass = mass2(d), aMass = mass2(a);
-        const blend = clamp20(dt * (0.43 + contribution * 0.82), 0, 0.12);
+        const blend = clamp(dt * (0.43 + contribution * 0.82), 0, 0.12);
         d.vx += (a.vx - d.vx) * blend * aMass / (aMass + dMass);
         d.vy += (a.vy - d.vy) * blend * aMass / (aMass + dMass);
         const runnerEdge = a.TRK * 0.54 + a.STR * 0.24 + a.AGI * 0.22 - (d.TAK * 0.59 + d.STR * 0.23 + d.AWR * 0.18);
@@ -9105,7 +9092,7 @@
           contacts2.pop();
           engaged--;
           combinedGrip -= contribution;
-          totalBrake -= clamp20(
+          totalBrake -= clamp(
             0.3 + contribution * 1.23 + mass2(d) / mass2(a) * 0.37,
             0.35,
             2.45
@@ -9116,9 +9103,9 @@
         pileState = null;
         return;
       }
-      const inertia = clamp20(mass2(a) / 97, 0.68, 1.55);
+      const inertia = clamp(mass2(a) / 97, 0.68, 1.55);
       const struggle = ChaosTackleStruggle.state(a, contacts2, a.vx);
-      const brake = clamp20(
+      const brake = clamp(
         totalBrake / inertia * 0.92 * struggle.brakeMultiplier,
         0.2,
         6.15
@@ -9129,7 +9116,7 @@
         const skill = d.TAK * 0.59 + d.AWR * 0.16 + d.STR * 0.16 + d.HIT * 0.09;
         const survive = a.TRK * 0.54 + a.STR * 0.22 + a.AGI * 0.17 + a.AWR * 0.07;
         const edge = skill - survive + hit.advantage * 0.24;
-        const gripNeed = clamp20(
+        const gripNeed = clamp(
           0.92 - edge * 8e-3 + (speed(a) > 5 ? 0.06 : 0),
           0.63,
           1.36
@@ -9141,7 +9128,7 @@
           a.balance,
           a.action?.kind
         );
-        const ageNeed = clamp20(
+        const ageNeed = clamp(
           0.64 - edge * 2e-3 + (speed(a) > 5 ? 0.025 : 0) + struggle.finishDelay - earlier,
           0.34,
           1.34
@@ -9157,11 +9144,11 @@
       }
       const oldest = Math.max(...contacts2.map((c) => c.t.age));
       const rearDrag = contacts2.find(
-        ({ t, d }) => t.style === "wrap" && (t.square || 0) < 0.42 && t.age >= 0.78 + struggle.finishDelay * 0.65 && t.grip >= 0.65 && d.x < a.x - 0.08 && Math.abs(d.y - a.y) < radius(a) + radius(d) + 0.45 && dist(d, a) < radius(a) + radius(d) + 0.75
+        ({ t, d }) => t.style === "wrap" && (t.square || 0) < 0.42 && t.age >= 0.78 + struggle.finishDelay * 0.65 && t.grip >= 0.65 && d.x < a.x - 0.08 && Math.abs(d.y - a.y) < radius(a) + radius(d) + 0.45 && distance2D(d, a) < radius(a) + radius(d) + 0.75
       );
       if (rearDrag) {
         rearDrag.d.technique = "drag-tackle";
-        a.lean = clamp20(a.lean - 0.32, -0.56, 0.56);
+        a.lean = clamp(a.lean - 0.32, -0.56, 0.56);
         finishTackle(a, contacts2, "Drag-down tackle");
         return;
       }
@@ -9171,7 +9158,7 @@
         finishTackle(a, contacts2, "Secured return tackle");
         return;
       }
-      const groupReady = engaged >= 2 && oldest > 0.17 && combinedGrip > clamp20(1.06 - (engaged - 2) * 0.2, 0.52, 1.06);
+      const groupReady = engaged >= 2 && oldest > 0.17 && combinedGrip > clamp(1.06 - (engaged - 2) * 0.2, 0.52, 1.06);
       if (pileState?.active) {
         if (engaged >= 3 && pileState.age > 0.4 && pileState.pushers.length < engaged - 1) {
           finishTackle(a, contacts2, "Gang tackle");
@@ -9182,7 +9169,7 @@
       }
       if (groupReady) {
         const nearbyPushers = off.some(
-          (p) => p !== a && p.pos !== "QB" && dist(p, a) < 5.2 && p.x < a.x + 1
+          (p) => p !== a && p.pos !== "QB" && distance2D(p, a) < 5.2 && p.x < a.x + 1
         );
         const runnerUpright = a.balance > 0.63 && (speed(a) > 1.2 || a.TRK >= 87) && engaged <= 2;
         const canScrum = runnerUpright && nearbyPushers;
@@ -9220,8 +9207,8 @@
       const steps = Math.max(1, Math.ceil(flight * 60)), dt = flight / steps;
       for (let i = 0; i < steps; i++) {
         AIroute(ghost, dt);
-        ghost.x = clamp20(ghost.x + ghost.vx * dt, 7, 112);
-        ghost.y = clamp20(ghost.y + ghost.vy * dt, -0.3, H + 0.3);
+        ghost.x = clamp(ghost.x + ghost.vx * dt, 7, 112);
+        ghost.y = clamp(ghost.y + ghost.vy * dt, -0.3, H + 0.3);
       }
       return { x: ghost.x, y: ghost.y };
     }
@@ -9275,9 +9262,9 @@
       airSelection = { offense: null, defense: null, defenderKey: null };
       lastAirResult = null;
       const dx = rec.x - qb.x, dy = rec.y - qb.y, range = hypot(dx, dy);
-      const charge = clamp20((hold - 0.09) / 0.48, 0, 1), loft = 1 - charge;
+      const charge = clamp((hold - 0.09) / 0.48, 0, 1), loft = 1 - charge;
       const minV = 23 + (qb.THP - 65) * 0.22;
-      const flight = clamp20(range / minV * (1.13 + loft * 0.93), 0.39, 2.45);
+      const flight = clamp(range / minV * (1.13 + loft * 0.93), 0.39, 2.45);
       const maxRange = 35 + (qb.THP - 65) * 0.66;
       const powerFactor = range > maxRange ? maxRange / range : 1;
       const predicted = projectedReceiver(rec, flight);
@@ -9285,26 +9272,26 @@
         qb,
         def.filter((d) => d.rush)
       ).d;
-      const pressure = clamp20((4.8 - pressureDist) / 4.8, 0, 1);
-      const motion = clamp20(speed(qb) / 7, 0, 1);
-      const rating3 = clamp20((qb.THA - 35) / 64, 0, 1);
-      const runPenalty = motion * (1 - clamp20(((qb.TOR ?? qb.THA) - 30) / 69, 0, 1)) * 0.9;
+      const pressure = clamp((4.8 - pressureDist) / 4.8, 0, 1);
+      const motion = clamp(speed(qb) / 7, 0, 1);
+      const rating3 = clamp((qb.THA - 35) / 64, 0, 1);
+      const runPenalty = motion * (1 - clamp(((qb.TOR ?? qb.THA) - 30) / 69, 0, 1)) * 0.9;
       const spread = 0.24 + (1 - rating3) * 1.25 + range * 0.012 + pressure * 1.1 + motion * 0.18 + runPenalty;
-      const missX = clamp20(
+      const missX = clamp(
         (rand() + rand() + rand() - 1.5) * spread * 1.4,
         -2.7,
         2.7
       );
-      const missY = clamp20(
+      const missY = clamp(
         (rand() + rand() + rand() - 1.5) * spread * 1.4,
         -2.7,
         2.7
       );
-      const aimX = clamp20(
+      const aimX = clamp(
         qb.x + (predicted.x - qb.x) * powerFactor + missX,
         7.2,
         111
-      ), aimY = clamp20(predicted.y + missY, 0.3, H - 0.3);
+      ), aimY = clamp(predicted.y + missY, 0.3, H - 0.3);
       const missSize = Math.hypot(missX, missY);
       const quality2 = missSize < 0.4 ? "ON TARGET" : missSize < 1.35 ? "SLIGHTLY OFF" : "OFF TARGET";
       const originX = qb.x + 0.6, originY = qb.y;
@@ -9342,18 +9329,18 @@
       passThrown = true;
       for (const o of off) {
         const skill = 0.56 * o.AWR + 0.44 * (o.RTE || o.AWR);
-        o.airReadAt = clamp20(
+        o.airReadAt = clamp(
           (o === rec ? 0.045 : 0.19) + (99 - skill) * 35e-4 + ((o.routeVariation?.tempo || 1) - 1) * 0.3,
           0.03,
           0.48
         );
       }
       for (const d of def) {
-        const primary = d.assignment?.target === rec.key || dist(d, rec) < 4.6;
+        const primary = d.assignment?.target === rec.key || distance2D(d, rec) < 4.6;
         const recognize = 0.48 * d.AWR + 0.32 * d.PRC + 0.2 * (d.RCR || d.COV || d.AWR);
         const far = Math.hypot(d.x - aimX, d.y - aimY);
         const base = primary ? 0.07 : 0.19;
-        d.airReadAt = clamp20(
+        d.airReadAt = clamp(
           base + (99 - recognize) * 42e-4 + (!primary && far > 22 ? 0.055 : 0) + (d.coverageVariation?.react || 0) * 0.75,
           0.06,
           0.73
@@ -9376,12 +9363,12 @@
     function flightMarkers(b = ball) {
       if (!b?.flying) return null;
       const remaining = Math.max(0, (b.flight ?? b.t) - b.t);
-      const catchX = clamp20(
+      const catchX = clamp(
         Number.isFinite(b.aimX) ? b.aimX : b.x + b.vx * remaining,
         0,
         120
       );
-      const catchY = clamp20(
+      const catchY = clamp(
         Number.isFinite(b.aimY) ? b.aimY : b.y + b.vy * remaining,
         0.15,
         H - 0.15
@@ -9393,8 +9380,8 @@
       return {
         catchX,
         catchY,
-        groundX: clamp20(b.x + b.vx * gTime, 0, 120),
-        groundY: clamp20(b.y + b.vy * gTime, 0, H),
+        groundX: clamp(b.x + b.vx * gTime, 0, 120),
+        groundY: clamp(b.y + b.vy * gTime, 0, H),
         remaining,
         shadowX: b.x,
         shadowY: b.y
@@ -9404,14 +9391,14 @@
       if (!ball?.flying || !["WR", "TE", "FB", "RB"].includes(o.pos) || o.ground)
         return false;
       const m = flightMarkers(), target = { x: m.catchX, y: m.catchY };
-      const distance3 = dist(o, target), primary = o === intended;
+      const distance2 = distance2D(o, target), primary = o === intended;
       const remaining = Math.max(0.02, m.remaining);
-      const attainable = distance3 <= maxSpeed(o) * (remaining + 0.11) + catchReach(o) * 0.35;
-      if (!primary && (!attainable || distance3 > 13.5)) return false;
+      const attainable = distance2 <= maxSpeed(o) * (remaining + 0.11) + catchReach(o) * 0.35;
+      if (!primary && (!attainable || distance2 > 13.5)) return false;
       if (ball.t < (o.airReadAt ?? (primary ? 0.07 : 0.26))) return false;
       o.intent = primary ? "air-track" : "air-backup";
       o.intentTarget = intended?.key || "football";
-      const reach = distance3 < 1.3 ? Math.min(1.02, Math.max(0.7, remaining * 1.6)) : clamp20(1.03 + (o.AWR - 70) * 15e-4, 0.96, 1.1);
+      const reach = distance2 < 1.3 ? Math.min(1.02, Math.max(0.7, remaining * 1.6)) : clamp(1.03 + (o.AWR - 70) * 15e-4, 0.96, 1.1);
       steer(o, target.x - o.x, target.y - o.y, dt, reach);
       return true;
     }
@@ -9421,13 +9408,13 @@
       const db = ["CB", "FS", "SS"].includes(d.pos), lb = ["OLB", "MLB"].includes(d.pos);
       if (!db && !lb) return false;
       if (ball.t < (d.airReadAt ?? 0.34)) return false;
-      const distance3 = dist(d, target), primary = d.assignment?.target === intended?.key || intended && dist(d, intended) < 4.6;
-      if (lb && distance3 > 28) return false;
+      const distance2 = distance2D(d, target), primary = d.assignment?.target === intended?.key || intended && distance2D(d, intended) < 4.6;
+      if (lb && distance2 > 28) return false;
       let aimX = m.catchX, aimY = m.catchY;
-      if (lb && distance3 > 10) {
-        aimX -= Math.min(3.5, distance3 * 0.11);
+      if (lb && distance2 > 10) {
+        aimX -= Math.min(3.5, distance2 * 0.11);
       }
-      const effort = db ? clamp20(1.02 + (d.PRC - 70) * 14e-4, 0.97, 1.09) : 0.95;
+      const effort = db ? clamp(1.02 + (d.PRC - 70) * 14e-4, 0.97, 1.09) : 0.95;
       d.intent = primary ? "break-on-ball" : db ? "air-rally" : "air-underneath";
       d.intentTarget = intended?.key || "football";
       steer(d, aimX - d.x, aimY - d.y, dt, effort);
@@ -9485,11 +9472,11 @@
       const f = flightMarkers(), remaining = f.remaining;
       if (remaining > 0.37) return;
       const receiv = intended;
-      if (receiv && !receiv.ground && dist(receiv, { x: f.catchX, y: f.catchY }) < 3.8 && airSelection.offense) {
+      if (receiv && !receiv.ground && distance2D(receiv, { x: f.catchX, y: f.catchY }) < 3.8 && airSelection.offense) {
         startAirAnimation(receiv, airSelection.offense, "attempt");
       }
       const d = airSelection.defenderKey ? P(airSelection.defenderKey) : null;
-      if (d && !d.ground && dist(d, { x: f.catchX, y: f.catchY }) < 2.9 && defenderAirEligibility(d).reachable && airSelection.defense) {
+      if (d && !d.ground && distance2D(d, { x: f.catchX, y: f.catchY }) < 2.9 && defenderAirEligibility(d).reachable && airSelection.defense) {
         startAirAnimation(d, airSelection.defense, "attempt");
       }
     }
@@ -9535,21 +9522,21 @@
       const ballSkill = 0.55 * d.CAT + 0.3 * d.JMP + 0.15 * d.RCR;
       if (ballSkill > 86 && instinct > 81 && rand() < 0.57) return "ball";
       if (d.CAT < 60 && d.TAK > 76 && rand() < 0.48) return "receiver";
-      return rand() < 0.21 + clamp20((d.CAT - 67) / 100, 0, 0.22) ? "ball" : "swat";
+      return rand() < 0.21 + clamp((d.CAT - 67) / 100, 0, 0.22) ? "ball" : "swat";
     }
     function airContext(p, point) {
       const opposing = players.filter(
-        (d) => d.team !== p.team && !d.ground && ["CB", "FS", "SS", "OLB", "MLB", "WR", "TE", "RB"].includes(d.pos) && dist(d, p) < 2.9
+        (d) => d.team !== p.team && !d.ground && ["CB", "FS", "SS", "OLB", "MLB", "WR", "TE", "RB"].includes(d.pos) && distance2D(d, p) < 2.9
       );
-      const nearby = opposing.filter((d) => dist(d, p) < 2.1);
-      const separation = nearby.length ? Math.min(...nearby.map((d) => dist(p, d))) : 8;
+      const nearby = opposing.filter((d) => distance2D(d, p) < 2.1);
+      const separation = nearby.length ? Math.min(...nearby.map((d) => distance2D(p, d))) : 8;
       return { nearby, opposing, separation, crowd: nearby.length };
     }
     function airCatchProbability(p, style, ctx2) {
       const skill = p.CAT * 0.64 + p.AWR * 0.19 + p.JMP * 0.17;
       const coverage = ctx2.opposing.reduce((n, d) => {
-        const proximity = clamp20((3.1 - dist(d, p)) / 2.5, 0, 1);
-        const quality2 = clamp20(
+        const proximity = clamp((3.1 - distance2D(d, p)) / 2.5, 0, 1);
+        const quality2 = clamp(
           (0.52 * (d.COV || d.CAT) + 0.3 * d.AWR + 0.18 * d.JMP) / 85,
           0.65,
           1.25
@@ -9563,16 +9550,16 @@
       if (p === intended) chance += 0.035;
       if (p.team === 1) chance -= 0.075;
       if (ball?.deflected) chance -= 0.12;
-      return clamp20(chance, 0.08, 0.94);
+      return clamp(chance, 0.08, 0.94);
     }
     function defenderAirProbability(d, style, receiver) {
-      const near = receiver ? dist(d, receiver) : 1.7;
-      const leverage = clamp20((2.8 - near) / 2.5, 0, 1);
+      const near = receiver ? distance2D(d, receiver) : 1.7;
+      const leverage = clamp((2.8 - near) / 2.5, 0, 1);
       const ballDist = Math.hypot(d.x - ball.x, d.y - ball.y);
-      const geometry = clamp20((1.6 - ballDist) / 1.5, 0, 1);
+      const geometry = clamp((1.6 - ballDist) / 1.5, 0, 1);
       const grade = style === "ball" ? 0.41 * d.CAT + 0.27 * d.JMP + 0.2 * d.COV + 0.12 * d.AWR : style === "swat" ? 0.47 * d.COV + 0.23 * d.RCR + 0.18 * d.JMP + 0.12 * d.AWR : 0.42 * d.COV + 0.34 * d.AWR + 0.24 * d.TAK;
       const base = style === "ball" ? 0.1 : style === "swat" ? 0.28 : 0.17;
-      return clamp20(
+      return clamp(
         base + (grade - 70) * 75e-4 + leverage * 0.15 + geometry * 0.09 + (style === "ball" ? 0 : 0.04),
         0.045,
         style === "ball" ? 0.7 : 0.86
@@ -9585,7 +9572,7 @@
         result: "interception",
         player: d.key,
         action: "ball",
-        distance: dist(d, intended || d)
+        distance: distance2D(d, intended || d)
       };
       airCounters.interception++;
       log("BALL HAWK · " + d.name + " INTERCEPTION");
@@ -9668,17 +9655,17 @@
             range: 1.02 + (p.CAT - 65) * 5e-3 + (style === "aggressive" ? 0.1 : 0)
           };
         }).filter(
-          (o) => !ball.attempts.includes(o.p.key) && ball.z >= 0.18 && ball.z <= o.reach && dist(o.p, ball) < o.range
+          (o) => !ball.attempts.includes(o.p.key) && ball.z >= 0.18 && ball.z <= o.reach && distance2D(o.p, ball) < o.range
         );
         const defenders = def.filter(
-          (d) => !d.ground && !ball.attempts.includes(d.key) && ["CB", "FS", "SS", "OLB", "MLB"].includes(d.pos) && dist(d, ball) < 1.32 + (d.COV - 70) * 3e-3 && ball.z > 0.2 && ball.z <= catchReach(d) + 0.09
-        ).sort((a, b) => dist(a, ball) - dist(b, ball));
+          (d) => !d.ground && !ball.attempts.includes(d.key) && ["CB", "FS", "SS", "OLB", "MLB"].includes(d.pos) && distance2D(d, ball) < 1.32 + (d.COV - 70) * 3e-3 && ball.z > 0.2 && ball.z <= catchReach(d) + 0.09
+        ).sort((a, b) => distance2D(a, ball) - distance2D(b, ball));
         for (const d of defenders) {
           if (!ball?.flying) return;
           ball.attempts.push(d.key);
           const style = airDefenseStyle(d);
           const nearest = recs.reduce(
-            (best, p) => dist(p, d) < dist(best, d) ? p : best,
+            (best, p) => distance2D(p, d) < distance2D(best, d) ? p : best,
             recs[0] || d
           );
           const chance = defenderAirProbability(d, style, nearest);
@@ -9693,7 +9680,7 @@
             d.coverAim = null;
           }
         }
-        reachable.sort((a, b) => dist(a.p, ball) - dist(b.p, ball));
+        reachable.sort((a, b) => distance2D(a.p, ball) - distance2D(b.p, ball));
         for (const { p, style, ctx: ctx2 } of reachable) {
           if (!ball?.flying) return;
           ball.attempts.push(p.key);
@@ -9892,7 +9879,7 @@
         }
         if (contactEnabled) resolveTackles(p, dt);
         if (phase !== "live") return;
-        const crowd = def.filter((d) => !d.ground && dist(d, p) < 2.65).length;
+        const crowd = def.filter((d) => !d.ground && distance2D(d, p) < 2.65).length;
         if (crowd >= 2 && Math.hypot(p.vx, p.vy) < 0.65) {
           p.stoppedProgress = (p.stoppedProgress || 0) + dt;
           if (p.stoppedProgress > 2.1) {
@@ -9929,8 +9916,8 @@
         return false;
       }
       queuedCarrierMove = null;
-      const exhaustion = clamp20(a.stam / 0.38, 0.2, 1);
-      const base = kind === "juke" ? 0.02 * (1 - 0.16 * clamp20(((a.JUK || 50) - 30) / 69, 0, 1)) : kind === "hesi" ? 0.016 : kind === "spin" ? 0.027 : kind === "hurdle" ? 0.041 : kind === "truck" ? 0.018 : 0.018;
+      const exhaustion = clamp(a.stam / 0.38, 0.2, 1);
+      const base = kind === "juke" ? 0.02 * (1 - 0.16 * clamp(((a.JUK || 50) - 30) / 69, 0, 1)) : kind === "hesi" ? 0.016 : kind === "spin" ? 0.027 : kind === "hurdle" ? 0.041 : kind === "truck" ? 0.018 : 0.018;
       a.stam = Math.max(0, a.stam - base);
       a.action = {
         kind,
@@ -9946,7 +9933,7 @@
       if (kind === "juke") {
         const stick = stickInput(), direction2 = side || (Math.abs(stick.y) > 0.13 ? Math.sign(stick.y) : a.y < 26.6 ? 1 : -1);
         const fx = 1, fy = 0, nx = 0, ny = direction2;
-        const effort = clamp20(0.25 + 0.75 * exhaustion, 0.4, 1);
+        const effort = clamp(0.25 + 0.75 * exhaustion, 0.4, 1);
         a.jukeDrive = {
           nx,
           ny,
@@ -9961,16 +9948,16 @@
         a.vy += ny * 0.38 * effort;
         a.spin += direction2 * 0.27;
       } else if (kind === "hesi") {
-        a.vx *= clamp20(0.58 + (1 - exhaustion) * 0.22, 0.56, 0.82);
+        a.vx *= clamp(0.58 + (1 - exhaustion) * 0.22, 0.56, 0.82);
         a.vy += side * 0.26 * exhaustion;
       } else if (kind === "spin") {
         a.spin += (side || 1) * 5.3 * exhaustion;
         a.vy += (side || 1) * 0.64 * exhaustion;
       } else if (kind === "truck")
-        a.balance = clamp20(a.balance + 0.13 * exhaustion, 0.35, 1);
+        a.balance = clamp(a.balance + 0.13 * exhaustion, 0.35, 1);
       else if (kind === "hurdle") {
         if (!ChaosLowContact.initiate(a, "hurdle")) return false;
-        a.balance = clamp20(a.balance - 0.05, 0.35, 1);
+        a.balance = clamp(a.balance - 0.05, 0.35, 1);
         a.vx *= 0.95;
         a.vy *= 0.95;
         actionCue(a, "hurdle");
@@ -10023,7 +10010,7 @@
         return false;
       a.diveRecovery = 1.1;
       const input = stickInput(), nx = input.mag > 0.15 ? input.x : Math.cos(a.face), ny = input.mag > 0.15 ? input.y : Math.sin(a.face);
-      const energy = clamp20(a.stam / 0.3, 0.18, 1);
+      const energy = clamp(a.stam / 0.3, 0.18, 1);
       a.action = { kind: "dive", time: 0.44, age: 0, used: true };
       a.vx += nx * (1.35 + 0.55 * a.AGI / 99) * energy;
       a.vy += ny * 1.4 * energy;
@@ -10039,8 +10026,8 @@
         return false;
       const offense = kind === "truck" ? a.TRK * 0.43 + a.STR * 0.3 + a.w * 0.052 + a.AWR * 0.1 : kind === "stiff" ? a.SFA * 0.4 + a.STR * 0.21 + a.TRK * 0.22 + a.AWR * 0.17 : kind === "spin" ? a.AGI * 0.44 + a.CUT * 0.32 + a.AWR * 0.16 + a.ACC * 0.08 : kind === "hesi" ? a.AGI * 0.33 + a.CUT * 0.3 + a.ACC * 0.24 + a.AWR * 0.13 : a.JUK * 0.29 + a.AGI * 0.27 + a.CUT * 0.22 + a.ACC * 0.12 + a.AWR * 0.1;
       const defense = d.TAK * 0.39 + d.AWR * 0.22 + d.STR * 0.18 + d.PUR * 0.21;
-      const angle2 = hit.advantage * 0.38 + clamp20((a.vx - d.vx) * 0.5, -3, 3);
-      const margin = offense * clamp20(act.power ?? 1, 0.22, 1) - defense - angle2 + (rand() - 0.5) * 16 + (a.covering ? -4 : 0);
+      const angle2 = hit.advantage * 0.38 + clamp((a.vx - d.vx) * 0.5, -3, 3);
+      const margin = offense * clamp(act.power ?? 1, 0.22, 1) - defense - angle2 + (rand() - 0.5) * 16 + (a.covering ? -4 : 0);
       const win = margin > (["juke", "spin", "hesi"].includes(kind) ? 0 : -2);
       act.used = true;
       a.actionOutcomes++;
@@ -10054,7 +10041,7 @@
         actionCue(a, win ? "TRUCK" : "TRUCK STOPPED", win);
       }
       if (win) {
-        const dd = Math.max(0.1, dist(a, d)), nx = (d.x - a.x) / dd, ny = (d.y - a.y) / dd;
+        const dd = Math.max(0.1, distance2D(a, d)), nx = (d.x - a.x) / dd, ny = (d.y - a.y) / dd;
         d.stun = Math.max(
           d.stun,
           ["juke", "spin", "hesi"].includes(kind) ? 0.3 : 0.22
@@ -10064,7 +10051,7 @@
           ["juke", "spin", "hesi"].includes(kind) ? 0.49 : 0.36
         );
         if (!["juke", "hesi", "spin"].includes(kind)) {
-          const push = clamp20(0.5 + margin * 0.025, 0.3, 1.95) * mass2(a) / (mass2(a) + mass2(d));
+          const push = clamp(0.5 + margin * 0.025, 0.3, 1.95) * mass2(a) / (mass2(a) + mass2(d));
           d.vx += nx * push;
           d.vy += ny * push;
           a.vx -= nx * push * 0.23;
@@ -10074,7 +10061,7 @@
         } else a.stam = Math.max(0, a.stam - 0.012);
         a.pulse = 0.4;
         d.impact = 0.45;
-        d.balance = clamp20(d.balance - 0.16, 0.25, 1);
+        d.balance = clamp(d.balance - 0.16, 0.25, 1);
         log(
           a.name + " wins " + kind + " against " + d.pos + " (" + Math.round(margin) + " matchup)"
         );
@@ -10094,7 +10081,7 @@
       let stick = stickInput(), len = Math.hypot(stick.x, stick.y);
       let dx = len > 0.2 ? stick.x : Math.cos(p.face), dy = len > 0.2 ? stick.y : Math.sin(p.face);
       if (!isFinite(dx)) dx = 1;
-      const kick = clamp20(p.stam / 0.55, 0.25, 1);
+      const kick = clamp(p.stam / 0.55, 0.25, 1);
       p.vx += dx * (0.35 + p.ACC * 0.012) * kick;
       p.vy += dy * (0.35 + p.ACC * 0.012) * kick;
       const burstSpeed = speed(p), hardCap = maxSpeed(p);
@@ -10143,9 +10130,9 @@
       $("speedReading").textContent = ballP ? (speed(ballP) * YARD_M * MPS_TO_MPH).toFixed(1) : "0.0";
       $("impulseReading").textContent = lastContact + " ";
       const a = P("WR1"), b = P("CB1");
-      $("separationReading").textContent = a && b ? dist(a, b).toFixed(1) : "—";
+      $("separationReading").textContent = a && b ? distance2D(a, b).toFixed(1) : "—";
       const qb = P("QB");
-      $("pressureReading").textContent = qb ? Math.round(clamp20((5 - closestThreat(qb, def).d) / 5, 0, 1) * 100) + "%" : "0%";
+      $("pressureReading").textContent = qb ? Math.round(clamp((5 - closestThreat(qb, def).d) / 5, 0, 1) * 100) + "%" : "0%";
       $("boost").textContent = burstCool > 0 ? burstCool.toFixed(1) + "s" : "BURST";
       $("dive").textContent = moveCooldown > 0 ? moveCooldown.toFixed(1) + "s" : "JUKE";
       const energy = $("staminaReading"), bar = $("staminaFill");
@@ -10234,7 +10221,7 @@
       const focus = ball?.flying ? ball : ballCarrier || P("QB") || active2;
       let desired = phase === "presnap" ? isFreeKick(specialState) ? kickLineX(specialState) : playStart : focus ? focus.x : playStart;
       camera += (desired - camera) * 0.09;
-      const cam = clamp20(
+      const cam = clamp(
         camera,
         Math.min(xspan / 2, W / 2),
         Math.max(W - xspan / 2, W / 2)
@@ -10408,9 +10395,9 @@
       ctx.translate(x, y);
       if (p.ground) {
         const g = p.ground;
-        const settle = g.stage === "fall" ? clamp20(g.age / g.fall, 0, 1) : 1;
-        const gettingUp = g.stage === "rise" ? clamp20(1 - g.time / g.rise, 0, 1) : 0;
-        const body = clamp20(1 - settle * 0.3 + gettingUp * 0.3, 0.66, 1);
+        const settle = g.stage === "fall" ? clamp(g.age / g.fall, 0, 1) : 1;
+        const gettingUp = g.stage === "rise" ? clamp(1 - g.time / g.rise, 0, 1) : 0;
+        const body = clamp(1 - settle * 0.3 + gettingUp * 0.3, 0.66, 1);
         ctx.rotate(g.dir + (g.stage === "fall" ? 0.28 * settle : 0));
         ctx.fillStyle = "#04151caa";
         ctx.beginPath();
@@ -10854,7 +10841,7 @@
     function deadZone(x, y, cutoff = 0.18) {
       const mag = Math.hypot(x, y);
       if (!Number.isFinite(mag) || mag <= cutoff) return { x: 0, y: 0 };
-      const scaled = clamp20((Math.min(1, mag) - cutoff) / (1 - cutoff), 0, 1);
+      const scaled = clamp((Math.min(1, mag) - cutoff) / (1 - cutoff), 0, 1);
       return { x: x / mag * scaled, y: y / mag * scaled };
     }
     function buttonValue(p, index) {
@@ -11334,8 +11321,8 @@
     function resizeStick(e) {
       const r = $("joystick").getBoundingClientRect();
       const x = e.clientX - (r.left + r.width / 2), y = e.clientY - (r.top + r.height / 2), m = Math.hypot(x, y), max = r.width * 0.33;
-      joystick.x = clamp20(x / max, -1, 1);
-      joystick.y = clamp20(y / max, -1, 1);
+      joystick.x = clamp(x / max, -1, 1);
+      joystick.y = clamp(y / max, -1, 1);
       if (m > max) {
         joystick.x = x / m;
         joystick.y = y / m;
@@ -12093,7 +12080,7 @@
           vx: 0,
           vy: 0,
           vz: 0,
-          t: flight * clamp20(progress, 0, 0.99),
+          t: flight * clamp(progress, 0, 0.99),
           flight,
           ttl: flight + 1,
           aimX: x,
@@ -12130,14 +12117,14 @@
       debugSetPursuitBias: (key, lateral, depth) => {
         const d = P(key);
         if (!d || d.team !== 1) return false;
-        d.pursuitLateralBias = clamp20(lateral, -1, 1);
-        d.pursuitDepthBias = clamp20(depth, -1, 1);
+        d.pursuitLateralBias = clamp(lateral, -1, 1);
+        d.pursuitDepthBias = clamp(depth, -1, 1);
         return true;
       },
       debugSetPursuitReadRoll: (key, roll) => {
         const d = P(key);
         if (!d || d.team !== 1) return false;
-        d.pursuitReadRoll = clamp20(roll, 0, 1);
+        d.pursuitReadRoll = clamp(roll, 0, 1);
         return true;
       },
       debugInsideZonePlan: () => Object.fromEntries(
@@ -12210,13 +12197,13 @@
       debugSetStamina: (key, value) => {
         const p = P(key);
         if (!p) return false;
-        p.stam = clamp20(value, 0, 1);
+        p.stam = clamp(value, 0, 1);
         return true;
       },
       debugSetBalance: (key, value) => {
         const p = P(key);
         if (!p) return false;
-        p.balance = clamp20(value, 0.1, 1);
+        p.balance = clamp(value, 0.1, 1);
         return true;
       },
       debugSetDefenderState: (key, changes) => {

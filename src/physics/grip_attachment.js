@@ -1,7 +1,6 @@
+import { clampFinite as clamp } from "../core/math.js";
 // CHAOS original grip attachment policy. Never teleports a player or decides
 // a tackle: it produces bounded velocity changes while an earned link exists.
-const clamp = (x, lo, hi) =>
-  Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 // Contact accuracy is distinct from general tackling skill. It combines
 // actual anatomical placement, facing, approach quality and skill; the score
 // influences a hold, but never manufactures contact or declares a tackle.

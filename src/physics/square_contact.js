@@ -1,8 +1,7 @@
+import { clampFinite as clamp } from "../core/math.js";
 // CHAOS head-on tackle policy. No animation chooses a winner: this classifier
 // reads the *incoming* relative velocities and contact normal before the
 // impulse solver changes them. It does not use arbitrary animation chances.
-const clamp = (v, lo, hi) =>
-  Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : 0));
 function classify(a, b, nx, ny) {
   const aNormal = (a.vx || 0) * nx + (a.vy || 0) * ny;
   const bNormal = -(b.vx || 0) * nx - (b.vy || 0) * ny;

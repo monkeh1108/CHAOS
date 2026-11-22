@@ -1,7 +1,7 @@
+import { clampFinite as clamp } from "../core/math.js";
 // CHAOS v0.36.4o — continuous, physics-informed escape contest.
 // Doesn't teleport characters, award an animation, or roll a dice.
 // GRIP is not introduced as a redundant new rating: TAK/AWR express hold technique.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, Number.isFinite(v) ? v : a));
 function drive(runner, defender, link) {
   const forwardX = Math.cos(runner.face || 0),
     forwardY = Math.sin(runner.face || 0);
