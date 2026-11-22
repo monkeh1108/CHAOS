@@ -14,7 +14,7 @@ def standalone_html():
     html = path.read_text(encoding="utf-8")
     if override and "policies:Object.freeze" not in html and "policies: Object.freeze" not in html:
         # Expose the original standalone's lexical bindings to migrated browser tests.
-        bridge = "\nGRIDIRON_DEBUG.policies = { AnimationPolicy, CoverageRoutePolicy, DefensiveMemory, ProtectionRead, InsideZoneIQ };\n"
+        bridge = "\nGRIDIRON_DEBUG.policies = { AnimationPolicy, BlockingPolicy, CoverageRoutePolicy, DefensiveMemory, ProtectionRead, InsideZoneIQ };\n"
         return html.replace("</script>", bridge + "</script>", 1)
     return html
 

@@ -11941,6 +11941,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   window.GRIDIRON_DEBUG = {
     policies: Object.freeze({
       AnimationPolicy,
+      BlockingPolicy,
       CoverageRoutePolicy,
       DefensiveMemory,
       ProtectionRead,

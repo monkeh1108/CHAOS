@@ -18,8 +18,8 @@ def test_blocking_stances(browser_session, standalone_html):
    if(engaged.stance!==null||engaged.state!=='block-drive')throw Error('engaged stance');
    const strong={x:0,y:0,w:320,BLO:95,IBL:94,STR:95,AWR:90};
    const weak={x:1,y:0,w:190,STR:60,PMV:62,AGI:65,AWR:65};
-   const result=BlockingPolicy.contact({blocker:strong,defender:weak,secured:.9,age:.6,runner:{x:5,y:0}});
-   const opposite=BlockingPolicy.contact({blocker:weak,defender:{...strong,x:1},secured:.7,age:.6,runner:{x:5,y:0}});
+   const result=GRIDIRON_DEBUG.policies.BlockingPolicy.contact({blocker:strong,defender:weak,secured:.9,age:.6,runner:{x:5,y:0}});
+   const opposite=GRIDIRON_DEBUG.policies.BlockingPolicy.contact({blocker:weak,defender:{...strong,x:1},secured:.7,age:.6,runner:{x:5,y:0}});
    if(!(result.advantage>opposite.advantage))throw Error('ratings not influencing advantage');
    if(!Number.isFinite(result.strength)||result.strength<=0)throw Error('invalid block force');
    return {stances:roles.length,betterBlockerAdvantage:result.advantage,worseBlockerAdvantage:opposite.advantage,blockState:result.state};
