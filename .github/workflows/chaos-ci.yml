@@ -7,21 +7,30 @@ on:
 permissions:
   contents: read
 jobs:
-  build-and-unit:
+  build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
+          cache: npm
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python build_standalone.py --check
-      - name: Focused existing regression tests
+          cache: pip
+      - run: npm ci
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Set Chromium executable
         run: |
-          set -e
-          for test in tests/unit/tackle_reengagement.test.js tests/unit/tackle_intelligence.test.js tests/unit/low_contact.test.js tests/unit/pursuit_reaction.test.js tests/unit/contact_feedback.test.js; do
-            node "$test"
-          done
+          python - <<'PY' >> "$GITHUB_ENV"
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as playwright:
+              print(f"CHAOS_CHROMIUM={playwright.chromium.executable_path}")
+          PY
+      - run: npm run build:check
+      - run: npm run lint
+      - run: npm test
+      - run: xvfb-run -a npm run test:browser
