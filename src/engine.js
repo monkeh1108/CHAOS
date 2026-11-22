@@ -1226,7 +1226,7 @@ function finish(type,x,detail){if(phase!=='live')return;
   const recovery=(hadBall?.015:.345)*(0.85+p.STA/500)*(1-effort*.12);
   fatigueBank[p.key]=clamp(p.stam+recovery,.045,1);
  }
- pendingPass=null;const progressMark=pileState?.maxX??null;phase='dead';blockLinks.clear();tackleLinks.clear();pileState=null;for(const p of players){p.intent='whistle';p.intentTarget=null;p.stiffArmHeld=false;p.vx=0;p.vy=0;p.stun=0;p.ground=p.ground?.kind==='trip'?p.ground:null;p.groundLock=0}if(type==='touchdown')x=110;else if(ballCarrier&&type!=='incomplete'&&type!=='intercept'){x=clamp(type==='tackle'&&progressMark!==null?Math.max(ballCarrier.x,progressMark):ballCarrier.x,10,110)}
+ pendingPass=null;const progressMark=pileState?.maxX??null;phase='dead';blockLinks.clear();tackleLinks.clear();pileState=null;for(const p of players){p.intent='whistle';p.intentTarget=null;p.stiffArmHeld=false;p.vx=0;p.vy=0;p.stun=0;p.ground=['trip','tackle'].includes(p.ground?.kind)?p.ground:null;;p.groundLock=0}if(type==='touchdown')x=110;else if(ballCarrier&&type!=='incomplete'&&type!=='intercept'){x=clamp(type==='tackle'&&progressMark!==null?Math.max(ballCarrier.x,progressMark):ballCarrier.x,10,110)}
  const gained=Math.round((x-playStart)*10)/10;let heading=type==='touchdown'?'TOUCHDOWN':type==='tackle'?'TACKLED':type==='sack'?'QUARTERBACK SACK':type==='incomplete'?'INCOMPLETE':type==='intercept'?'INTERCEPTED':type==='out'?'OUT OF BOUNDS':type==='timeout'?'PLAY CLOCK EXPIRED':type.toUpperCase();
  if(tryState?.mode==='two'){
   const scored=type==='touchdown';if(scored){teamPoints[possession]+=2;score=teamPoints[possession];}
@@ -3227,6 +3227,19 @@ function finishTackle(a,contacts,type){
  a.stam=Math.max(.045,a.stam-.022);
  for(const c of contacts)c.d.stam=Math.max(.045,c.d.stam-.037);
  log(description);shake=.18;
+ 
+a.ground={
+  stage:'fall',
+  time:.25,
+  fall:.25,
+  rest:.65,
+  rise:.30,
+  age:0,
+  force:impulse,
+  from:contacts[0]?.d.key||null,
+  kind:'tackle'
+};
+
  finish(a===P('QB')?'sack':'tackle',a.x,description);
 }
 // A hurdle can evade a well-timed low cut, but it exposes the carrier to
@@ -4435,6 +4448,13 @@ window.addEventListener('gamepadconnected',()=>refreshControllerStatus());
 window.addEventListener('gamepaddisconnected',()=>pollGamepad());
 function frame(timestamp){if(!frame.prev)frame.prev=timestamp;let elapsed=Math.min((timestamp-frame.prev)/1000,.05);frame.prev=timestamp;
  pollGamepad();
+ 
+if(phase==='dead'&&!paused){
+  for(const p of players){
+    if(p.ground?.kind==='tackle')tickGround(p,elapsed);
+  }
+}
+
  if(!paused)gameTick(elapsed);
  if(phase==='live'&&!paused){frame.acc=(frame.acc||0)+elapsed;let cycles=0;while(frame.acc>=1/60&&cycles++<5&&phase==='live'){update(1/60);frame.acc-=1/60}}else{frame.acc=0;if(flash>0)flash=Math.max(0,flash-elapsed)}
  if(phase==='presnap'&&!paused)positionSelectedDefender(elapsed);
