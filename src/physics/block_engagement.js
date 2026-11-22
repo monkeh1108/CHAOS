@@ -108,7 +108,6 @@ export function createBlockEngagement() {
       const helpers = [...matchState.blockLinks.values()].filter(
         (other) => other !== e && other.defender === d.key,
       ).length;
-      const matchup = BlockingPolicy.match(o, d, helpers);
       const mismatch = scoreO - scoreD + Math.min(2, helpers) * 7;
       const powerEdge =
         d.PMV * 0.48 +

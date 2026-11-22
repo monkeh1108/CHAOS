@@ -1,5 +1,5 @@
 import { clamp } from "../core/math.js";
-// v0.36.4t: close-range reaction memory. Chasers follow observed movement,
+// Close-range reaction memory. Chasers follow observed movement,
 // not an instantaneous translation of every carrier juke. No velocity or
 // position is imposed on either athlete.
 function aim(defender, carrier, base, clock) {

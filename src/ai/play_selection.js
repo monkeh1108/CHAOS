@@ -3,7 +3,6 @@ export function createPlaySelection() {
 
   function chooseCPUPlay() {
     const style = TEAM_STYLES[matchState.possession];
-    const distance = Math.max(1, matchState.togo);
     const chooseRun =
       matchState.down === 1
         ? rand() < 0.47

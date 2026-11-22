@@ -1,4 +1,4 @@
-// V33: pure selection geometry; the engine owns actual DOM focus and callbacks.
+// Pure selection geometry; the engine owns actual DOM focus and callbacks.
 export const PlaybookNavigation = Object.freeze({
   move(index, length, columns, direction) {
     if (length < 1) return 0;

@@ -193,7 +193,7 @@ export function createGridironRenderer(canvas) {
   for (const f of faces)
     for (const j of [0, 1, 2, 0, 2, 3]) cube.push(...f.v[j], ...f.n);
   const ball = [];
-  let rings = 7,
+  const rings = 7,
     segments = 10;
   for (let v = 0; v < rings; v++)
     for (let u = 0; u < segments; u++) {
@@ -292,7 +292,7 @@ export function createGridironRenderer(canvas) {
       );
     for (let x = 10; x <= 110; x += 5) {
       box(root, [x, -0.041, 26.66], [0.12, 0.023, 53.3], C.line);
-      for (let z of [16, 37.3])
+      for (const z of [16, 37.3])
         box(root, [x, -0.025, z], [1, 0.023, 0.12], C.hash);
     }
     for (const z of [0.16, 53.15])
@@ -474,7 +474,6 @@ export function createGridironRenderer(canvas) {
     const pose = AnimationPolicy.sample(p, involved, presnap);
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
-      contact = pose.brace,
       bob = pose.bob;
     // The same physical contact and knocked-down states drive the pose.
     if (ground) {
@@ -601,8 +600,7 @@ export function createGridironRenderer(canvas) {
           ? 0.35
           : 0.58
       : 0;
-    const leftLeg = root,
-      shift = winded ? 0.05 : 0;
+    const shift = winded ? 0.05 : 0;
     // Pelvis and pads, deliberate proportional differences for linemen/skill players.
     box(
       root,
@@ -666,7 +664,6 @@ export function createGridironRenderer(canvas) {
       // The stiff arm extends *forward* from one shoulder; the other arm stays
       // free to carry/balance the football. Animation reflects an actual move.
       const overhead = ["aggressive", "ball", "swat"].includes(aKind);
-      const handsUp = overhead || aKind === "possession";
       // Each skill owns its own silhouette: two-handed high point, single-arm
       // DB swat, ball-hawk reach, chest-level possession, running RAC cradle.
       const highpoint =

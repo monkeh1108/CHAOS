@@ -8,8 +8,11 @@ export default [
     languageOptions: { globals: globals.browser },
     rules: {
       ...js.configs.recommended.rules,
-      "no-unused-vars": ["warn", { args: "none", caughtErrors: "none" }],
-      "no-empty": ["warn", { allowEmptyCatch: true }],
+      "no-unused-vars": [
+        "warn",
+        { args: "none", caughtErrors: "none", ignoreRestSiblings: true },
+      ],
+      "no-empty": "error",
       eqeqeq: ["error", "always", { null: "ignore" }],
       "no-var": "error",
       "prefer-const": "warn",
@@ -23,8 +26,6 @@ export default [
   {
     files: ["src/engine.js"],
     rules: {
-      "no-useless-assignment": "warn",
-      "no-dupe-keys": "warn",
       "no-restricted-globals": [
         "error",
         "window",
@@ -37,7 +38,13 @@ export default [
   {
     files: ["src/{core,sim,physics,ai}/**/*.js"],
     rules: {
-      "no-restricted-globals": ["error", "window", "document"],
+      "no-restricted-globals": [
+        "error",
+        "window",
+        "document",
+        "navigator",
+        "requestAnimationFrame",
+      ],
       "no-restricted-properties": [
         "error",
         { object: "Math", property: "random" },

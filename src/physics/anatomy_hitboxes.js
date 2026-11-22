@@ -41,20 +41,12 @@ function sample(p, options = {}) {
   const facing = Number.isFinite(options.facing) ? options.facing : p.face || 0;
   const c = Math.cos(facing),
     s = Math.sin(facing);
-  const action = p.action?.time > 0 ? p.action.kind : "";
-  const progress = clamp(
-    (p.action?.age || 0) /
-      Math.max(0.01, (p.action?.age || 0) + (p.action?.time || 0)),
-    0,
-    1,
-  );
   const divePose =
     typeof ChaosDiveReach !== "undefined" ? ChaosDiveReach.pose(p) : null;
   const standingWrapPose =
     !divePose && typeof ChaosDiveReach !== "undefined"
       ? ChaosDiveReach.standingPose(p)
       : null;
-  const dive = divePose ? Math.sin(Math.PI * 0.5 * divePose.progress) : 0;
   const fallen = p.ground
     ? p.ground.stage === "rise"
       ? clamp((p.ground.time || 0) / Math.max(0.05, p.ground.rise || 0.4), 0, 1)

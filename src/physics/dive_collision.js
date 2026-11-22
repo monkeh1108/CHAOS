@@ -1,7 +1,7 @@
 import { clamp } from "../core/math.js";
 import { AnatomyHitboxes } from "./anatomy_hitboxes.js";
 
-// CHAOS v0.36.4n: physical low-dive contact, independent of tackle awards.
+// Physical low-dive contact, independent of tackle awards.
 // Uses the existing shared pose/anatomy and a short swept trajectory.
 const attackerRegions = new Set(["upperArm", "forearm", "hand", "torso"]);
 const targetRegions = new Set(["thigh", "shin", "pelvis"]);
@@ -59,9 +59,6 @@ function response(
   if (!info.hit) return info;
   // Mere fingertips/brushing capsule surfaces should not halt a runner.
   if (info.penetration < 0.045) return { ...info, physical: false };
-  const cx = carrier.x - defender.x,
-    cy = carrier.y - defender.y;
-  const norm = Math.hypot(cx, cy);
   // Prevent the diving shoulder/torso advancing through the runner's legs.
   // On a swept hit, hold the defender at the entry point, allowing a tiny
   // numerical tolerance. Never teleport the runner or force a tackle award.

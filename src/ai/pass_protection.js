@@ -251,7 +251,7 @@ export function createPassProtection() {
     if (!locked && o.beatenTarget && matchState.playClock >= o.beatenUntil) {
       o.beatenTarget = null;
     }
-    let t =
+    const t =
       preferred ||
       (o.blockTarget &&
         rushing.find(
@@ -339,7 +339,7 @@ export function createPassProtection() {
     p.intent = "lead-block";
     p.intentTarget = "front";
     if (p.key === "FB" && matchState.selectedPlay === "power") {
-      let target = closestThreat(
+      const target = closestThreat(
         p,
         matchState.def.filter((d) => !d.rush && d.x > matchState.playStart),
       ).p;

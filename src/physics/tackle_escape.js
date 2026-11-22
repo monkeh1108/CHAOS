@@ -4,7 +4,7 @@ import {
   escapeProgress,
 } from "../core/tuning/tackle.js";
 import { clampFinite as clamp } from "../core/math.js";
-// CHAOS v0.36.4o — continuous, physics-informed escape contest.
+// Resolve escape progress as the runner and tackler sustain force.
 // Doesn't teleport characters, award an animation, or roll a dice.
 // GRIP is not introduced as a redundant new rating: TAK/AWR express hold technique.
 function drive(runner, defender, link) {

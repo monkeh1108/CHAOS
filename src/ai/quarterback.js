@@ -132,7 +132,6 @@ export function createQuarterback() {
     matchState.cpuQB.choice = chosen?.rec || null;
     matchState.cpuQB.lastScore = chosen?.score || 0;
     matchState.cpuQB.lastRisk = chosen?.danger || 0;
-    const patience = clamp((100 - qb.DEC) / 100, 0, 1);
     const timeDemand = CpuQBPolicy.minimumSettle(
       matchState.selectedPlay,
       qb.DEC,

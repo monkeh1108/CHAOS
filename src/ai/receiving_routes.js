@@ -2,16 +2,7 @@ import { angleFromCosine, clamp, distance2D as dist } from "../core/math.js";
 import { CoverageRoutePolicy } from "../ai/coverage_route_policy.js";
 
 export function createReceivingRoutes() {
-  let H,
-    P,
-    RUNS,
-    arrive,
-    catchReach,
-    flightMarkers,
-    matchState,
-    maxSpeed,
-    rand,
-    steer;
+  let H, P, RUNS, arrive, matchState, rand, steer;
 
   function eligibleTargets() {
     return [
@@ -455,24 +446,9 @@ export function createReceivingRoutes() {
     );
   }
 
-  // Receivers make a real run to the projected catch point before the football
-  // arrives. Only the target and teammates who could realistically reach the
-  // ball join the contest; unrelated receivers keep running their routes.
-
   return {
     bind(services) {
-      ({
-        H,
-        P,
-        RUNS,
-        arrive,
-        catchReach,
-        flightMarkers,
-        matchState,
-        maxSpeed,
-        rand,
-        steer,
-      } = services);
+      ({ H, P, RUNS, arrive, matchState, rand, steer } = services);
     },
     eligibleTargets,
     skillOffense,

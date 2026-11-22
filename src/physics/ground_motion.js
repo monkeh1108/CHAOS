@@ -28,7 +28,6 @@ export function createGroundMotion() {
       return false;
     // Cheap accidental shoulder brushes can't trigger the full animation.
     if (relativeSpeed < 3.2 || impulse < 240) return false;
-    const technique = attacker.team === 1 ? attacker.HIT : attacker.IBL;
     const impactRating =
       attacker.team === 1
         ? attacker.HIT * 0.62 + attacker.TAK * 0.18 + attacker.STR * 0.2

@@ -1,4 +1,4 @@
-// v0.34.9: isolated read-only decisions for passing lanes and crossing routes.
+// Isolated read-only decisions for passing lanes and crossing routes.
 // This module does not change blocking, tackling, stamina or special teams.
 export const CoverageRoutePolicy = {
   isVerticalThreat(p, los) {

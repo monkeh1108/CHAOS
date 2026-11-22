@@ -139,7 +139,6 @@ export function createBodyCollision() {
     const penetration = Math.max(0, minSep - sep);
     // Classify from incoming momentum BEFORE collision impulses. Body contact
     // records a short-lived physical event; animation merely reads it later.
-    const square = engaged ? ChaosSquareContact.classify(a, b, nx, ny) : null;
     const candidate =
       !a.ground &&
       !b.ground &&

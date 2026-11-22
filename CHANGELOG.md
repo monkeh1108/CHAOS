@@ -2,6 +2,15 @@
 
 Additional early release and QA notes are in the [release notes archive](docs/qa-history/legacy-release-notes.md).
 
+## Unreleased
+
+- Split match rules, clock, special teams, AI, physics, and diagnostics into
+  modules. Keep the standalone playable directly from `index.html`.
+- Add a seeded, headless tick API and JSON snapshot restore. Route browser
+  inputs and CPU play actions through a shared command dispatcher.
+- Add repeatable gameplay snapshots, consolidated test commands, and
+  lint checks for the simulation boundary.
+
 ## v0.36.4w — Rear-contact tackle eligibility and safety run diagnosis
 - Clear residual tackle suppression on actual runner contact only after any active live blocking and shed recovery end; avoid close-range dive spam against nearly stopped carriers.
 - Deep safeties process confirmed handoff after rating-based read interval without needing to stare directly at the ball carrier; no pre-snap run foreknowledge.

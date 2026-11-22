@@ -2,7 +2,7 @@ import { clamp } from "../core/math.js";
 import { DefensivePresnap } from "../ai/defensive_presnap.js";
 
 export function createCoverageSetup() {
-  let P, matchState, rand, skillOffense;
+  let P, matchState, rand;
 
   function chooseMixedCoverage() {
     const choices = ["cover1", "cover2", "cover3", "quarters"];
@@ -140,7 +140,6 @@ export function createCoverageSetup() {
 
   function assignCoverage() {
     const backs = matchState.def.filter((d) => !d.rush && !d.spy),
-      rec = skillOffense(),
       safety = P("FS"),
       strong = P("SS"),
       left = P("CB1"),
@@ -211,7 +210,7 @@ export function createCoverageSetup() {
           ["flat-right", 5, 43, 13],
         );
       }
-      let free = backs.filter((d) => !d.assignment);
+      const free = backs.filter((d) => !d.assignment);
       // Assign short areas based on initial alignment; nearest helps nickel/4-3/3-4 adjust.
       for (const [tag, depth, lat, width] of zones) {
         if (!free.length) break;
@@ -224,7 +223,7 @@ export function createCoverageSetup() {
 
   return {
     bind(services) {
-      ({ P, matchState, rand, skillOffense } = services);
+      ({ P, matchState, rand } = services);
     },
     chooseMixedCoverage,
     choosePressure,

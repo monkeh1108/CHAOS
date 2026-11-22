@@ -113,7 +113,7 @@ export function createGameHud({ readState, queries }) {
       gap = RUNS.has(selectedPlay),
       heavy = selectedFormation === "ace" || selectedFormation === "iform",
       light = selectedFront === "nickel";
-    let note = gap
+    const note = gap
       ? heavy && light
         ? "Heavier offensive bodies face nickel: the offense may create extra blocking angles, but the run still has to beat the actual gap defenders."
         : selectedPlay === "power"
@@ -210,7 +210,7 @@ export function createGameHud({ readState, queries }) {
       gameFlowNote,
     } = readState();
     if (phase === "live" || phase === "presnap" || phase === "dead") {
-      let suffix = ["", "ST", "ND", "RD", "TH"][down] || "TH";
+      const suffix = ["", "ST", "ND", "RD", "TH"][down] || "TH";
       $("down").textContent = specialState
         ? specialState.kind === "punt"
           ? "PUNT"

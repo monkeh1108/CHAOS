@@ -1,4 +1,3 @@
-import { clamp } from "../core/math.js";
 // CHAOS physical body contact policy. Torso/hip pads resist interpenetration;
 // limbs remain free to wrap. This is a bounded 2D core projection, not a full
 // rigid-body skeletal solver. No position teleport across a long distance.

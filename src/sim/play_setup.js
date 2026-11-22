@@ -114,7 +114,7 @@ export function createPlaySetup() {
     matchState.contactEnabled = true;
     const x = matchState.yard,
       ly = 26.65;
-    let qbdepth =
+    const qbdepth =
       matchState.selectedFormation === "iform"
         ? -1.6
         : matchState.selectedFormation === "ace"
