@@ -3209,7 +3209,7 @@ function stickInput(){
  const input=fieldStickAxes(screenX,screenY);
  return {x:input.x,y:input.y,mag:Math.min(1,mag)};
 }
-function steer(p,dx,dy,dt,boost=1){
+function steer(p,dx,dy,dt,boost=1,contactPlant=false){
  if(p.jukeRecovery>0){const skill=clamp((p.JUK*.36+p.CUT*.29+p.AGI*.23+p.ACC*.12-50)/49,0,1);boost*=1+.25*skill;p.jukeRecovery=Math.max(0,p.jukeRecovery-dt);}
  if(p===active&&burstTime>0)boost*=1+0.68*clamp(p.stam/.48,.15,1);
  if(p.stun>0){p.stun=Math.max(0,p.stun-dt);dx=0;dy=0;boost=.6}
@@ -3293,7 +3293,7 @@ function steer(p,dx,dy,dt,boost=1){
    // orbiting him on leftover lateral velocity. Preserve turning limits at
    // longer distances and keep this correction limited to live pursuit.
    const tackleApproach=p.team===1&&fullPursuit&&ballCarrier&&goalDistance<3.4;
-   const closeControl=tackleApproach?1.65:1;
+   const closeControl=contactPlant?2.25:tackleApproach?1.65:1;
    const sidewaysBrake=clamp((2.5+footwork*2.9)*dt*(alignment<.80?1:.43)*pursuitBrake*closeControl,0,tackleApproach?.34:.22);
    vx+=dy*lateral*sidewaysBrake;vy-=dx*lateral*sidewaysBrake;
    if(alignment<.05){
@@ -3595,9 +3595,10 @@ function runFitAI(d,dt){
 // Estimate how far the defender can drive along each candidate path by
 // its arrival time. Project current momentum onto the path so turning back
 // costs time, and use rated acceleration and the current fatigue ceiling.
-function interceptT(d,a,sep){
+function interceptT(d,a,sep=dist(d,a),accountForTurn=false){
  if(sep<5.5)return .025;
  const cap=maxSpeed(d);
+ const pace=accountForTurn?speed(d):0;
  const drive=acceleration(d)*1.43*(.67+.33*d.stam);
  const horizon=.85+.45*RunPursuitPolicy.quality(d);
  let best=.10,bestMiss=Infinity;
@@ -3607,7 +3608,9 @@ function interceptT(d,a,sep){
   const initial=clamp((d.vx*dx+d.vy*dy)/Math.max(.01,gap),-cap,cap);
   const driveTime=Math.min(t,(cap-initial)/drive);
   const reach=initial*driveTime+.5*drive*driveTime*driveTime+cap*(t-driveTime);
-  const miss=gap-reach;
+  // Sideways momentum takes time to redirect even when forward projection is positive.
+  const turnLoss=pace>.65?(pace-Math.abs(initial))*.18:0;
+  const miss=gap-reach+turnLoss;
   if(miss<=.65)return t;
   if(miss<bestMiss){best=t;bestMiss=miss;}
  }
@@ -3619,7 +3622,7 @@ function pursuitAim(d,a){
  const observed=sep>=5.5?ChaosPursuitReaction.observeVelocity(d,a,playClock):a;
  if(sep<5.5)d.pursuitVelocityRead=null;
  const track={x:a.x,y:a.y,vx:observed.vx,vy:observed.vy};
- const t=interceptT(d,track,sep);
+ const t=interceptT(d,track,sep,passThrown||a.pursuitHighX-a.x>2.5);
  let tx=a.x+track.vx*t,ty=a.y+track.vy*t;
  let mode='close';
  if(sep>5.5){
@@ -3673,14 +3676,60 @@ function runContainmentAim(d,a,aim){
  return {...aim,x:Math.max(aim.x,depth),y,mode:force?'edge-contain':'last-line',holdLeverage:true};
 }
 function pursuitAI(d,a,dt){
- const aim=runContainmentAim(d,a,pursuitAim(d,a));
- d.pursuitPoint=aim;
+ let aim=runContainmentAim(d,a,pursuitAim(d,a));
+ const observed=d.pursuitVelocityRead;
+ const retreat=a.pursuitHighX-a.x>2.5;
+ if(d.runRead&&retreat&&observed&&Math.abs(observed.vy)>4&&
+    Math.abs(observed.vy)>2*Math.abs(observed.vx)){
+  const side=Math.sign(observed.vy);
+  d.retreatDirection=side;
+  const force=aim.role===(side<0?'force-left':'force-right')&&d.pos==='CB';
+  // Meet the reversal on the destination side before the runner crosses the hash.
+  if(force&&(d.y-a.y)*side>0){
+   aim={...aim,x:clamp(a.x+2.6,10,110),
+    y:clamp(a.y+side*Math.min(aim.lead*Math.abs(observed.vy),Math.abs(d.y-a.y)+1),.45,H-.45),
+    mode:'retreat-contain',holdLeverage:true};
+  }else if(aim.role==='last-line'&&d.x>a.x&&a.x<playStart){
+   // Keep a second level beyond the corner. Each safety shades his own half.
+   aim={...aim,x:Math.min(109,Math.max(playStart+5,a.x+5)),
+    y:clamp(aim.y+Math.sign(d.spawnY-H/2)*2.5,.45,H-.45),
+    mode:'last-line',holdLeverage:true};
+  }
+ }
+ if(aim.role==='last-line'&&d.retreatDirection&&
+    d.retreatDirection!==Math.sign(d.spawnY-H/2)&&d.x>a.x+4&&aim.sep>6&&a.x<playStart+8){
+  // Backside safety keeps depth while the playside safety closes downhill.
+  // Shade inside the same lane so a broken first grip still has support.
+  aim={...aim,x:Math.min(109,Math.max(playStart+10,a.x+4)),
+   y:clamp(aim.y-d.retreatDirection*1.5,.45,H-.45),mode:'last-line',holdLeverage:true};
+ }
  const rating=clamp(.95+(d.PUR-70)*.0032,.82,1.11);
  d.intent=['edge-contain','retreat-contain'].includes(aim.mode)?'contain':aim.mode==='last-line'?'safety-angle':'pursue';
  d.intentTarget=aim.role;
  const effort=rating*(d.blocked>0?.54:1);
+ const close=d.closePursuitRead;
+ let plant=false;
+ if((passThrown||retreat)&&close&&aim.sep<5.3&&aim.sep>1.1&&
+    d.x>a.x&&!aim.holdLeverage&&d.blocked<.25&&!d.action?.time){
+  // Lead across the observed path. A cutoff aimed at the last sampled hip
+  // can become a chase before the defender has planted his feet.
+  const dx=(a.x-d.x)/aim.sep,dy=(a.y-d.y)/aim.sep;
+  const transverse=Math.abs(close.vy*dx-close.vx*dy);
+  if(transverse>3){
+   const closure=(d.vx-close.vx)*dx+(d.vy-close.vy)*dy;
+   const lead=clamp((aim.sep-radius(a)-radius(d))/Math.max(5,closure),.10,.32);
+   const age=playClock-close.at;
+   aim={...aim,x:clamp(close.x+close.vx*(age+lead),10,110),
+    y:clamp(close.y+close.vy*(age+lead),.45,H-.45),lead,mode:'crossing'};
+  }
+  const forward=d.vx*dx+d.vy*dy;
+  const lateral=Math.abs((d.vy-close.vy)*dx-(d.vx-close.vx)*dy);
+  // Leave straight-line and trailing pursuit at normal effort.
+  plant=aim.sep<3.4&&forward>2&&lateral>3.5;
+ }
+ d.pursuitPoint=aim;
  if(aim.holdLeverage)arrive(d,aim.x,aim.y,dt,effort);
- else steer(d,aim.x-d.x,aim.y-d.y,dt,effort);
+ else steer(d,aim.x-d.x,aim.y-d.y,dt,effort*(plant?.72:1),plant);
 }
 // Reserve each wide receiver's *own* outside corner on designed runs.
 // In Cover 1, use the defender whose man assignment is this receiver. In zone,
@@ -3920,15 +3969,27 @@ function chooseDefenderCommitment(d,a){
  const facing=(Math.cos(d.face||0)*dx+Math.sin(d.face||0)*dy)/along;
  const choice=ChaosTackleIntelligence.selection(d,a,{gap,contact:radius(d)+radius(a),closing,runnerSpeed:speed(a),facing,frontality:facing,freeLane:d.blocked<.12});
  d.lastTackleDecision={choice,gap,closing,facing,time:playClock};
- if(choice==='tackle-dive'&&!(speed(a)<.95&&gap<2.5)){
+ if(choice==='tackle-dive'){
+  const diveDrive=1.35,duration=.53;
+  const dir={x:dx/along,y:dy/along};
+  const checkLaunch=passThrown||a.pursuitHighX-a.x>2.5;
+  if(checkLaunch){
+   const relativeX=d.vx-a.vx+dir.x*diveDrive,relativeY=d.vy-a.vy+dir.y*diveDrive;
+   const relativeSpeedSq=relativeX**2+relativeY**2;
+   const closest=clamp((dx*relativeX+dy*relativeY)/Math.max(.01,relativeSpeedSq),0,duration);
+   // Check the launch line before taking the feet away. Actual contact is
+   // still resolved by the existing dive and tackle solvers.
+   if(Math.hypot(dx-relativeX*closest,dy-relativeY*closest)>radius(a)+radius(d)+.48)return;
+  }
   // A planted or nearly stopped runner needs a controlled wrap, not a
   // repeated launch of low dives through the same crowded rear contact.
   // AI may commit a physically plausible low dive before contact.
-  const dir={x:dx/along,y:dy/along};
-  d.action={kind:'tackle-dive',time:.53,age:0,used:false,direction:dir,ai:true};
+  d.action={kind:'tackle-dive',time:duration,age:0,used:false,direction:dir,ai:true};
+  d.lastTackleDecision.committed=true;
   d.technique='tackle-dive';d.diveRecovery=1.2;d.tackleCooldown=.68;
-  d.vx+=dir.x*1.35;d.vy+=dir.y*1.35;
+  d.vx+=dir.x*diveDrive;d.vy+=dir.y*diveDrive;
   d.stam=Math.max(0,d.stam-.032);
+  return checkLaunch;
  }
  // If decision is a power collision, physics still choose whether it hits.
  // Never auto-start a grip or tackle action before anatomical contact.
@@ -3942,7 +4003,10 @@ function defenderAI(d,dt){
   const seen=InsideZoneIQ.visible(d,ballCarrier);
   if(seen||dist(d,ballCarrier)<1.65||selectedPlay!=='inside'){
    if(seen)d.lastVisibleRunner={x:ballCarrier.x,y:ballCarrier.y,at:playClock};
-   chooseDefenderCommitment(d,ballCarrier);pursuitAI(d,ballCarrier,dt);return;
+   if(chooseDefenderCommitment(d,ballCarrier)){
+    d.intent='committed-dive';d.intentTarget=ballCarrier.key;return;
+   }
+   pursuitAI(d,ballCarrier,dt);return;
   }
   // No instant behind-the-head recognition. Reorient toward the player's
   // last observed lane; he may acquire the runner again after physically turning.
@@ -5183,8 +5247,7 @@ function resolveTackles(a,dt){
    report?.push({defender:d.key,reason:'reengagement'});
    d.wrapReach=0;d.wrapLinked=false;continue;
   }
-  // Animate hands reaching BEFORE torso collision. This state has no effect on
-  // collision awards or grip probabilities; it only drives the shared rig.
+  // Reach animation reads the same anatomical evidence as the tackle solver.
   const committedDive=d.action?.kind==='tackle-dive'&&d.action.time>0;
   const linkActive=tackleLinks.has(d.key);
   const towardX=a.x-d.x,towardY=a.y-d.y;
@@ -5205,14 +5268,14 @@ function resolveTackles(a,dt){
     (lookDot>-.1||linkActive||establishedBodyContact) && d.blocked<.28;
   // Intent never creates a grip or a phantom tackle. Reach begins at
   // overlapping collision bodies; the opponent remains free to sidestep.
-  const contactReach=proximity<=radius(a)+radius(d)+.20||linkActive;
+  // Broad phase keeps capsule sampling confined to nearby runners.
+  const anatomical=proximity<1.65?ChaosContactOutcomes.evaluate(a,d):null;
+  const physicalContact=liveTackleContacts.get(d.key)||null;
+  const contactReach=linkActive||!!physicalContact||(anatomical?.bodyContact&&anatomical.kind!=='light contact');
   const desired=eligible&&contactReach?clamp((radius(a)+radius(d)+.25-proximity)/.65,.12,1):0;
   d.wrapReach=clamp((d.wrapReach||0)+clamp(desired-(d.wrapReach||0),-dt*5.4,dt*5.4),0,1);
   d.wrapLinked=linkActive;
 
-  // Broadphase stays cheap; only nearby runners need 15-region analysis.
-  const anatomical=proximity<1.65?ChaosContactOutcomes.evaluate(a,d):null;
-  const physicalContact=liveTackleContacts.get(d.key)||null;
   const touching=!!physicalContact||proximity<radius(a)+radius(d)+.20||
     (committedDive&&anatomical&&anatomical.potential&&proximity<1.45);
   const activeBlock=[...blockLinks.values()].find(link=>link.defender===d.key&&link.secured>.42&&dist(P(link.blocker),d)<2.15);
@@ -5512,6 +5575,7 @@ function passTo(index,hold=.27){
   const recognize=.48*d.AWR+.32*d.PRC+.20*(d.RCR||d.COV||d.AWR);
   const far=Math.hypot(d.x-aimX,d.y-aimY);
   const base=primary?.07:.19;
+  d.airSeenFor=0;
   d.airReadAt=clamp(base+(99-recognize)*.0042+(!primary&&far>22?.055:0)+(d.coverageVariation?.react||0)*.75,.06,.73);
  }
  qb.vx*=.5;qb.vy*=.5;
@@ -5557,21 +5621,34 @@ function receiverFlightAI(o,dt){
 // picture. Recognition delay and actual travel distance determine whether he
 // can arrive in time. Backside corners and safeties rally in support; no
 // guaranteed ball-hawk outcomes or synthetic pursuit speed are added.
+function defenderTracksPass(d,dt){
+ const delay=d.airReadAt??.34;
+ if((d.airSeenFor||0)>=delay)return true;
+ if(!InsideZoneIQ.visible(d,ball))return false;
+ d.airSeenFor=(d.airSeenFor||0)+dt;
+ return d.airSeenFor>=delay;
+}
 function defenderFlightAI(d,dt){
  if(!ball?.flying||d.ground)return false;
  const m=flightMarkers(),target={x:m.catchX,y:m.catchY};
  const db=['CB','FS','SS'].includes(d.pos),lb=['OLB','MLB'].includes(d.pos);
  if(!db&&!lb)return false;
- if(ball.t<(d.airReadAt??.34))return false;
+ if(!defenderTracksPass(d,dt))return false;
  const distance=dist(d,target),primary=d.assignment?.target===intended?.key||
    (intended&&dist(d,intended)<4.6);
  // A linebacker may flow underneath a deep throw, but won't instantly vacate
  // his zone and sprint 40 yards to where a corner should be responsible.
  if(lb&&distance>28)return false;
  let aimX=m.catchX,aimY=m.catchY;
- if(lb&&distance>10){aimX-=Math.min(3.5,distance*.11);}
+ const reachable=distance<=maxSpeed(d)*m.remaining+catchReach(d)*.5;
+ if(!reachable){
+  // A defender late to the ball protects the receiver's downfield exit.
+  // Keep each defender on his own shoulder of the recovery lane.
+  aimX=Math.min(114.65,Math.max(Math.min(d.x,m.catchX+9),m.catchX+(db?4:2)));
+  aimY=clamp(aimY+clamp((d.y-aimY)*.30,-3,3),.45,H-.45);
+ }
  const effort=db?clamp(1.02+(d.PRC-70)*.0014,.97,1.09):.95;
- d.intent=primary?'break-on-ball':db?'air-rally':'air-underneath';
+ d.intent=reachable&&primary?'break-on-ball':db?'air-rally':'air-underneath';
  d.intentTarget=intended?.key||'football';
  steer(d,aimX-d.x,aimY-d.y,dt,effort);
  return true;
@@ -5728,6 +5805,8 @@ function airBall(dt){
   // Defenders have their own independent opportunity to attack the ball.
   // Their reach, spacing and ratings matter; mere proximity never guarantees a pick.
   const defenders=def.filter(d=>!d.ground&&!ball.attempts.includes(d.key)&&['CB','FS','SS','OLB','MLB'].includes(d.pos)&&
+    (InsideZoneIQ.visible(d,ball)||(d.airSeenFor||0)>=(d.airReadAt??.34)||
+     (controlMode==='defense'&&d.key===selectedDefenderKey))&&
     dist(d,ball)<1.32+(d.COV-70)*.003&&ball.z>.20&&ball.z<=catchReach(d)+.09)
     .sort((a,b)=>dist(a,ball)-dist(b,ball));
   for(const d of defenders){
