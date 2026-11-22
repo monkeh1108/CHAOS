@@ -15,7 +15,10 @@ const ChaosTackleEscape=(()=>{
   // Successive physically demanding releases tax the planted legs. The load
   // decays with recovery, rather than an artificial "can't break 3 tackles" rule.
   const exertion=clamp(runner.breakExertion||0,0,1);
-  const effort=clamp(legPower*traction*(.55+.45*clamp(forwardSpeed/5,0,1))*(1-.36*exertion),0,1);
+  // A neutral-input carrier is braking. Collision velocity can still stretch
+  // the grip below, but cannot supply active leg drive.
+  const appliedLegPower=runner.intent==='carry-coast'?0:legPower;
+  const effort=clamp(appliedLegPower*traction*(.55+.45*clamp(forwardSpeed/5,0,1))*(1-.36*exertion),0,1);
   const grip=clamp(link.grip||0,0,1.6),quality=clamp(link.quality??.65,0,1.25);
   const secure=link.style==='wrap'&&grip>=.78&&quality>=.76;
   const hold=clamp((defender.TAK||65)*.50+(defender.STR||65)*.30+(defender.AWR||65)*.20,0,99);

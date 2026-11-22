@@ -97,6 +97,8 @@ const fatigueBank=Object.create(null); // Between-snap stamina for each athlete
 const blockLinks=new Map(), tackleLinks=new Map();
 // Per-physics-step anatomical evidence captured before the body solver separates pads.
 const liveTackleContacts=new Map();
+// Opt-in QA snapshot of the latest tackle eligibility pass.
+let tackleDiagnostics=null, carrierCollisionDiagnostics=null;
 let tackleCount=0, brokenTackleCount=0, blockShedCount=0, hitStickCount=0, impactBlockCount=0, powerMoveCount=0;
 let pileState=null, pileStarts=0, pilePushYards=0, chainHits=0;
 let windedHits=0, standUps=0;
@@ -1107,6 +1109,8 @@ function setup(){
  scrimmagePlayCalled=false;
  paused=false;refreshPauseUI();suppressManualUntilNeutral=false;xHoldStart=null;xDiveFired=false;rightStickLatched=false;rightStickDirection='';queuedCarrierMove=null;
  players.length=0;off.length=0;def.length=0;
+ if(tackleDiagnostics)tackleDiagnostics.length=0;
+ if(carrierCollisionDiagnostics)carrierCollisionDiagnostics.length=0;
  ChaosContactEvidence.reset();lastAnatomyTackle=null;lowDiveContacts=0;lastLowDiveImpact=null;blockLinks.clear();tackleLinks.clear();pileState=null;pileStarts=0;pilePushYards=0;chainHits=0;tackleCount=0;brokenTackleCount=0;blockShedCount=0;hitStickCount=0;impactBlockCount=0;powerMoveCount=0;windedHits=0;standUps=0;
  playStart=yard;selectedCoverage=coveragePreference==='mix'?chooseMixedCoverage():coveragePreference;selectedPressure=choosePressure();ballCarrier=null;ball=null;intended=null;passThrown=false;active=null;manualReceiver=false;airSelection={offense:null,defense:null,defenderKey:null};lastAirResult=null;cpuQB={nextRead:0,choice:null,reads:0,passes:0,lastScore:0,lastRisk:0};lastContact=0;playClock=0;burstTime=0;burstCool=0;evadeTime=0;evadeCool=0;moveCooldown=0;pendingPass=null;flash=0;manualDrive=false;contactEnabled=true;
  const x=yard,ly=26.65;
@@ -2881,6 +2885,9 @@ function bodyCoupling(a,b,pass){
  a.vx-=jt*invA*(-ny);a.vy-=jt*invA*nx;
  b.vx+=jt*invB*(-ny);b.vy+=jt*invB*nx;
  const hit=J*YARD_M;
+ if(carrierCollisionDiagnostics&&(a===ballCarrier||b===ballCarrier)){
+  carrierCollisionDiagnostics.push({pair:[a.key,b.key],pass,normalNs:hit,tangentNs:jt*YARD_M});
+ }
  // Only the first contact iteration can generate a new down event. The repeated
  // solver passes still handle momentum transfer and prevent overlapping bodies.
  // Receivers on the same Mesh concept should avoid contact rather than
@@ -2934,6 +2941,7 @@ function resolveBodyContacts(){
 }
 function applyMotion(dt){
  liveTackleContacts.clear();
+ if(carrierCollisionDiagnostics)carrierCollisionDiagnostics.length=0;
  const anatomyBefore=players.map(p=>ChaosContactEvidence.poseCopy(p));
  for(const p of players){
   if(p.ground){p.vx*=.66;p.vy*=.66;}
@@ -3227,13 +3235,18 @@ function resolveHurdle(a,d,style){
 }
 function resolveTackles(a,dt){
  if(!a||a.team!==0)return;
+ const report=tackleDiagnostics;
+ if(report)report.length=0;
  for(const d of def){
-  if(d.ground||d.stun>0||(d.tackleCooldown>0&&d.action?.kind!=='tackle-dive')){d.wrapReach=0;d.wrapLinked=false;continue;}
+  const recovery=d.ground?'grounded':d.stun>0?'stunned':
+    d.tackleCooldown>0&&d.action?.kind!=='tackle-dive'?'tackle cooldown':null;
+  if(recovery){report?.push({defender:d.key,reason:recovery});d.wrapReach=0;d.wrapLinked=false;continue;}
   // A quarterback holding the ball can be tackled by ANY defender who
   // physically reaches him, including a user-blitzing safety or linebacker.
   // Rush assignments affect pursuit and blocking, not tackle eligibility.
   const proximity=dist(a,d);
   if(!ChaosTackleReengagement.observe(d,a,radius(a)+radius(d),playClock)){
+   report?.push({defender:d.key,reason:'reengagement'});
    d.wrapReach=0;d.wrapLinked=false;continue;
   }
   // Animate hands reaching BEFORE torso collision. This state has no effect on
@@ -3278,7 +3291,11 @@ function resolveTackles(a,dt){
     d.blocked=0;
    }
   }
-  if(touching&&!tackleLinks.has(d.key)&&d.blocked<.25){
+  if(report&&!linkActive&&(!touching||d.blocked>=.25)){
+   report.push({defender:d.key,reason:!touching?'out of contact reach':
+     activeBlock?'secured block':d.shedCooldown>0?'shed recovery':'blocking penalty',proximity});
+  }
+  if(touching&&!linkActive&&d.blocked<.25){
    const currentContact=anatomical||ChaosContactOutcomes.evaluate(a,d);
    // Preserve real pre-separation body evidence when post-solver geometry no
    // longer intersects. This never turns bare proximity into a tackle.
@@ -3293,11 +3310,21 @@ function resolveTackles(a,dt){
    // Do not let a dive's proximity radius award a ghost tackle. Preserve the
    // stable standing-wrap solver until its full-body geometry is calibrated.
    if((committedDive&&contactState.kind==='miss'&&!swept)||
-      (contactState.kind==='light contact'&&!swept))continue;
+      (contactState.kind==='light contact'&&!swept)){
+    report?.push({defender:d.key,reason:contactState.kind==='miss'?'missed dive':'light contact',contact:contactState});
+    continue;
+   }
    const hit=tackleLeverage(a,d);
    const style=tackleStyle(a,d,hit);
    if(style==='cut'&&!d.action)d.action={kind:'cut-stick',time:.40,age:0,used:false};
-   if(resolveCarrierAction(a,d,hit)||resolveHurdle(a,d,style))continue;
+   if(resolveCarrierAction(a,d,hit)){
+    report?.push({defender:d.key,reason:'carrier action',style,contact:contactState});
+    continue;
+   }
+   if(resolveHurdle(a,d,style)){
+    report?.push({defender:d.key,reason:'hurdle clearance',style,contact:contactState});
+    continue;
+   }
    // More fatigue from actual contact than ordinary straight-line sprinting.
    a.stam=Math.max(0,a.stam-.014);d.stam=Math.max(0,d.stam-.020);
    d.touches++;a.touches++;
@@ -3323,6 +3350,7 @@ function resolveTackles(a,dt){
    const freshSquare=d.squareImpact?.carrier===a.key&&playClock-d.squareImpact.time<.20?
      d.squareImpact.score:0;
    const link={defender:d.key,age:0,grip:handPosition,initialImpulse:hit.impulse,advantage:hit.advantage,style,contactCategory:contactState.kind,quality:placementQuality,attachment:null,square:style==='dive'?0:freshSquare};
+   report?.push({defender:d.key,reason:'grip started',style,contact:contactState,quality:placementQuality});
    tackleLinks.set(d.key,link);d.wrapLinked=true;d.technique=style==='hit'?'hit-stick':'wrap';
    if(style==='hit'){
     hitStickCount++;
@@ -4503,6 +4531,9 @@ window.GRIDIRON_DEBUG={debugTackleDecision:(key)=>P(key)?.lastTackleDecision||nu
   return true;
  },debugDiveCollision:(runner='RB',defender='MLB',runnerPrev=null,defPrev=null)=>{const a=P(runner),d=P(defender);if(!a||!d)return null;const oldA=runnerPrev||ChaosContactEvidence.poseCopy(a),oldD=defPrev||ChaosContactEvidence.poseCopy(d);return ChaosDiveCollision.evaluate(oldA,a,oldD,d);},
  debugLowContact:()=>({footContacts,lastFootContact,carrierAir:ballCarrier?.airState||null}),debugFootScenario:(runner='RB',defender='MLB',kind='dive')=>{const r=P(runner),d=P(defender);if(!r||!d)return false;for(const p of players)if(p!==r&&p!==d){p.x=p.team===0?18:106;p.y=2+(p.key.charCodeAt(0)%40);}ballCarrier=r;active=r;passThrown=true;specialState=null;tackleLinks.clear();r.x=70;r.y=26;r.vx=5;r.vy=0;r.face=0;r.balance=1;r.ground=null;r.airState=null;r.lowContactCooldown=0;r.stumbleTime=0;d.x=71.45;d.y=26;d.face=Math.PI;d.vx=-4;d.vy=0;d.ground=kind==='ground'?{stage:'winded',time:1,rest:1,rise:.3,age:0}:null;d.action=kind==='dive'?{kind:'tackle-dive',time:.5,age:.14,used:false}:null;d.lowContactCooldown=0;return true;},debugForceGripEscape:(key='MLB',recoverImmediately=false)=>{const d=P(key),a=ballCarrier;if(!d||!a||!tackleLinks.has(key))return false;releaseTackle(d,a,'escape',{effort:.5,kind:'break tackle'});if(recoverImmediately){d.ground=null;d.stun=0;d.diveRecovery=0;d.tackleCooldown=0;}return true;},debugEscapeReactions:()=>players.filter(p=>p.escapeReaction).map(p=>({key:p.key,ground:!!p.ground,kind:p.escapeReaction.kind,intensity:p.escapeReaction.intensity})),debugEscapeContests:()=>[...tackleLinks.values()].map(t=>({defender:t.defender,style:t.style,grip:t.grip,quality:t.quality,progress:t.escapeProgress||0,drive:t.escapeDiagnostics||null})),debugContactEvidence:()=>({events:ChaosContactEvidence.history(),lastAnatomyTackle,lowDiveContacts,lastLowDiveImpact,footContacts,lastFootContact}),debugContactCategory:(carrier,defender)=>{const a=P(carrier),d=P(defender);return a&&d?ChaosContactOutcomes.evaluate(a,d,tackleLinks.get(d.key)):null;},
+ debugTackleWatch:(enabled=true)=>{tackleDiagnostics=enabled?[]:null;carrierCollisionDiagnostics=enabled?[]:null;},
+ debugCarrierCollisionImpulses:()=>carrierCollisionDiagnostics?.slice()||[],
+ debugTackleEligibility:()=>tackleDiagnostics?.slice()||[],
  debugContactWatch:(all=false)=>{ChaosContactEvidence.setEnabled(true);ChaosContactEvidence.setFullScan(all);return true;},
  debugContactReset:()=>{ChaosContactEvidence.reset();lastAnatomyTackle=null;lowDiveContacts=0;lastLowDiveImpact=null;footContacts=0;lastFootContact=null;return true;},
  debugRecognize:(key)=>{const d=P(key);return d?recognizeRun(d):false;},
