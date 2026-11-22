@@ -1,0 +1,157 @@
+name: CHAOS PR refinement coding agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Existing open CHAOS PR number (for example 5)'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaos-pr-refinement-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  refine:
+    if: ${{ vars.CHAOS_AGENT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Resolve and verify existing PR
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" > /tmp/chaos-pr.json
+          python - <<'PY'
+          import json, os, re
+          p = json.load(open('/tmp/chaos-pr.json', encoding='utf-8'))
+          repo = os.environ['GH_REPO']
+          number = str(os.environ['PR_NUMBER'])
+          if not re.fullmatch(r'[1-9][0-9]*', number):
+              raise SystemExit('PR number must be a positive integer')
+          if p['state'] != 'open' or p['merged'] or p['draft']:
+              raise SystemExit('PR must be open, unmerged, and ready for review')
+          if p['base']['repo']['full_name'] != repo or p['base']['ref'] != 'main':
+              raise SystemExit('PR must target this repository main branch')
+          if p['head']['repo']['full_name'] != repo:
+              raise SystemExit('Refusing to push to a fork')
+          branch = p['head']['ref']
+          if branch in ('main', 'master') or not branch.startswith('chaos-agent/'):
+              raise SystemExit(f'Refusing unexpected PR branch: {branch!r}')
+          if not re.fullmatch(r'[A-Za-z0-9._/-]+', branch) or '..' in branch or '@{' in branch:
+              raise SystemExit('Unsafe branch name')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              print(f'branch={branch}', file=out)
+              print(f'sha={p["head"]["sha"]}', file=out)
+          print(f'Approved target: PR #{number}, branch {branch}, sha {p["head"]["sha"]}')
+          PY
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify refinement instructions are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s tasks/revisions/CHAOS_PR5_Defensive_Systems_Refinement.md
+          test -s .github/agent-prompt.md
+          test -f .github/scripts/check_agent_diff.py
+          git status --porcelain
+
+      - name: Prepare scoped Codex prompt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/agent-prompt.md .agent-task.md
+          printf '\n\n# EXISTING PR REFINEMENT — APPLY BELOW\n' >> .agent-task.md
+          cat tasks/revisions/CHAOS_PR5_Defensive_Systems_Refinement.md >> .agent-task.md
+          cat >> .agent-task.md <<'EOF_PROMPT'
+
+          Follow-up to an existing open PR, NOT a new approved task. Preserve already-working
+          outside containment. Diagnose and reproduce before editing. Do not edit protected
+          files, tasks, workflows, or prompts. Do not push, merge, or open PRs. Keep the
+          patch restricted to source, generated HTML, focused QA, and allowed QA documentation.
+          EOF_PROMPT
+
+      - name: Run Codex on existing PR branch
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ':workspace'
+          prompt-file: .agent-task.md
+
+      - name: Check agent modifications against allowlist
+        run: python .github/scripts/check_agent_diff.py
+
+      - name: Build and verify standalone game
+        shell: bash
+        run: |
+          set -euo pipefail
+          python build_standalone.py
+          python build_standalone.py --check
+
+      - name: Run existing focused QA and all JS QA scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tests=(qa_*.js)
+          if (( ${#tests[@]} == 0 )); then
+            echo 'No JavaScript QA tests found' >&2
+            exit 1
+          fi
+          for test in "${tests[@]}"; do
+            echo "===== $test ====="
+            node "$test"
+          done
+
+      - name: Recheck allowed paths and commit back to original PR branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/check_agent_diff.py
+          git add -- src index.html CHANGELOG.md ':(glob)qa_*.js' ':(glob)qa_*.py' ':(glob)QA_*.md'
+          if git diff --cached --quiet; then
+            echo 'No gameplay or QA changes produced; nothing to push.'
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Refine defense systems on PR #${{ inputs.pr_number }}"
+          # A normal, non-forced push refuses overwriting changes made to the PR since checkout.
+          git branch -f "$TARGET_BRANCH" HEAD
+          git remote set-url origin "https://github.com/${GH_REPO}.git"
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" \
+            push origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          echo "Updated existing PR #${{ inputs.pr_number }} branch; no merge performed."
