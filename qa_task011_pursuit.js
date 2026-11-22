@@ -98,7 +98,7 @@ vm.runInContext(script.slice(0, labStart).replace('window.GRIDIRON_DEBUG={', `
    const a=ballCarrier;
    const player=p=>({key:p.key,x:p.x,y:p.y,vx:p.vx,vy:p.vy,face:p.face,
     SPD:p.SPD,AGI:p.AGI,AWR:p.AWR,PRC:p.PRC,PUR:p.PUR,TAK:p.TAK,stam:p.stam});
-   return {time:playClock,input:stickInput(),sprint:sprintHeld(),contactEntries:ChaosContactEvidence.last(),runner:a&&player(a),ball:ball?.flying?{x:ball.x,y:ball.y,z:ball.z,t:ball.t}:null,
+   return {time:playClock,input:stickInput(),sprint:sprintHeld(),contactEntries:ChaosContactEvidence.last(),runner:a&&player(a),ball:ball?.flying?{x:ball.x,y:ball.y,z:ball.z,t:ball.t,vx:ball.vx,vy:ball.vy,vz:ball.vz}:null,
     defenders:def.map(d=>{
      const dx=a?a.x-d.x:0,dy=a?a.y-d.y:0,gap=Math.hypot(dx,dy);
      return {...player(d),intent:d.intent,target:d.intentTarget,aim:d.pursuitPoint,
@@ -122,6 +122,17 @@ vm.runInContext(script.slice(0, labStart).replace('window.GRIDIRON_DEBUG={', `
    passThrown=true;
    chooseDefenderCommitment(d,a);
    return {decision:d.lastTackleDecision,action:d.action};
+  },
+  deepPass(offset, rating){
+   const qb=P('QB'),r=P('WR1'),d=P('CB1');
+   for(const p of players){p.x=14;p.y=48;p.vx=p.vy=0;}
+   Object.assign(qb,{x:25,y:12});
+   Object.assign(r,{x:54,y:12,face:0,route:[],routeComplete:true});
+   Object.assign(d,{x:53,y:12+offset,face:Math.PI,rush:false,
+    assignment:{kind:'man',target:r.key},AWR:rating,PRC:rating,RCR:rating});
+   controlMode='defense';selectedDefenderKey='FS';
+   if(!passTo(0,.20))throw new Error('deep pass release failed');
+   return {airYards:ball.aimX-ball.x,defender:d.key};
   },
   setRatings(rating){for(const d of def)d.PUR=d.PRC=rating;},
   readVelocity(key){return P(key).pursuitVelocityRead?.vy??null;}
@@ -227,6 +238,77 @@ function snap(play,front='nickel',coverage='cover1',seed=431,formation='spread',
  g.debugSeed(seed);
  g.snap();
 }
+function deepContests(){
+ for(const [offset,rating] of [[0,95],[1,55],[23,95],[-2,95]]){
+  snap('sluggo','nickel','cover1',2027,'spread','spy');
+  g.step(1);
+  const release=f.deepPass(offset,rating);
+  let attempt=null,nearest=Infinity,recognition=null;
+  for(let i=0;i<180&&g.getState().phase==='live';i++){
+   const before=f.trace();
+   if(tracePath)fs.appendFileSync(tracePath,JSON.stringify({name:"Deep CPU contest",offset,rating,...before})+"\n");
+   if(!before.ball)break;
+   g.step(1);
+   const next=g.getState(),d=next.players.find(p=>p.key===release.defender);
+   if(['break-on-ball','air-rally'].includes(d.intent))recognition??=round(next.playClock);
+   if(before.ball.vz<0&&before.ball.z<3){
+    nearest=Math.min(nearest,Math.hypot(d.x-before.ball.x-before.ball.vx/60,d.y-before.ball.y-before.ball.vy/60));
+   }
+   if(['ball','swat','receiver'].includes(d.airPose?.kind)){
+    attempt={time:round(next.playClock),style:d.airPose.kind};break;
+   }
+  }
+  console.log(JSON.stringify({name:'Deep CPU contest',offset,rating,...release,
+   recognition,attempt,nearest:round(nearest),result:g.getState().lastAirResult}));
+  if(!metricsOnly){
+   assert.ok(release.airYards>=35&&release.airYards<=45);
+   if(offset===23)assert.equal(attempt,null,'an unreachable DB must not contest');
+   if(offset===-2||offset===0)assert.ok(attempt&&nearest<1.5,'the CPU corner should contest within physical reach');
+  }
+ }
+}
+function kickReversals(){
+ for(const [side,seed] of [[1,2027],[-1,431]]){
+  f.input(0,0,false);g.reset();g.setScheme('spread','base34','cover1');g.debugSeed(seed);
+  f.kickoff('middle');
+  let stage=0;
+  const approach={};
+  let grip=false;
+  const row=observe('Kick reversal '+side,state=>{
+   if(!state.ballCarrier)return;
+   const p=state.players.find(q=>q.key===state.ballCarrier);
+   if(stage===1&&side===-1){
+    const d=state.players.find(q=>q.key==='DE3B');
+    const gap=Math.hypot(p.x-d.x,p.y-d.y);
+    const pace=Math.hypot(p.vx,p.vy);
+    const aim=d.pursuitPoint;
+    if(aim&&pace>0)for(const threshold of [3,2,1]){
+     if(gap<=threshold)approach[threshold]??={
+      gap:round(gap),mode:aim.mode,
+      leadAlongRunner:round(((aim.x-p.x)*p.vx+(aim.y-p.y)*p.vy)/pace),
+      closing:round(((p.x-d.x)*(d.vx-p.vx)+(p.y-d.y)*(d.vy-p.vy))/Math.max(gap,.001))
+     };
+    }
+    grip||=state.contacts.tackles.some(link=>link.defender===d.key);
+   }
+   if(stage===0&&side*(p.y-26.65)>8)stage=1;
+   if(stage===1&&side*(p.y-26.65)<-16)stage=2;
+   f.input(stage===1?0:1,stage===0?side:stage===1?-side:0);
+  },['K','CB1','CB2'],540);
+  console.log(JSON.stringify({name:'Kick reversal approach',side,seed,stage,approach,grip}));
+  if(!metricsOnly){
+   assert.ok(stage>=1&&row.releaseWidth>42&&row.contactFrames>0);
+   if(side===-1){
+    assert.equal(approach[2]?.mode,'crossing');
+    assert.ok(approach[2].leadAlongRunner>0&&approach[2].closing>0&&grip,
+     'the crossing defender should keep his cutoff and make a physical contest');
+   }
+  }
+ }
+}
+if(process.env.CHAOS_KICK_ONLY==='1'){kickReversals();process.exit(0);}
+if(process.env.CHAOS_DEEP_ONLY==='1'){deepContests();process.exit(0);}
+kickReversals();
 for(const side of [-1,1]){
  snap('stretch','nickel','cover1',431);
  const sweep=observe('Stretch sweep '+(side<0?'left':'right'),state=>{
@@ -396,3 +478,5 @@ if(!metricsOnly){
  assert.equal(brush.entry.reason,'light contact');
  assert.equal(brush.reach,0,'a shallow brush should not initiate wrap reach');
 }
+
+deepContests();

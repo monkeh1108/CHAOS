@@ -568,9 +568,25 @@ function kickoffLaneAim(d,x,y){
  return y+(lane-y)*hold;
 }
 function coverReturnAI(d,ret,dt){
- const aim=pursuitAim(d,ret);
- // Close coverage already includes a finite observed-reaction delay in pursuitAim.
- // Do not override it with instantaneous carrier tracking here.
+ let aim=pursuitAim(d,ret);
+ const read=d.closePursuitRead;
+ // Keep an established crossing angle when the delayed hip target would
+ // send the defender behind it. Use the same sampled read as pursuitAim.
+ if(specialState?.kind==='kickoff'&&read&&aim.sep<3.2&&d.blocked<.25&&
+    Math.abs(read.vy)>Math.abs(read.vx)){
+  const age=playClock-read.at;
+  const x=read.x+read.vx*age,y=read.y+read.vy*age;
+  const dx=x-d.x,dy=y-d.y,vx=d.vx-read.vx,vy=d.vy-read.vy;
+  const relativeSpeedSq=vx*vx+vy*vy;
+  const time=(dx*vx+dy*vy)/Math.max(1,relativeSpeedSq);
+  const crossing=Math.abs(dx*read.vy-dy*read.vx)>3*Math.hypot(dx,dy);
+  const behind=(aim.x-x)*read.vx+(aim.y-y)*read.vy<0;
+  if(behind&&crossing&&time>0&&time<=.28&&
+     Math.hypot(dx-vx*time,dy-vy*time)<=radius(ret)+radius(d)){
+   aim={...aim,x:clamp(x+read.vx*time,10,110),y:clamp(y+read.vy*time,.45,H-.45),
+    lead:time,mode:'crossing'};
+  }
+ }
  // A coverage player can be jammed against a return blocker even after the
  // block resolver claims to have shed him. Measure actual displacement over
  // time, not just whether his AI is repeatedly issuing a run instruction.
@@ -3742,7 +3758,18 @@ function defenderFlightAI(d,dt){
  // his zone and sprint 40 yards to where a corner should be responsible.
  if(lb&&distance>28)return false;
  let aimX=m.catchX,aimY=m.catchY;
- const reachable=distance<=maxSpeed(d)*m.remaining+catchReach(d)*.5;
+ let reachable=distance<=maxSpeed(d)*m.remaining+catchReach(d)*.5;
+ const manual=controlMode==='defense'&&d.key===selectedDefenderKey;
+ // On deep lobs the descending ball enters reach before the nominal catch
+ // marker. A recognized primary DB can meet that portion of the flight.
+ if(db&&primary&&!manual&&ball.style==='LOB'&&ball.flight>=1.5){
+  const reach=catchReach(d);
+  const time=Math.max(dt,(ball.vz+Math.sqrt(Math.max(0,ball.vz**2+2*G*(ball.z-reach))))/G);
+  const x=ball.x+ball.vx*time,y=ball.y+ball.vy*time;
+  if(time<=m.remaining&&dist(d,{x,y})<=maxSpeed(d)*time+reach*.5){
+   aimX=x;aimY=y;reachable=true;
+  }
+ }
  if(!reachable){
   // A defender late to the ball protects the receiver's downfield exit.
   // Keep each defender on his own shoulder of the recovery lane.

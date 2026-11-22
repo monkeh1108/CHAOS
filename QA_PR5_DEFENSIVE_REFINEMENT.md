@@ -41,3 +41,31 @@ The Node checks exercise the real scrimmage and kickoff updates plus isolated po
 - Standalone build and `python build_standalone.py --check` passed.
 - All 26 Node QA scripts passed, including Task 001 rear contact, Task 003 QB possession, Task 010 receiver icons, sprint and stamina parity, and the enhanced Task 011 fixture.
 - All 55 Python QA scripts were attempted and stopped at import with `ModuleNotFoundError: No module named 'playwright'`. The available package index did not supply Playwright. Browser gameplay and animation remain unverified.
+
+## Review 6 follow-up
+
+Both scenario groups use the standalone live update loop at 60 Hz. Run the same commands with `CHAOS_DEEP_ONLY=1` to capture the lob scenarios.
+
+```sh
+git show beb5460:index.html > /tmp/chaos-review6-before.html
+CHAOS_KICK_ONLY=1 CHAOS_MEASURE_ONLY=1 CHAOS_PURSUIT_TRACE=/tmp/chaos-kick-before.jsonl \
+  node qa_task011_pursuit.js /tmp/chaos-review6-before.html
+CHAOS_KICK_ONLY=1 CHAOS_PURSUIT_TRACE=/tmp/chaos-kick-after.jsonl node qa_task011_pursuit.js
+```
+
+- **Kickoff cutoff.** The sampled hip target drifted behind the runner even as DE3B was closing on a viable lateral collision course. The cutoff now projects that same delayed velocity read to closest approach when the defender is already on course to overlap the returner's body radius. The body radius is used only to select a steering target. Normal collision and grip eligibility still resolve the tackle.
+- **Deep contest.** In the 36.8-yard seeded lob, CB1 recognized the ball at 0.12 s and turned toward the nominal marker, beyond the earlier catch window. The primary CPU DB can now aim at the descending ball's earlier reach height if that point is within its travel budget. The trace records visibility and accumulated read time. The DB still needs existing physical eligibility and a successful contest roll. The scenario uses user-defense mode with another defender selected and a scripted release.
+
+| Scenario | Review 6 baseline → patch |
+| --- | --- |
+| Kickoff reversal seed 431, DE3B target along runner's motion at first sample inside 3 / 2 / 1 yd | +0.13 / −0.43 / −0.09 yd → +0.13 / +0.87 / +0.22 yd |
+| Same approach, closing speed inside 3 / 2 / 1 yd | 11.98 / 11.15 / 5.09 yd/s → 11.98 / 11.05 / 9.41 yd/s. DE3B gripped in both runs |
+| Kickoff reversal seed 431, maximum advance and team contact frames | 20.71 yd and 54 frames → 20.74 yd and 61 frames |
+| Opposite kickoff reversal seed 2027 | 5.66 yd and 14 contact frames in both builds |
+| Deep lob, 95 recognition, defender offset −2 yd | WR1 completed the pass → CB1 swatted at 1.73 s. Closest sampled descent gap 1.48 → 0.15 yd |
+| Deep lob, 55 recognition, defender offset +1 yd | No CB1 attempt → swat at 1.73 s. Recognition 0.28 s in both builds |
+| Deep lob, 95 recognition, defender offset +23 yd | No attempt in either build, 20.20 yd closest sampled descent gap |
+
+Seeded spread Stretch remained at 10.63 / 9.12 yards for the left and right sweeps. Routine slant and Slant & Go remained at 9.05 / 9.33 YAC. Ordinary kickoff middle, left, and redirected returns remained at 19.90 / 18.10 / 18.72 yards. The right return went from 18.57 to 16.24 yards with identical 46.80-yard early coverage width.
+
+The live kickoff tests reproduced the target geometry with coverage defenders. The kicker remained more than 22 yards away in both reversal seeds, so the specific kicker miss from the playtest remains unverified. These tests do not cover a kickoff speed/agility matrix or establish the frequency of return touchdowns. The deep fixture verifies the CPU defender's attempt and an impossible-position fallback. It does not reproduce the CPU QB's pass selection or establish post-catch results on naturally called 40-yard passes. The interior reversal still reached the fixture limit with play live after 59.93 yards of maximum advance.
