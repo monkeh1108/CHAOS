@@ -4,6 +4,16 @@
 // position is imposed on either athlete.
 const ChaosPursuitReaction=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+ function observeVelocity(defender,carrier,clock){
+  const read=defender.pursuitVelocityRead;
+  const skill=clamp(((defender.PUR||70)*.40+(defender.PRC||70)*.40+
+   (defender.AWR||70)*.20-45)/54,0,1);
+  const delay=.055+(1-skill)*.12;
+  if(!read||read.carrier!==carrier||clock-read.at>=delay||clock<read.at){
+   defender.pursuitVelocityRead={carrier,at:clock,vx:carrier.vx,vy:carrier.vy};
+  }
+  return defender.pursuitVelocityRead;
+ }
  function aim(defender,carrier,base,clock){
   if(!defender||!carrier||!base)return base;
   const distance=Math.hypot(carrier.x-defender.x,carrier.y-defender.y);
@@ -24,6 +34,6 @@ const ChaosPursuitReaction=(()=>{
   return {...base,x:base.x*(1-blend)+x*blend,y:base.y*(1-blend)+y*blend,
    mode:base.mode==='tackle'?'close-read':base.mode,readAge:+age.toFixed(3)};
  }
- return Object.freeze({aim});
+ return Object.freeze({aim,observeVelocity});
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=ChaosPursuitReaction;
