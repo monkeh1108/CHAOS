@@ -1,0 +1,113 @@
+"""Capture and compare seeded plays in a real headless Chromium browser."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+from tempfile import TemporaryDirectory
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+SCENARIOS = ("run", "pass", "kickoff", "contact_lab")
+
+
+def capture(browser, html, scenario):
+    # Disable the frame loop so only explicit debug ticks advance the game.
+    # Match bootstrap uses Math.random before the in-engine RNG can be seeded.
+    setup = f"""<script>
+window.goldenPageErrors = [];
+window.addEventListener('error', event => goldenPageErrors.push(event.message));
+window.goldenScenario = {json.dumps(scenario)};
+window.goldenOriginalRandom = Math.random;
+Math.random = () => 431 / 4294967296;
+window.requestAnimationFrame = () => 0;
+</script>"""
+    driver = (HERE / "scenarios.js").read_text(encoding="utf-8")
+    if "<script>" not in html or "</body>" not in html:
+        raise ValueError("Expected the standalone CHAOS HTML")
+    page = html.replace("<script>", setup + "<script>", 1)
+    page = page.replace("</body>", f"<script>{driver}</script></body>", 1)
+    # Windows browser helpers can briefly retain an open profile log after exit.
+    with TemporaryDirectory(prefix="chaos-golden-", ignore_cleanup_errors=os.name == "nt") as directory:
+        path = Path(directory) / "scenario.html"
+        path.write_text(page, encoding="utf-8")
+        profile = Path(directory) / "profile"
+        flags = ["--headless=new", "--disable-gpu", "--no-first-run",
+                 "--virtual-time-budget=1500", "--window-size=1120,800"]
+        stdout = Path(directory) / "stdout"
+        stderr = Path(directory) / "stderr"
+        if os.name == "nt":
+            # Launch Windows GUI executables hidden with file redirection.
+            env = dict(os.environ, CHAOS_GOLDEN_BROWSER=browser, CHAOS_GOLDEN_DIR=directory,
+                       CHAOS_GOLDEN_URI=path.as_uri(), CHAOS_GOLDEN_FLAGS=" ".join(flags))
+            command = [
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                r"""
+$dir = $env:CHAOS_GOLDEN_DIR
+$arguments = $env:CHAOS_GOLDEN_FLAGS + ' --user-data-dir="' + $dir + '\profile" --dump-dom ' + $env:CHAOS_GOLDEN_URI
+$browser = Start-Process -FilePath $env:CHAOS_GOLDEN_BROWSER -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput "$dir\stdout" -RedirectStandardError "$dir\stderr"
+if (!$browser.WaitForExit(25000)) { Stop-Process -Id $browser.Id; exit 124 }
+exit $browser.ExitCode
+""",
+            ]
+            process = subprocess.run(command, env=env, timeout=30)
+        else:
+            with stdout.open("wb") as output_file, stderr.open("wb") as error_file:
+                process = subprocess.run(
+                    [browser, *flags, f"--user-data-dir={profile}", "--dump-dom", path.as_uri()],
+                    stdout=output_file, stderr=error_file, timeout=30,
+                )
+        output = stdout.read_text(encoding="utf-8", errors="replace")
+        errors = stderr.read_text(encoding="utf-8", errors="replace")
+        match = re.search(
+            r'<script id="chaos-golden-result" type="application/json">(.*?)</script>',
+            output, re.DOTALL,
+        )
+        if process.returncode or not match:
+            raise RuntimeError(f"{scenario}: browser returned {process.returncode}\n{errors[-2500:]}")
+        payload = json.loads(match[1])
+        if "error" in payload:
+            raise RuntimeError(f"{scenario}: {payload['error']}")
+        return payload["snapshots"]
+
+
+def canonical(data):
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--browser", required=True, help="Path to Chromium, Chrome, or Edge")
+    parser.add_argument("--html", type=Path, default=ROOT / "index.html")
+    parser.add_argument("--record", action="store_true", help="Explicitly write the reference snapshots")
+    args = parser.parse_args()
+    html = args.html.read_text(encoding="utf-8")
+    actual = {}
+    for scenario in SCENARIOS:
+        first = canonical(capture(args.browser, html, scenario))
+        second = canonical(capture(args.browser, html, scenario))
+        if first != second:
+            raise AssertionError(f"{scenario}: two fresh browser runs produced different snapshots")
+        actual[scenario] = first
+
+    fixtures = HERE / "fixtures"
+    if args.record:
+        fixtures.mkdir(exist_ok=True)
+    failures = []
+    for scenario, snapshot in actual.items():
+        path = fixtures / f"{scenario}.json"
+        if args.record:
+            path.write_text(snapshot, encoding="utf-8", newline="\n")
+        elif snapshot != path.read_text(encoding="utf-8"):
+            failures.append(scenario)
+            continue
+        digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:12]
+        print(f"PASS {scenario}: two identical runs ({digest})")
+    if failures:
+        raise AssertionError(f"Golden snapshot mismatch: {', '.join(failures)}")
+
+
+if __name__ == "__main__":
+    main()

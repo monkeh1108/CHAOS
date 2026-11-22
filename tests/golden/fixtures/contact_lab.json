@@ -1,0 +1,1240 @@
+{
+  "export": {
+    "defender": {
+      "height": 72,
+      "weight": 190
+    },
+    "events": [
+      {
+        "first": 0.375,
+        "frame": 29,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.003934105576379743
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.003934105576379743
+          }
+        ],
+        "t": 0.483
+      },
+      {
+        "first": 0,
+        "frame": 30,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.053836801206639806
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.053836801206639806
+          },
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.00027287096334832617
+          }
+        ],
+        "t": 0.5
+      },
+      {
+        "first": 0,
+        "frame": 31,
+        "regions": [
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.10016081332522764
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.09983346985541475
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.09983346985541475
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.0966497010941197
+          },
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.08210567279172906
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.07821558986328832
+          }
+        ],
+        "t": 0.517
+      },
+      {
+        "first": 0,
+        "frame": 32,
+        "regions": [
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.1209261972314297
+          },
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.1208977000109515
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.11828028912633576
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.11828028912633576
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": -1,
+            "penetration": 0.10882400030363287
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.10882400030363287
+          }
+        ],
+        "t": 0.533
+      },
+      {
+        "first": 0,
+        "frame": 33,
+        "regions": [
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.11835073135915013
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "hand",
+            "bSide": 1,
+            "penetration": 0.11822745038494968
+          },
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.11103594134430488
+          },
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.11079241026510987
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.11068642145399657
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.11066245962909826
+          }
+        ],
+        "t": 0.55
+      },
+      {
+        "first": 0,
+        "frame": 34,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.17664720959932517
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.10997553342106296
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.10975320252662059
+          },
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.10827902318604586
+          },
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.10772841555043461
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.09978300590591038
+          }
+        ],
+        "t": 0.567
+      },
+      {
+        "first": 0,
+        "frame": 35,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.28912719105329876
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.10978058619145636
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.10924498825126217
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.10883578710930972
+          },
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "forearm",
+            "bSide": -1,
+            "penetration": 0.10660463038632471
+          },
+          {
+            "a": "forearm",
+            "aSide": 1,
+            "b": "forearm",
+            "bSide": 1,
+            "penetration": 0.10578269745074105
+          }
+        ],
+        "t": 0.583
+      },
+      {
+        "first": 0,
+        "frame": 36,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.3987621650807045
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.21764360452585452
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.1575296303155982
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.14186699986343643
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "upperArm",
+            "bSide": -1,
+            "penetration": 0.11217535791229305
+          },
+          {
+            "a": "forearm",
+            "aSide": -1,
+            "b": "upperArm",
+            "bSide": -1,
+            "penetration": 0.11061190116503729
+          }
+        ],
+        "t": 0.6
+      },
+      {
+        "first": 0,
+        "frame": 37,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.5055791174468799
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.3231985289281981
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.26016721177617175
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.21626955154748556
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "upperArm",
+            "bSide": 1,
+            "penetration": 0.12650992180719842
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "upperArm",
+            "bSide": -1,
+            "penetration": 0.12640269265281628
+          }
+        ],
+        "t": 0.617
+      },
+      {
+        "first": 0,
+        "frame": 38,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.5389091766184789
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.42646177497029125
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.35694053083534927
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.2654438413161494
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "upperArm",
+            "bSide": 1,
+            "penetration": 0.126522762845959
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "upperArm",
+            "bSide": -1,
+            "penetration": 0.12644860619860804
+          }
+        ],
+        "t": 0.633
+      },
+      {
+        "first": 0,
+        "frame": 39,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5274434452113821
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.5069751134642123
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.43983225761288713
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.26973892192419885
+          },
+          {
+            "a": "hand",
+            "aSide": 1,
+            "b": "upperArm",
+            "bSide": 1,
+            "penetration": 0.12700852396565507
+          },
+          {
+            "a": "hand",
+            "aSide": -1,
+            "b": "upperArm",
+            "bSide": -1,
+            "penetration": 0.12696288622480262
+          }
+        ],
+        "t": 0.65
+      },
+      {
+        "first": 0,
+        "frame": 40,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.6214987429289753
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5063538542103978
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.4071325261613205
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.23013118565158075
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.17463534851685547
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.17463534851685547
+          }
+        ],
+        "t": 0.667
+      },
+      {
+        "first": 0,
+        "frame": 41,
+        "regions": [
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.6047802184140145
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5697102451288497
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.3072899388584292
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.21717049207810604
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.21717049207810604
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.1633424044300925
+          }
+        ],
+        "t": 0.683
+      },
+      {
+        "first": 0,
+        "frame": 42,
+        "regions": [
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5697102451288497
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5383044331970032
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.24742809883275868
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.24742809883275868
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.24332686575861256
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "helmet",
+            "bSide": 0,
+            "penetration": 0.2074473515555379
+          }
+        ],
+        "t": 0.7
+      },
+      {
+        "first": 0,
+        "frame": 43,
+        "regions": [
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5697102451288497
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.4718286479799919
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.3276860263924577
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.2599307002600123
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.2599307002600123
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.1932288531183461
+          }
+        ],
+        "t": 0.717
+      },
+      {
+        "first": 0,
+        "frame": 44,
+        "regions": [
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.5099543624514726
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.40535286276297966
+          },
+          {
+            "a": "pelvis",
+            "aSide": 0,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.38844351113182685
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.26004022627278445
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "torso",
+            "bSide": 0,
+            "penetration": 0.26004022627278445
+          },
+          {
+            "a": "torso",
+            "aSide": 0,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.22392548573527676
+          }
+        ],
+        "t": 0.733
+      },
+      {
+        "first": 0,
+        "frame": 45,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.24192541214764196
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.22094570619493414
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.1840114889787457
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.1530551627467296
+          }
+        ],
+        "t": 0.75
+      },
+      {
+        "first": 0,
+        "frame": 46,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.21731173328088016
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.2111665066474048
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "pelvis",
+            "bSide": 0,
+            "penetration": 0.13686689698104
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.09427997091487211
+          }
+        ],
+        "t": 0.767
+      },
+      {
+        "first": 0,
+        "frame": 47,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.2519600879949717
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.22891012588740006
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.1883036988362777
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.17516463625409298
+          },
+          {
+            "a": "thigh",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.16811672243126347
+          }
+        ],
+        "t": 0.783
+      },
+      {
+        "first": 0,
+        "frame": 48,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.24132680480450897
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.21482781927501024
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.19806404169189587
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.17732054885276188
+          }
+        ],
+        "t": 0.8
+      },
+      {
+        "first": 0,
+        "frame": 49,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.1509704701490105
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.14511465863760362
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "thigh",
+            "bSide": 1,
+            "penetration": 0.12915647085714518
+          },
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "thigh",
+            "bSide": -1,
+            "penetration": 0.1086336355858461
+          }
+        ],
+        "t": 0.817
+      },
+      {
+        "first": 0,
+        "frame": 50,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.1501977391065529
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.1313655580883254
+          },
+          {
+            "a": "thigh",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.10193919514360725
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.09409563129964837
+          }
+        ],
+        "t": 0.833
+      },
+      {
+        "first": 0,
+        "frame": 51,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.204669076052797
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.1943659521107923
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.1835140175787687
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.17716922049545603
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.1686401634192332
+          },
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.1646818365605412
+          }
+        ],
+        "t": 0.85
+      },
+      {
+        "first": 0,
+        "frame": 52,
+        "regions": [
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.1753285644671213
+          },
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.1686401634192332
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.1686401634192332
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.158131832851785
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.10015638132201915
+          },
+          {
+            "a": "shin",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.08295964970668285
+          }
+        ],
+        "t": 0.867
+      },
+      {
+        "first": 0,
+        "frame": 53,
+        "regions": [
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.1686401634192332
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.16808009065528962
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.08279158214596345
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.07972974643287947
+          },
+          {
+            "a": "shin",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.06253301481754317
+          },
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.04178194599871432
+          }
+        ],
+        "t": 0.883
+      },
+      {
+        "first": 0,
+        "frame": 54,
+        "regions": [
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.1261766905980804
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "foot",
+            "bSide": 1,
+            "penetration": 0.0882542760595367
+          },
+          {
+            "a": "foot",
+            "aSide": 1,
+            "b": "shin",
+            "bSide": 1,
+            "penetration": 0.06725169564517161
+          },
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "shin",
+            "bSide": -1,
+            "penetration": 0.020550819467132192
+          }
+        ],
+        "t": 0.9
+      },
+      {
+        "first": 0,
+        "frame": 55,
+        "regions": [
+          {
+            "a": "foot",
+            "aSide": -1,
+            "b": "foot",
+            "bSide": -1,
+            "penetration": 0.02444202753933522
+          }
+        ],
+        "t": 0.917
+      }
+    ],
+    "format": "chaos-collision-lab-v2",
+    "scenario": "leg",
+    "timeStep": 0.016666666666666666
+  },
+  "readout": "t=0.800 s | 72 in / 190 lb defender | runner 71 in / 211 lb\nOverlap at current frame: 12 region pairs | Swept path: contact\nBody regions: shin ↔ shin, shin ↔ shin, thigh ↔ shin\nContact classification: potential tackle | depth 0.205\nRelative movement speed: 6.0 yd/s | Approach 0° | Physical outcome: LAB ONLY (live response tested separately)",
+  "tick": 48
+}
