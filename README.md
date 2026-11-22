@@ -59,12 +59,18 @@ Use `npm run format` to format the JavaScript source after making edits.
 
 | Path | What lives there |
 | --- | --- |
-| `src/engine.js` | Match rules and play execution, runnable in Node. |
+| `src/engine.js` | Headless match API and subsystem wiring. |
 | `src/core/` | Shared simulation math and named tuning values. |
-| `src/sim/`, `src/ai/`, `src/physics/` | Special teams, play decisions, and collision and tackle modules. |
+| `src/sim/`, `src/ai/`, `src/physics/` | Game rules, clocks, and special teams, plus AI decisions and contact physics. |
 | `src/input/`, `src/ui/`, `src/render/` | Controller rules, browser session and HUD, playbook, and field renderer. |
-| `src/debug/`, `src/net/` | Contact diagnostics and the future online-play boundary. |
+| `src/debug/`, `src/net/` | Browser debug API, contact diagnostics, and notes on the future online-play boundary. |
 | `tests/unit/`, `tests/integration/`, `tests/browser/`, `tests/golden/` | Policy checks, standalone integration checks, browser checks, and reference replays. |
 | `tools/`, `docs/` | Local diagnostics, project notes, and archived QA reports. |
+
+The browser and renderer still have four larger files. `browser_session.js`
+keeps the existing input event and frame order together. `game_hud.js` owns
+the scoreboard, play controls, and accessibility updates. `field_renderer.js`
+and `renderer3d.js` keep their Canvas and WebGL drawing paths together so the
+standalone can run the same presentation while the match engine is reorganized.
 
 Release history is in [CHANGELOG.md](CHANGELOG.md).

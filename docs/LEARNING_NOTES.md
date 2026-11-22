@@ -100,3 +100,19 @@ through saving, restoring into a fresh game, and comparing subsequent events.
 Trace readFieldControls in src/input/controls.js into dispatchInput in
 src/engine.js. The CPU sends its play calls, snaps, and throws through the
 same dispatcher.
+
+## Checkpoint 9
+
+- A module has **one responsibility** when there is a clear reason to open
+  it. To work on the play clock, open game_clock.js. To work on whether a
+  defender first earns contact, open tackle_contacts.js.
+- A function becomes hard to change when it mixes decisions that can be
+  tested separately. The tackle solver now calls a dedicated function to
+  find new contact before it updates existing grips and decides whether
+  the play ends.
+- The engine assembles the rule, AI, and physics modules once per match.
+  Each module receives the services it needs and uses the same match state.
+
+To trace the handoff, find collectTackleContacts in tackle_resolution.js and
+follow it into tackle_contacts.js. The rear-pile QA still uses the same
+physical checks for grip, movement, and a completed tackle.

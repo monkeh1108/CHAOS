@@ -9,7 +9,7 @@
 | Serializable state | Versioned JSON snapshots preserve shared player references, engagement maps, clock values, and per-match contact and defensive memory. Run, pass, and kickoff continuation tests compare the restored result and events. | Define transport and long-term snapshot compatibility if needed. |
 | Events | A headless tick returns the presentation events emitted during that tick. | Define a smaller event contract for clients when networking is added. |
 | Controller assignment | The local slot can be assigned to either team. The CPU has the other slot and possession determines the controlled role. | Create separate player slots for multiplayer. |
-| Public boundary | The headless API exposes createGame(config, seed), step(game, inputCommands), getSnapshot(game), and restoreSnapshot(game, snapshot). | Keep the API working as rules and debug code are moved into their own modules. |
+| Public boundary | The headless API exposes createGame(config, seed), step(game, inputCommands), getSnapshot(game), and restoreSnapshot(game, snapshot). | Define a versioned network protocol once browser inputs are scheduled by tick. |
 
-See `src/engine.js` for `flipCoin`, `startNewMatch`, `reset`, and the debug stepping API.
+The headless API lives in `src/engine.js`. Match setup and debug controls live in `src/sim/match_start.js` and `src/debug/game_debug.js`.
 The display frame loop lives in `src/ui/browser_session.js`.
