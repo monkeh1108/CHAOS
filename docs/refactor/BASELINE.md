@@ -87,3 +87,9 @@ a gameplay edit.
 
 The owner reran both focused Playwright cases after these fixture changes.
 Both passed.
+
+Linux CI uses the original `bdbd167` HTML as a fixed reference on its own
+browser. Three Windows reference snapshots differed on the Linux runner.
+CI captures each scenario twice on both builds and requires exact equality
+within that environment. The verifier still uses the committed Windows JSON
+by default, and CI never overwrites those fixtures.

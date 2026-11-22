@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -33,5 +35,9 @@ jobs:
           PY
       - run: npm run build:check
       - run: npm run lint
-      - run: npm test
+      - name: Run Node tests and compare golden replays with the original build
+        run: |
+          reference="$RUNNER_TEMP/chaos-golden-reference.html"
+          git show bdbd1676183aa6581d23f2aab29b50835709a03f:index.html > "$reference"
+          CHAOS_GOLDEN_REFERENCE="$reference" npm test
       - run: xvfb-run -a npm run test:browser
