@@ -57,15 +57,15 @@ vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/,
  `
  window.renderFrame = render;
  window.startKickoff = () => setupKickoff(0);
- window.setMatchPossession = team => { gameStarted = true; setDriveSpot(team, 30); setup(); };
+ window.setMatchPossession = team => { matchState.gameStarted = true; setDriveSpot(team, 30); setup(); };
  window.fieldKick = () => {
-  const returner = P(specialState.returnerKey);
-  returner.x = ball.aimX;
-  returner.y = ball.aimY;
-  specialState.elapsed = specialState.airtime;
+  const returner = P(matchState.specialState.returnerKey);
+  returner.x = matchState.ball.aimX;
+  returner.y = matchState.ball.aimY;
+  matchState.specialState.elapsed = matchState.specialState.airtime;
  };
  window.turnover = () => newPossession(1, 30);
- window.setFormation = formation => { selectedFormation = formation; setup(); };
+ window.setFormation = formation => { matchState.selectedFormation = formation; setup(); };
  const debug = {`), sandbox);
 const g = sandbox.GRIDIRON_DEBUG;
 

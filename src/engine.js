@@ -14,7 +14,10 @@ import { AnimationPolicy } from "./render/animation_policy.js";
 import { BlockingPolicy } from "./ai/blocking_policy.js";
 import { CoverageRoutePolicy } from "./ai/coverage_route_policy.js";
 import { CpuQBPolicy } from "./ai/cpu_qb_policy.js";
-import { DefensiveMemory } from "./ai/defensive_memory.js";
+import {
+  createDefensiveMemory,
+  createDefensiveMemoryState,
+} from "./ai/defensive_memory.js";
 import { DefensivePresnap } from "./ai/defensive_presnap.js";
 import { InsideZoneIQ } from "./ai/inside_zone_iq.js";
 import { ProtectionRead } from "./ai/protection_read.js";
@@ -22,7 +25,10 @@ import { ChaosPursuitReaction } from "./ai/pursuit_reaction.js";
 import { RunPursuitPolicy } from "./ai/run_pursuit_policy.js";
 import { RushAwareness } from "./ai/rush_awareness.js";
 import { ChaosTackleIntelligence } from "./ai/tackle_intelligence.js";
-import { ChaosContactEvidence } from "./debug/contact_evidence.js";
+import {
+  createContactEvidence,
+  createContactEvidenceState,
+} from "./debug/contact_evidence.js";
 import { DefensiveControls } from "./input/defensive_controls.js";
 import { AirContestPolicy } from "./physics/air_contest_policy.js";
 import { AnatomyHitboxes } from "./physics/anatomy_hitboxes.js";
@@ -37,10 +43,44 @@ import { ChaosTackleEscape } from "./physics/tackle_escape.js";
 import { ChaosTackleReengagement } from "./physics/tackle_reengagement.js";
 import { ChaosTackleStruggle } from "./physics/tackle_struggle.js";
 import { ChaosContactFeedback } from "./render/contact_feedback_policy.js";
+import {
+  captureMatchSnapshot,
+  readMatchSnapshot,
+} from "./sim/match_snapshot.js";
 import { specialTeams } from "./sim/special_teams.js";
 import { PlaybookNavigation } from "./ui/playbook_navigation.js";
 
-export function createGame({ attach, onEvent } = {}) {
+const TICK_SECONDS = 1 / 60;
+const RANDOM_RANGE = 4294967296;
+
+function nextRandomSequence(sequence) {
+  return (Math.imul(1664525, sequence) + 1013904223) >>> 0;
+}
+
+export function createGame(
+  { attach, onEvent, random = () => Math.random() } = {},
+  initialSeed,
+) {
+  const matchState = {
+    bootstrapSequence: initialSeed === undefined ? null : initialSeed >>> 0,
+    contactEvidence: createContactEvidenceState(),
+    defensiveMemory: createDefensiveMemoryState(),
+  };
+  const ChaosContactEvidence = createContactEvidence(
+    () => matchState.contactEvidence,
+  );
+  const DefensiveMemory = createDefensiveMemory(
+    () => matchState.defensiveMemory,
+  );
+  let tickEvents = null;
+
+  function matchRandom() {
+    if (matchState.bootstrapSequence === null) return random();
+    matchState.bootstrapSequence = nextRandomSequence(
+      matchState.bootstrapSequence,
+    );
+    return matchState.bootstrapSequence / RANDOM_RANGE;
+  }
   const W = 120,
     H = 53.333,
     G = 10.73,
@@ -628,10 +668,10 @@ export function createGame({ attach, onEvent } = {}) {
       COV: 22,
     },
   };
-  const custom = structuredClone(BASE);
+  matchState.custom = structuredClone(BASE);
   // The kickoff/punt unit swaps its free safety for a specialist: an actual
   // on-field kicker, rather than a ball launching from a nameless coordinate.
-  custom.K = {
+  matchState.custom.K = {
     name: "Evan Mercer",
     pos: "K",
     team: 1,
@@ -655,10 +695,10 @@ export function createGame({ attach, onEvent } = {}) {
     PUNT: 87,
   };
   // Quarterback mental and pocket traits. Independent tunable ratings (1–99).
-  Object.assign(custom.QB, { VIS: 87, DEC: 81, TOR: 80, BSK: 73 });
+  Object.assign(matchState.custom.QB, { VIS: 87, DEC: 81, TOR: 80, BSK: 73 });
   // Independent, editable contact-technique ratings. Derived defaults are only
   // starting values; simulations always read the live attribute from each player.
-  for (const p of Object.values(custom)) {
+  for (const p of Object.values(matchState.custom)) {
     p.HIT = clamp(
       0.53 * p.TAK + 0.29 * p.STR + 0.18 * p.AWR + (p.w - 215) * 0.035,
       30,
@@ -709,8 +749,8 @@ export function createGame({ attach, onEvent } = {}) {
     MLB: { PRS: 51, JAM: 65, MIR: 72, RCR: 71, DIS: 78 },
   };
   for (const [key, t] of Object.entries(TECHNIQUES))
-    Object.assign(custom[key], t);
-  for (const p of Object.values(custom)) {
+    Object.assign(matchState.custom[key], t);
+  for (const p of Object.values(matchState.custom)) {
     if (p.team === 0) {
       p.RTE ??= clamp(p.AGI * 0.44 + p.AWR * 0.36 + p.ACC * 0.2, 30, 99);
       p.CUT ??= clamp(p.AGI * 0.6 + p.ACC * 0.27 + p.AWR * 0.13, 30, 99);
@@ -728,57 +768,57 @@ export function createGame({ attach, onEvent } = {}) {
     }
   }
   // Distinct ball skills; editable independent ratings, not guaranteed-win abilities.
-  for (const p of Object.values(custom))
+  for (const p of Object.values(matchState.custom))
     if (p.team === 0) {
       p.JUK = clamp(p.AGI * 0.45 + p.CUT * 0.33 + p.AWR * 0.22, 30, 99);
       p.SFA = clamp(p.STR * 0.49 + p.TRK * 0.33 + p.AWR * 0.18, 30, 99);
     }
-  const keys = {},
-    players = [],
-    off = [],
-    def = [];
-  const fatigueBank = Object.create(null); // Between-snap stamina for each athlete
+  matchState.keys = {};
+  matchState.players = [];
+  matchState.off = [];
+  matchState.def = [];
+  matchState.fatigueBank = Object.create(null); // Between-snap stamina for each athlete
   // Persistent physical engagements: nothing is resolved by a single collision roll.
-  const blockLinks = new Map(),
-    tackleLinks = new Map();
+  matchState.blockLinks = new Map();
+  matchState.tackleLinks = new Map();
   // Per-physics-step anatomical evidence captured before the body solver separates pads.
-  const liveTackleContacts = new Map();
+  matchState.liveTackleContacts = new Map();
   // Opt-in QA snapshot of the latest tackle eligibility pass.
-  let tackleDiagnostics = null,
-    carrierCollisionDiagnostics = null;
-  let tackleCount = 0,
-    brokenTackleCount = 0,
-    blockShedCount = 0,
-    hitStickCount = 0,
-    impactBlockCount = 0,
-    powerMoveCount = 0;
-  let pileState = null,
-    pileStarts = 0,
-    pilePushYards = 0,
-    chainHits = 0;
-  let windedHits = 0,
-    standUps = 0;
-  let playTrace = [],
-    lastTraceMeta = null,
-    traceAccum = 0,
-    lastAnatomyTackle = null;
+  matchState.tackleDiagnostics = null;
+  matchState.carrierCollisionDiagnostics = null;
+  matchState.tackleCount = 0;
+  matchState.brokenTackleCount = 0;
+  matchState.blockShedCount = 0;
+  matchState.hitStickCount = 0;
+  matchState.impactBlockCount = 0;
+  matchState.powerMoveCount = 0;
+  matchState.pileState = null;
+  matchState.pileStarts = 0;
+  matchState.pilePushYards = 0;
+  matchState.chainHits = 0;
+  matchState.windedHits = 0;
+  matchState.standUps = 0;
+  matchState.playTrace = [];
+  matchState.lastTraceMeta = null;
+  matchState.traceAccum = 0;
+  matchState.lastAnatomyTackle = null;
   function traceSample() {
-    if (!playTrace.length && phase !== "live") return;
+    if (!matchState.playTrace.length && matchState.phase !== "live") return;
     const stick = stickInput();
     const sample = {
-      t: +playClock.toFixed(3),
-      ballCarrier: ballCarrier?.key || null,
-      phase,
-      manual: manualDrive,
+      t: +matchState.playClock.toFixed(3),
+      ballCarrier: matchState.ballCarrier?.key || null,
+      phase: matchState.phase,
+      manual: matchState.manualDrive,
       stick: [+stick.x.toFixed(2), +stick.y.toFixed(2)],
       sprint: sprintHeld(),
-      burst: +burstTime.toFixed(2),
+      burst: +matchState.burstTime.toFixed(2),
       contacts: {
-        tackles: tackleCount,
-        hitSticks: hitStickCount,
-        piles: pileStarts,
+        tackles: matchState.tackleCount,
+        hitSticks: matchState.hitStickCount,
+        piles: matchState.pileStarts,
       },
-      p: players.map((p) => [
+      p: matchState.players.map((p) => [
         p.key,
         +p.x.toFixed(2),
         +p.y.toFixed(2),
@@ -792,8 +832,8 @@ export function createGame({ attach, onEvent } = {}) {
         p.ground?.stage || "",
       ]),
     };
-    playTrace.push(sample);
-    if (playTrace.length > 1200) playTrace.shift();
+    matchState.playTrace.push(sample);
+    if (matchState.playTrace.length > 1200) matchState.playTrace.shift();
   }
 
   // Contact constraints run at 60Hz. This is deliberately a simple 2D rigid-body
@@ -820,8 +860,8 @@ export function createGame({ attach, onEvent } = {}) {
     LEFT: 14,
     RIGHT: 15,
   };
-  let suppressManualUntilNeutral = false;
-  const padState = {
+  matchState.suppressManualUntilNeutral = false;
+  matchState.padState = {
     index: -1,
     id: "",
     connected: false,
@@ -836,18 +876,18 @@ export function createGame({ attach, onEvent } = {}) {
     sampled: 0,
   };
   // Three practice roles share one physics engine; controller mapping is contextual.
-  let controlMode = "offense",
-    selectedDefenderKey = "MLB",
-    selectedLinemanKey = "LG";
-  let rightStickLatched = false,
-    rightStickDirection = "",
-    xHoldStart = null,
-    xDiveFired = false;
+  matchState.controlMode = "offense";
+  matchState.selectedDefenderKey = "MLB";
+  matchState.selectedLinemanKey = "LG";
+  matchState.rightStickLatched = false;
+  matchState.rightStickDirection = "";
+  matchState.xHoldStart = null;
+  matchState.xDiveFired = false;
 
-  let paused = false,
-    gamepadStatusLast = "",
-    sheetFocusIndex = 0,
-    sheetFocusKey = "";
+  matchState.paused = false;
+  matchState.gamepadStatusLast = "";
+  matchState.sheetFocusIndex = 0;
+  matchState.sheetFocusKey = "";
   const plays = [
     "inside",
     "stretch",
@@ -865,9 +905,9 @@ export function createGame({ attach, onEvent } = {}) {
   ];
   const RUNS = new Set(["inside", "stretch", "power", "counter", "sweep"]);
   const PASS_ICONS = ["X", "Y", "A", "B"];
-  let selectedFormation = "spread",
-    selectedFront = "nickel",
-    selectedCoverage = "cover1";
+  matchState.selectedFormation = "spread";
+  matchState.selectedFront = "nickel";
+  matchState.selectedCoverage = "cover1";
   const formationDesc = {
     spread: "11 personnel · shotgun 2×2",
     trips: "11 personnel · trips right; isolated X",
@@ -898,55 +938,55 @@ export function createGame({ attach, onEvent } = {}) {
     blitz: "Extra linebacker rush; fewer coverage defenders",
     stunt: "Inside rushers exchange lanes while edges contain",
   };
-  let pressurePreference = "mix",
-    selectedPressure = "balanced",
-    previousPressure = null,
-    pressureRepeat = 0;
-  let lowDiveContacts = 0,
-    lastLowDiveImpact = null,
-    footContacts = 0,
-    lastFootContact = null;
-  let manualReceiver = false,
-    coveragePreference = "mix",
-    previousMixedCoverage = null,
-    mixRepeatCount = 0,
-    selectedPlay = "inside",
-    phase = "presnap",
-    score = 0,
-    down = 1,
-    togo = 10,
-    yard = 30,
-    first = 40,
-    totalClock = 0,
-    playClock = 0,
-    active = null,
-    ball = null,
-    ballCarrier = null,
-    intended = null,
-    passThrown = false,
-    result = "",
-    playStart = 30,
-    lastContact = 0,
-    msg = "",
-    logs = [],
-    burstTime = 0,
-    burstCool = 0,
-    evadeTime = 0,
-    evadeCool = 0,
-    seq = 0,
-    flash = 0,
-    confetti = [],
-    shake = 0,
-    offset = 0,
-    joystick = { x: 0, y: 0, active: false, pointer: null },
-    mobile = false,
-    manualDrive = false,
-    contactEnabled = true,
-    pendingPass = null,
-    moveCooldown = 0,
-    queuedCarrierMove = null;
+  matchState.pressurePreference = "mix";
+  matchState.selectedPressure = "balanced";
+  matchState.previousPressure = null;
+  matchState.pressureRepeat = 0;
+  matchState.lowDiveContacts = 0;
+  matchState.lastLowDiveImpact = null;
+  matchState.footContacts = 0;
+  matchState.lastFootContact = null;
+  matchState.manualReceiver = false;
+  matchState.coveragePreference = "mix";
+  matchState.previousMixedCoverage = null;
+  matchState.mixRepeatCount = 0;
+  matchState.selectedPlay = "inside";
+  matchState.phase = "presnap";
+  matchState.score = 0;
+  matchState.down = 1;
+  matchState.togo = 10;
+  matchState.yard = 30;
+  matchState.first = 40;
+  matchState.totalClock = 0;
+  matchState.playClock = 0;
+  matchState.active = null;
+  matchState.ball = null;
+  matchState.ballCarrier = null;
+  matchState.intended = null;
+  matchState.passThrown = false;
+  matchState.result = "";
+  matchState.playStart = 30;
+  matchState.lastContact = 0;
+  matchState.msg = "";
+  matchState.logs = [];
+  matchState.burstTime = 0;
+  matchState.burstCool = 0;
+  matchState.evadeTime = 0;
+  matchState.evadeCool = 0;
+  matchState.seq = 0;
+  matchState.flash = 0;
+  matchState.confetti = [];
+  matchState.shake = 0;
+  matchState.offset = 0;
+  matchState.joystick = { x: 0, y: 0, active: false, pointer: null };
+  matchState.mobile = false;
+  matchState.manualDrive = false;
+  matchState.contactEnabled = true;
+  matchState.pendingPass = null;
+  matchState.moveCooldown = 0;
+  matchState.queuedCarrierMove = null;
   const colors = ["#d9f969", "#7ddcf4"];
-  let cpuQB = {
+  matchState.cpuQB = {
     nextRead: 0,
     choice: null,
     reads: 0,
@@ -954,32 +994,32 @@ export function createGame({ attach, onEvent } = {}) {
     lastScore: 0,
     lastRisk: 0,
   };
-  let airSelection = { offense: null, defense: null, defenderKey: null };
-  let currentMemoryPlay = null;
-  let lastAirResult = null,
-    airCounters = {
-      rac: 0,
-      possession: 0,
-      aggressive: 0,
-      swat: 0,
-      interception: 0,
-      playReceiver: 0,
-      broken: 0,
-      drops: 0,
-      complete: 0,
-    };
+  matchState.airSelection = { offense: null, defense: null, defenderKey: null };
+  matchState.currentMemoryPlay = null;
+  matchState.lastAirResult = null;
+  matchState.airCounters = {
+    rac: 0,
+    possession: 0,
+    aggressive: 0,
+    swat: 0,
+    interception: 0,
+    playReceiver: 0,
+    broken: 0,
+    drops: 0,
+    complete: 0,
+  };
   // V31: a game state wrapped around the existing physical scrimmage engine.
   // x=10 is the offense's own goal line, x=110 is its opponent's goal line;
   // on change of possession, field coordinates are mirrored (120 - x).
   const PRESNAP_PLAY_SECONDS = 20;
-  let scrimmagePlayCalled = false;
-  let firstHalfReceiver = 0,
-    secondHalfReceiver = 1,
-    tossStage = "none",
-    tossCall = null,
-    tossWinner = null;
-  let tossPadPrevious = [];
-  let audibleOpen = false;
+  matchState.scrimmagePlayCalled = false;
+  matchState.firstHalfReceiver = 0;
+  matchState.secondHalfReceiver = 1;
+  matchState.tossStage = "none";
+  matchState.tossCall = null;
+  matchState.tossWinner = null;
+  matchState.tossPadPrevious = [];
+  matchState.audibleOpen = false;
   const AUDIBLE_BUTTONS = ["A", "B", "X", "Y"];
   const OFFENSE_AUDIBLES = {
     spread: ["inside", "flood", "verticals", "slants"],
@@ -990,28 +1030,28 @@ export function createGame({ attach, onEvent } = {}) {
     pistol: ["inside", "flood", "verticals", "slants"],
   };
   const QUARTER_DURATION_SECONDS = 60; // temporary quick-game setting; later exposed in match options
-  let cpuSnapAt = 14;
-  let protectionRead = null;
-  let gameFlowNote = "Ready";
-  let penaltyCount = 0;
-  let possession = 0,
-    teamPoints = [0, 0],
-    quarter = 1,
-    quarterSeconds = QUARTER_DURATION_SECONDS,
-    playSeconds = 25,
-    clockRunning = false,
-    gameStarted = false,
-    matchOver = false,
-    timeOuts = [3, 3],
-    specialState = null,
-    postWhistle = null,
-    tryState = null,
-    playbookOpen = false,
-    lastWhistleType = "",
-    returnCall = "middle",
-    returnFairCatch = false,
-    twoMinuteNoted = false,
-    twoMinutePending = false;
+  matchState.cpuSnapAt = 14;
+  matchState.protectionRead = null;
+  matchState.gameFlowNote = "Ready";
+  matchState.penaltyCount = 0;
+  matchState.possession = 0;
+  matchState.teamPoints = [0, 0];
+  matchState.quarter = 1;
+  matchState.quarterSeconds = QUARTER_DURATION_SECONDS;
+  matchState.playSeconds = 25;
+  matchState.clockRunning = false;
+  matchState.gameStarted = false;
+  matchState.matchOver = false;
+  matchState.timeOuts = [3, 3];
+  matchState.specialState = null;
+  matchState.postWhistle = null;
+  matchState.tryState = null;
+  matchState.playbookOpen = false;
+  matchState.lastWhistleType = "";
+  matchState.returnCall = "middle";
+  matchState.returnFairCatch = false;
+  matchState.twoMinuteNoted = false;
+  matchState.twoMinutePending = false;
   const TEAM_NAMES = ["HOME", "AWAY"];
   const TEAM_STYLES = [
     {
@@ -1047,24 +1087,29 @@ export function createGame({ attach, onEvent } = {}) {
     },
   ];
   function kickRatings() {
-    return custom.K;
+    return matchState.custom.K;
   }
   function homeTeamControl() {
     // Ordinary games keep HOME under player control. The standard 0/1 teams
     // map to offensive/defensive *roles*, which reverse when possession flips.
-    const role = possession === 0 ? "offense" : "defense";
-    if (controlMode !== role) selectControlMode(role);
+    const role = matchState.possession === 0 ? "offense" : "defense";
+    if (matchState.controlMode !== role) selectControlMode(role);
   }
   function chooseCPUPlay() {
-    const style = TEAM_STYLES[possession];
-    const distance = Math.max(1, togo);
+    const style = TEAM_STYLES[matchState.possession];
+    const distance = Math.max(1, matchState.togo);
     const chooseRun =
-      down === 1 ? rand() < 0.47 : down === 2 ? rand() < 0.39 : rand() < 0.21;
+      matchState.down === 1
+        ? rand() < 0.47
+        : matchState.down === 2
+          ? rand() < 0.39
+          : rand() < 0.21;
     const pool = style.pool.filter((p) =>
       chooseRun ? RUNS.has(p) : !RUNS.has(p),
     );
-    if (pool.length) selectedPlay = pool[Math.floor(rand() * pool.length)];
-    selectedFormation = RUNS.has(selectedPlay)
+    if (pool.length)
+      matchState.selectedPlay = pool[Math.floor(rand() * pool.length)];
+    matchState.selectedFormation = RUNS.has(matchState.selectedPlay)
       ? rand() < 0.5
         ? "iform"
         : "ace"
@@ -1073,48 +1118,52 @@ export function createGame({ attach, onEvent } = {}) {
         : rand() < 0.58
           ? "spread"
           : "bunch";
-    emitPresentation({ type: "playSelectionChanged", play: selectedPlay });
+    emitPresentation({
+      type: "playSelectionChanged",
+      play: matchState.selectedPlay,
+    });
     emitPresentation({
       type: "selectionChanged",
       key: "formation",
-      value: selectedFormation,
+      value: matchState.selectedFormation,
     });
-    return selectedPlay;
+    return matchState.selectedPlay;
   }
   function clockText(seconds) {
     const t = Math.max(0, Math.ceil(seconds));
     return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
   }
-  function spotText(y = yard) {
+  function spotText(y = matchState.yard) {
     return y < 60 ? "OWN " + Math.round(y - 10) : "OPP " + Math.round(110 - y);
   }
   function setDriveSpot(team, x) {
-    possession = team;
-    yard = clamp(x, 11, 109);
-    down = 1;
-    togo = Math.min(10, 110 - yard);
-    first = yard + togo;
-    if (gameStarted) homeTeamControl();
+    matchState.possession = team;
+    matchState.yard = clamp(x, 11, 109);
+    matchState.down = 1;
+    matchState.togo = Math.min(10, 110 - matchState.yard);
+    matchState.first = matchState.yard + matchState.togo;
+    if (matchState.gameStarted) homeTeamControl();
   }
   function newPossession(team, oppositeSpot) {
     setDriveSpot(team, 120 - oppositeSpot);
     log(TEAM_NAMES[team] + " possession at " + spotText());
   }
   function setResultUI(heading, detail, action = "NEXT PLAY") {
-    result = heading;
+    matchState.result = heading;
     message("<strong>" + heading + ".</strong> " + detail);
     emitPresentation({ type: "resultShown", heading, detail, action });
     log(heading + " · " + detail);
   }
   function audibleChoices() {
-    if (controlMode === "defense")
+    if (matchState.controlMode === "defense")
       return [
         { label: "BLITZ", coverage: "cover1", pressure: "blitz" },
         { label: "COVER 3", coverage: "cover3", pressure: "balanced" },
         { label: "COVER 2", coverage: "cover2", pressure: "balanced" },
         { label: "MAN COVERAGE", coverage: "cover1", pressure: "balanced" },
       ];
-    const keys = OFFENSE_AUDIBLES[selectedFormation] || OFFENSE_AUDIBLES.spread;
+    const keys =
+      OFFENSE_AUDIBLES[matchState.selectedFormation] || OFFENSE_AUDIBLES.spread;
     return keys.map((key, i) => ({
       label: ["RUN", "PASS CONCEPT*", "DEEP PASS", "QUICK PASS"][i],
       play: key,
@@ -1124,113 +1173,125 @@ export function createGame({ attach, onEvent } = {}) {
     emitPresentation({ type: "audiblesChanged" });
   }
   function closeAudibles() {
-    audibleOpen = false;
+    matchState.audibleOpen = false;
     renderAudibles();
   }
   function openAudibles() {
     if (
-      phase !== "presnap" ||
-      specialState ||
-      (tryState && tryState.mode !== "two") ||
-      playbookOpen ||
-      !scrimmagePlayCalled
+      matchState.phase !== "presnap" ||
+      matchState.specialState ||
+      (matchState.tryState && matchState.tryState.mode !== "two") ||
+      matchState.playbookOpen ||
+      !matchState.scrimmagePlayCalled
     )
       return false;
-    audibleOpen = !audibleOpen;
+    matchState.audibleOpen = !matchState.audibleOpen;
     renderAudibles();
     return true;
   }
   function applyAudible(index) {
-    if (!audibleOpen || phase !== "presnap" || !scrimmagePlayCalled)
+    if (
+      !matchState.audibleOpen ||
+      matchState.phase !== "presnap" ||
+      !matchState.scrimmagePlayCalled
+    )
       return false;
     const option = audibleChoices()[index];
     if (!option) return false;
-    const remaining = playSeconds;
-    if (controlMode === "defense") {
-      coveragePreference = option.coverage;
-      pressurePreference = option.pressure;
+    const remaining = matchState.playSeconds;
+    if (matchState.controlMode === "defense") {
+      matchState.coveragePreference = option.coverage;
+      matchState.pressurePreference = option.pressure;
       emitPresentation({
         type: "selectionChanged",
         key: "coverage",
-        value: coveragePreference,
+        value: matchState.coveragePreference,
       });
       emitPresentation({
         type: "selectionChanged",
         key: "pressure",
-        value: pressurePreference,
+        value: matchState.pressurePreference,
       });
       setup();
     } else {
-      selectedPlay = option.play;
-      emitPresentation({ type: "playSelectionChanged", play: selectedPlay });
+      matchState.selectedPlay = option.play;
+      emitPresentation({
+        type: "playSelectionChanged",
+        play: matchState.selectedPlay,
+      });
       setup();
     }
-    playSeconds = remaining;
-    scrimmagePlayCalled = true;
+    matchState.playSeconds = remaining;
+    matchState.scrimmagePlayCalled = true;
     closeAudibles();
     hud();
     return true;
   }
   function showPlaybook() {
     closeAudibles();
-    if (phase !== "presnap" || matchOver) return;
-    playbookOpen = true;
+    if (matchState.phase !== "presnap" || matchState.matchOver) return;
+    matchState.playbookOpen = true;
     emitPresentation({ type: "playbookShown" });
   }
   function cycleSheetFormation(direction) {
-    if (phase !== "presnap" || specialState || tryState) return false;
-    if (controlMode === "defense") {
-      selectedFront = PlaybookNavigation.cycle(
+    if (
+      matchState.phase !== "presnap" ||
+      matchState.specialState ||
+      matchState.tryState
+    )
+      return false;
+    if (matchState.controlMode === "defense") {
+      matchState.selectedFront = PlaybookNavigation.cycle(
         ["nickel", "base43", "base34"],
-        selectedFront,
+        matchState.selectedFront,
         direction,
       );
       emitPresentation({
         type: "selectionChanged",
         key: "front",
-        value: selectedFront,
+        value: matchState.selectedFront,
       });
     } else {
-      selectedFormation = PlaybookNavigation.cycle(
+      matchState.selectedFormation = PlaybookNavigation.cycle(
         ["spread", "trips", "ace", "iform", "bunch", "pistol"],
-        selectedFormation,
+        matchState.selectedFormation,
         direction,
       );
       emitPresentation({
         type: "selectionChanged",
         key: "formation",
-        value: selectedFormation,
+        value: matchState.selectedFormation,
       });
       emitPresentation({
         type: "selectionChanged",
         key: "sheetFormation",
-        value: selectedFormation,
+        value: matchState.selectedFormation,
       });
     }
-    const remaining = playSeconds,
-      wasCalled = scrimmagePlayCalled;
+    const remaining = matchState.playSeconds,
+      wasCalled = matchState.scrimmagePlayCalled;
     setup();
-    playSeconds = remaining;
-    scrimmagePlayCalled = wasCalled;
+    matchState.playSeconds = remaining;
+    matchState.scrimmagePlayCalled = wasCalled;
     showPlaybook();
     return true;
   }
   function hidePlaybook() {
-    playbookOpen = false;
+    matchState.playbookOpen = false;
     emitPresentation({ type: "playbookHidden" });
   }
   function tossScreen(title, description, buttons) {
     emitPresentation({ type: "coinTossShown", title, description, buttons });
   }
   function chooseCoinToss(value) {
-    if (tossStage === "call") flipCoin(value);
-    else if (tossStage === "decision") resolveToss(value);
+    if (matchState.tossStage === "call") flipCoin(value);
+    else if (matchState.tossStage === "decision") resolveToss(value);
   }
   function startCoinToss() {
-    tossPadPrevious = [];
-    tossStage = "call";
-    tossCall = null;
-    tossWinner = null;
+    matchState.tossPadPrevious = [];
+    matchState.tossStage = "call";
+    matchState.tossCall = null;
+    matchState.tossWinner = null;
     tossScreen(
       "OPENING COIN TOSS",
       "HOME calls the coin. Choose heads or tails.",
@@ -1241,12 +1302,12 @@ export function createGame({ attach, onEvent } = {}) {
     );
   }
   function flipCoin(call) {
-    if (tossStage !== "call") return;
-    tossCall = call;
-    const result = Math.random() < 0.5 ? "heads" : "tails";
-    tossWinner = result === call ? 0 : 1;
-    tossStage = "decision";
-    if (tossWinner === 0) {
+    if (matchState.tossStage !== "call") return;
+    matchState.tossCall = call;
+    const result = matchRandom() < 0.5 ? "heads" : "tails";
+    matchState.tossWinner = result === call ? 0 : 1;
+    matchState.tossStage = "decision";
+    if (matchState.tossWinner === 0) {
       tossScreen(
         "COIN: " + result.toUpperCase() + " · HOME WINS",
         "Choose to receive, kick, or defer the choice to the second half.",
@@ -1258,7 +1319,7 @@ export function createGame({ attach, onEvent } = {}) {
       );
     } else {
       // CPU decision uses no hidden gameplay info. It generally defers.
-      const choice = Math.random() < 0.7 ? "defer" : "receive";
+      const choice = matchRandom() < 0.7 ? "defer" : "receive";
       tossScreen(
         "COIN: " + result.toUpperCase() + " · AWAY WINS",
         "AWAY selects " +
@@ -1269,11 +1330,11 @@ export function createGame({ attach, onEvent } = {}) {
     }
   }
   function resolveToss(choice) {
-    if (tossStage !== "decision") return;
-    const winner = tossWinner;
+    if (matchState.tossStage !== "decision") return;
+    const winner = matchState.tossWinner;
     // Defer = opponent chooses first half; winner gets second-half choice.
     // For this version the non-deferring team elects to receive.
-    firstHalfReceiver =
+    matchState.firstHalfReceiver =
       choice === "defer"
         ? 1 - winner
         : choice === "receive"
@@ -1281,59 +1342,61 @@ export function createGame({ attach, onEvent } = {}) {
           : 1 - winner;
     // An outright election to kick differs from deferring: the other team
     // controls the second-half choice and would normally elect to receive.
-    secondHalfReceiver = choice === "kick" ? 1 - winner : 1 - firstHalfReceiver;
-    tossStage = "complete";
+    matchState.secondHalfReceiver =
+      choice === "kick" ? 1 - winner : 1 - matchState.firstHalfReceiver;
+    matchState.tossStage = "complete";
     emitPresentation({ type: "coinTossHidden" });
-    beginOpeningKickoff(firstHalfReceiver);
+    beginOpeningKickoff(matchState.firstHalfReceiver);
   }
   function beginOpeningKickoff(receiver) {
     setDriveSpot(receiver, 20);
-    returnCall = "middle";
+    matchState.returnCall = "middle";
     setupKickoff(receiver);
     log(
       "COIN TOSS · " +
-        TEAM_NAMES[tossWinner] +
+        TEAM_NAMES[matchState.tossWinner] +
         " won · HOME called " +
-        tossCall +
+        matchState.tossCall +
         " · " +
         TEAM_NAMES[receiver] +
         " receives",
     );
   }
   function startNewMatch() {
-    gameFlowNote = "Coin toss";
-    penaltyCount = 0;
+    matchState.gameFlowNote = "Coin toss";
+    matchState.penaltyCount = 0;
     DefensiveMemory.reset();
-    currentMemoryPlay = null;
-    for (const k of Object.keys(fatigueBank)) delete fatigueBank[k];
-    teamPoints = [0, 0];
-    possession = 0;
-    score = 0;
-    quarter = 1;
-    quarterSeconds = QUARTER_DURATION_SECONDS;
-    playSeconds = 25;
-    clockRunning = false;
-    gameStarted = true;
-    matchOver = false;
-    timeOuts = [3, 3];
-    twoMinuteNoted = false;
-    twoMinutePending = false;
-    tryState = null;
-    specialState = null;
-    postWhistle = null;
-    lastWhistleType = "";
-    logs = [];
-    emitPresentation({ type: "logChanged", logs });
-    seed(Math.floor(Math.random() * 4294967296) >>> 0);
-    returnCall = "middle";
+    matchState.currentMemoryPlay = null;
+    for (const k of Object.keys(matchState.fatigueBank))
+      delete matchState.fatigueBank[k];
+    matchState.teamPoints = [0, 0];
+    matchState.possession = 0;
+    matchState.score = 0;
+    matchState.quarter = 1;
+    matchState.quarterSeconds = QUARTER_DURATION_SECONDS;
+    matchState.playSeconds = 25;
+    matchState.clockRunning = false;
+    matchState.gameStarted = true;
+    matchState.matchOver = false;
+    matchState.timeOuts = [3, 3];
+    matchState.twoMinuteNoted = false;
+    matchState.twoMinutePending = false;
+    matchState.tryState = null;
+    matchState.specialState = null;
+    matchState.postWhistle = null;
+    matchState.lastWhistleType = "";
+    matchState.logs = [];
+    emitPresentation({ type: "logChanged", logs: matchState.logs });
+    seed(Math.floor(matchRandom() * RANDOM_RANGE) >>> 0);
+    matchState.returnCall = "middle";
     startCoinToss();
   }
   function setupKickoff(receivingTeam, kind = "kickoff") {
     // A safety restarts with a free kick from the conceding team's own 20.
     // Unlike a fourth-down punt it uses the modern free-kick return formation.
     setDriveSpot(receivingTeam, 20);
-    returnFairCatch = false;
-    specialState = {
+    matchState.returnFairCatch = false;
+    matchState.specialState = {
       kind,
       kickingTeam: 1 - receivingTeam,
       receivingTeam,
@@ -1342,12 +1405,12 @@ export function createGame({ attach, onEvent } = {}) {
       airtime: 2.2,
       returning: false,
       started: false,
-      returnCall,
+      returnCall: matchState.returnCall,
       releaseReady: false,
     };
-    tryState = null;
-    clockRunning = false;
-    playSeconds = 25;
+    matchState.tryState = null;
+    matchState.clockRunning = false;
+    matchState.playSeconds = 25;
     setup();
     organizeReturnUnit();
     emitPresentation({ type: "snapControlChanged", text: "KICK OFF" });
@@ -1355,7 +1418,7 @@ export function createGame({ attach, onEvent } = {}) {
       "<strong>" +
         (kind === "safety-kick" ? "SAFETY FREE KICK" : "KICKOFF") +
         ".</strong> " +
-        (possession === 0
+        (matchState.possession === 0
           ? "Call RETURN LEFT, MIDDLE or RIGHT."
           : "Prepare coverage.") +
         " Kicker picks the actual placement.",
@@ -1370,16 +1433,16 @@ export function createGame({ attach, onEvent } = {}) {
     return k?.kind === "safety-kick" ? 90 : 75;
   }
   function organizeReturnUnit() {
-    if (!specialState) return;
-    const k = specialState,
+    if (!matchState.specialState) return;
+    const k = matchState.specialState,
       ret = P("RB"),
       back = P("WR2");
-    const lane = specialTeams.returnLaneY(returnCall);
-    k.returnCall = returnCall;
+    const lane = specialTeams.returnLaneY(matchState.returnCall);
+    k.returnCall = matchState.returnCall;
     k.returnLaneY = lane;
     // The 2026 return setup has at least nine receivers from own 30–35,
     // and up to two deep returners. Five are on the 35, four on the 30.
-    const blockers = off.filter((o) => o !== ret && o !== back);
+    const blockers = matchState.off.filter((o) => o !== ret && o !== back);
     blockers.forEach((p, i) => {
       p.x = isFreeKick(k) ? (i < 5 ? 45 : 40) : clamp(k.landingX + 13, 27, 64);
       p.y = i < 5 ? 5.0 + i * 10.75 : 10.1 + (i - 5) * 11.4;
@@ -1410,8 +1473,8 @@ export function createGame({ attach, onEvent } = {}) {
     // Use an actual 11th coverage athlete as kicker instead of hiding the kick.
     const fs = P("FS");
     if (fs) {
-      players.splice(players.indexOf(fs), 1);
-      def.splice(def.indexOf(fs), 1);
+      matchState.players.splice(matchState.players.indexOf(fs), 1);
+      matchState.def.splice(matchState.def.indexOf(fs), 1);
     }
     let kicker = P("K");
     if (!kicker)
@@ -1424,7 +1487,7 @@ export function createGame({ attach, onEvent } = {}) {
     kicker.intentTarget = "ball";
     kicker.vx = 0;
     kicker.vy = 0;
-    def
+    matchState.def
       .filter((d) => d !== kicker)
       .forEach((d, i) => {
         // In a dynamic kickoff the other ten covering athletes start at the
@@ -1438,26 +1501,29 @@ export function createGame({ attach, onEvent } = {}) {
         d.returnBypassBlocker = null;
         d.returnBypassUntil = 0;
       });
-    ballCarrier = null;
-    active = controlMode === "defense" ? P(selectedDefenderKey) : ret;
-    ball = null;
+    matchState.ballCarrier = null;
+    matchState.active =
+      matchState.controlMode === "defense"
+        ? P(matchState.selectedDefenderKey)
+        : ret;
+    matchState.ball = null;
     emitPresentation({ type: "receiverPromptsHidden" });
   }
 
   function chooseSpecial(kind) {
-    if (phase !== "presnap" || matchOver) return false;
-    if (kind === "pat" && tryState) {
+    if (matchState.phase !== "presnap" || matchState.matchOver) return false;
+    if (kind === "pat" && matchState.tryState) {
       const chance = 0.94 + (kickRatings().KAC - 80) * 0.002;
       const good = rand() < clamp(chance, 0.65, 0.99);
       if (good) {
-        teamPoints[possession] += 1;
-        score = teamPoints[possession];
+        matchState.teamPoints[matchState.possession] += 1;
+        matchState.score = matchState.teamPoints[matchState.possession];
       }
-      clockRunning = false;
-      specialState = null;
-      tryState = null;
-      phase = "dead";
-      postWhistle = "kickoff";
+      matchState.clockRunning = false;
+      matchState.specialState = null;
+      matchState.tryState = null;
+      matchState.phase = "dead";
+      matchState.postWhistle = "kickoff";
       setResultUI(
         good ? "PAT GOOD" : "PAT NO GOOD",
         good
@@ -1469,23 +1535,23 @@ export function createGame({ attach, onEvent } = {}) {
       hud();
       return true;
     }
-    if (kind === "two" && tryState) {
-      tryState.mode = "two";
-      specialState = null;
-      yard = 108;
-      down = 1;
-      togo = 2;
-      first = 110;
+    if (kind === "two" && matchState.tryState) {
+      matchState.tryState.mode = "two";
+      matchState.specialState = null;
+      matchState.yard = 108;
+      matchState.down = 1;
+      matchState.togo = 2;
+      matchState.first = 110;
       setup();
-      playSeconds = 25;
+      matchState.playSeconds = 25;
       showPlaybook();
       return true;
     }
-    if (kind === "punt" && down === 4 && !tryState) {
+    if (kind === "punt" && matchState.down === 4 && !matchState.tryState) {
       return beginPunt();
     }
-    if (kind === "fg" && down === 4 && !tryState) {
-      const distance = Math.round(110 - yard + 17);
+    if (kind === "fg" && matchState.down === 4 && !matchState.tryState) {
+      const distance = Math.round(110 - matchState.yard + 17);
       const pct = clamp(
         0.97 - (distance - 32) * 0.017 + (kickRatings().KAC - 85) * 0.003,
         0.06,
@@ -1494,18 +1560,18 @@ export function createGame({ attach, onEvent } = {}) {
       const good =
         distance <= Math.round(42 + (kickRatings().KPW - 70) * 0.9) &&
         rand() < pct;
-      const kickingTeam = possession;
+      const kickingTeam = matchState.possession;
       if (good) {
-        teamPoints[kickingTeam] += 3;
-        score = teamPoints[kickingTeam];
-        postWhistle = "kickoff";
+        matchState.teamPoints[kickingTeam] += 3;
+        matchState.score = matchState.teamPoints[kickingTeam];
+        matchState.postWhistle = "kickoff";
       } else {
-        const spot = Math.max(30, 120 - (yard - 7));
+        const spot = Math.max(30, 120 - (matchState.yard - 7));
         setDriveSpot(1 - kickingTeam, spot);
-        postWhistle = "scrimmage";
+        matchState.postWhistle = "scrimmage";
       }
-      phase = "dead";
-      clockRunning = false;
+      matchState.phase = "dead";
+      matchState.clockRunning = false;
       setResultUI(
         good ? "FIELD GOAL GOOD" : "FIELD GOAL NO GOOD",
         distance +
@@ -1520,8 +1586,8 @@ export function createGame({ attach, onEvent } = {}) {
     return false;
   }
   function beginPunt() {
-    const oldSpot = yard,
-      oldTeam = possession;
+    const oldSpot = matchState.yard,
+      oldTeam = matchState.possession;
     const distance = clamp(
       35 + kickRatings().PUNT * 0.14 + (rand() - 0.5) * 15,
       32,
@@ -1531,8 +1597,8 @@ export function createGame({ attach, onEvent } = {}) {
     const receives = 1 - oldTeam;
     const landing = 120 - Math.min(110, landingOriginal);
     setDriveSpot(receives, Math.max(11, landing));
-    returnFairCatch = false;
-    specialState = {
+    matchState.returnFairCatch = false;
+    matchState.specialState = {
       kind: "punt",
       kickingTeam: oldTeam,
       receivingTeam: receives,
@@ -1560,13 +1626,14 @@ export function createGame({ attach, onEvent } = {}) {
     });
   }
   function kickSpecial() {
-    if (!specialState || phase !== "presnap") return false;
+    if (!matchState.specialState || matchState.phase !== "presnap")
+      return false;
     hidePlaybook();
-    phase = "live";
-    specialState.elapsed = 0;
-    specialState.started = true;
-    clockRunning = specialState.kind === "punt";
-    const k = specialState,
+    matchState.phase = "live";
+    matchState.specialState.elapsed = 0;
+    matchState.specialState.started = true;
+    matchState.clockRunning = matchState.specialState.kind === "punt";
+    const k = matchState.specialState,
       landing = kickerLanding(k);
     k.landingX = landing.x;
     k.targetY = landing.y;
@@ -1581,7 +1648,7 @@ export function createGame({ attach, onEvent } = {}) {
       specialist.intent = "kick-foot";
     }
     const sourceY = 26.65;
-    ball = {
+    matchState.ball = {
       x: sourceX,
       y: sourceY,
       z: 1.0,
@@ -1627,8 +1694,8 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function finishReturn(type, x, detail) {
-    if (phase !== "live" || !specialState) return;
-    const k = specialState;
+    if (matchState.phase !== "live" || !matchState.specialState) return;
+    const k = matchState.specialState;
     // A returner who fields a free kick in his own end zone may choose to
     // return it or down it. A tackle or voluntary give-up before he advances
     // out is a touchback, not a ball spotted at the one-yard line.
@@ -1646,33 +1713,33 @@ export function createGame({ attach, onEvent } = {}) {
         Math.round(x - 10);
     }
     // Persist return exertion so a long kickoff cannot be followed by a magically fresh runner.
-    for (const p of players) {
+    for (const p of matchState.players) {
       const recovery =
-        (p === ballCarrier ? 0.015 : 0.345) * (0.85 + p.STA / 500);
-      fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
+        (p === matchState.ballCarrier ? 0.015 : 0.345) * (0.85 + p.STA / 500);
+      matchState.fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
     }
-    ball = null;
+    matchState.ball = null;
     const mark = clamp(x, 10, 110);
     const touchdown = type === "touchdown" || mark >= 109.8;
     if (touchdown) {
-      teamPoints[possession] += 6;
-      score = teamPoints[possession];
-      tryState = { team: possession };
-      postWhistle = "try";
+      matchState.teamPoints[matchState.possession] += 6;
+      matchState.score = matchState.teamPoints[matchState.possession];
+      matchState.tryState = { team: matchState.possession };
+      matchState.postWhistle = "try";
     } else {
-      setDriveSpot(possession, clamp(mark, 11, 109));
-      postWhistle = "scrimmage";
+      setDriveSpot(matchState.possession, clamp(mark, 11, 109));
+      matchState.postWhistle = "scrimmage";
     }
-    gameFlowNote = touchdown
+    matchState.gameFlowNote = touchdown
       ? "Return touchdown"
       : type === "touchback"
         ? "Touchback — receiving team ball"
         : "Special-teams play complete";
-    specialState = null;
-    phase = "dead";
-    clockRunning = false;
-    ballCarrier = null;
-    for (const p of players) {
+    matchState.specialState = null;
+    matchState.phase = "dead";
+    matchState.clockRunning = false;
+    matchState.ballCarrier = null;
+    for (const p of matchState.players) {
       p.vx = 0;
       p.vy = 0;
       p.intent = "whistle";
@@ -1688,17 +1755,17 @@ export function createGame({ attach, onEvent } = {}) {
             : "RETURN TACKLED";
     setResultUI(
       name,
-      detail || `${TEAM_NAMES[possession]} starts at ${spotText()}`,
+      detail || `${TEAM_NAMES[matchState.possession]} starts at ${spotText()}`,
       touchdown ? "CHOOSE TRY" : "CALL OFFENSE",
     );
     hud();
   }
   function backupReturnerLeadBlock(o, ret, dt, claimed) {
-    const k = specialState;
+    const k = matchState.specialState;
     // A backup returner becomes a lead escort once possession is established.
     // Only contest threats ahead of the runner; never sprint behind him to
     // chase a technically closer but irrelevant coverage player.
-    const forwardThreats = def.filter(
+    const forwardThreats = matchState.def.filter(
       (d) =>
         !d.ground &&
         d.key !== "K" &&
@@ -1706,7 +1773,7 @@ export function createGame({ attach, onEvent } = {}) {
         d.x <= ret.x + 17 &&
         Math.abs(d.y - ret.y) < 13 &&
         !claimed.has(d.key) &&
-        d.beatenUntil <= playClock,
+        d.beatenUntil <= matchState.playClock,
     );
     const threat = forwardThreats.sort(
       (a, b) =>
@@ -1749,19 +1816,19 @@ export function createGame({ attach, onEvent } = {}) {
     if (dist(o, threat) < 2.15) blockBattle(o, threat, dt);
   }
   function returnBlockerAI(o, ret, dt, claimed) {
-    const k = specialState;
+    const k = matchState.specialState;
     // React to the kicker's actual landing side, then gradually set the
     // wedge toward the chosen LEFT / MIDDLE / RIGHT return lane.
     const progress = clamp((ret.x - k.landingX) / 20, 0, 1);
     const preferred =
       k.targetY * (0.75 - 0.68 * progress) +
       k.returnLaneY * (0.25 + 0.68 * progress);
-    const locked = blockLinks.get(o.key);
+    const locked = matchState.blockLinks.get(o.key);
     const kept = locked ? P(locked.defender) : null;
     const picked = specialTeams.chooseReturnThreat({
       blocker: o,
-      playTime: playClock,
-      defenders: def,
+      playTime: matchState.playClock,
+      defenders: matchState.def,
       carrier: ret,
       claimed,
       returnLaneY: preferred,
@@ -1789,7 +1856,7 @@ export function createGame({ attach, onEvent } = {}) {
     if (o.returnStall > 0.9) {
       o.returnStall = 0;
       o.beatenTarget = best.key;
-      o.beatenUntil = playClock + 0.75;
+      o.beatenUntil = matchState.playClock + 0.75;
       steer(o, ret.x + 4 - o.x, k.returnLaneY - o.y, dt, 0.96);
       return;
     }
@@ -1843,25 +1910,27 @@ export function createGame({ attach, onEvent } = {}) {
       track.y = d.y;
       track.age = 0;
     }
-    if (track.still > 0.9 && d.returnBypassUntil <= playClock) {
+    if (track.still > 0.9 && d.returnBypassUntil <= matchState.playClock) {
       // Release stale physical engagements and go around the nearest blocker.
-      const link = [...blockLinks].find(([key, e]) => e.defender === d.key);
+      const link = [...matchState.blockLinks].find(
+        ([key, e]) => e.defender === d.key,
+      );
       const blocker = link
         ? P(link[1].blocker)
-        : off
+        : matchState.off
             .filter((o) => o !== ret)
             .sort((a, b) => dist(a, d) - dist(b, d))[0];
-      if (link) blockLinks.delete(link[0]);
+      if (link) matchState.blockLinks.delete(link[0]);
       d.blocked = 0;
       d.shedCooldown = Math.max(d.shedCooldown, 0.4);
       d.returnBypassBlocker = blocker?.key || null;
       d.returnBypassSide = returnEscapeSide(d, blocker);
-      d.returnBypassUntil = playClock + 1.15;
+      d.returnBypassUntil = matchState.playClock + 1.15;
       d.vy += d.returnBypassSide * 1.2;
       track.still = 0;
     }
     let targetY = aim.y;
-    if (d.returnBypassUntil > playClock) {
+    if (d.returnBypassUntil > matchState.playClock) {
       targetY = returnBypassTarget(d, P(d.returnBypassBlocker), aim.y);
       d.intent = "return-bypass";
     } else d.intent = "kick-cover";
@@ -1895,20 +1964,21 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function stepSpecial(dt) {
-    const k = specialState;
-    if (!k || phase !== "live") return;
-    playClock += dt;
-    totalClock += dt;
+    const k = matchState.specialState;
+    if (!k || matchState.phase !== "live") return;
+    matchState.playClock += dt;
+    matchState.totalClock += dt;
     k.elapsed += dt;
     // Special teams must advance the same fall/winded/rise state as scrimmage.
     // Otherwise a coverage athlete knocked down by the first return block
     // remains grounded for the entire return, regardless of pursuit commands.
     const grounded = new Set();
-    for (const p of players) if (tickGround(p, dt)) grounded.add(p.key);
+    for (const p of matchState.players)
+      if (tickGround(p, dt)) grounded.add(p.key);
     // Special teams and scrimmage share transient visual cue expiration.
     // Previously a kickoff BREAK TACKLE cue stayed visible forever, even when
     // the runner was ten yards away; this is presentation, not contact state.
-    for (const p of players) {
+    for (const p of matchState.players) {
       if (p.actionCue) {
         p.actionCue.time -= dt;
         if (p.actionCue.time <= 0) p.actionCue = null;
@@ -1930,25 +2000,25 @@ export function createGame({ attach, onEvent } = {}) {
     let ret = P(k.returnerKey) || P("RB");
     const secondary = P(k.backupReturnerKey);
     if (!k.returning) {
-      if (ball && !k.landed) {
+      if (matchState.ball && !k.landed) {
         const f = Math.min(1, k.elapsed / k.airtime);
-        ball.t = k.elapsed;
+        matchState.ball.t = k.elapsed;
         // Ball follows a simplified flight trajectory, independent of returner movement.
-        ball.x +=
-          (k.landingX - ball.x) *
+        matchState.ball.x +=
+          (k.landingX - matchState.ball.x) *
           Math.min(1, dt / Math.max(0.015, k.airtime - k.elapsed));
-        ball.y +=
-          (k.targetY - ball.y) *
+        matchState.ball.y +=
+          (k.targetY - matchState.ball.y) *
           Math.min(1, dt / Math.max(0.015, k.airtime - k.elapsed));
-        ball.z = Math.max(0.18, 0.18 + 8 * 4 * f * (1 - f));
-      } else if (ball && k.landed) {
+        matchState.ball.z = Math.max(0.18, 0.18 + 8 * 4 * f * (1 - f));
+      } else if (matchState.ball && k.landed) {
         k.groundElapsed += dt;
-        ball.x += ball.vx * dt;
-        ball.y += ball.vy * dt;
-        ball.vx *= Math.exp(-2.1 * dt);
-        ball.vy *= Math.exp(-2.3 * dt);
+        matchState.ball.x += matchState.ball.vx * dt;
+        matchState.ball.y += matchState.ball.vy * dt;
+        matchState.ball.vx *= Math.exp(-2.1 * dt);
+        matchState.ball.vy *= Math.exp(-2.3 * dt);
         // Temporary damped bounce and roll; full impact/orientation/spin physics are future work.
-        ball.z =
+        matchState.ball.z =
           0.18 +
           0.85 *
             Math.abs(Math.sin(k.groundElapsed * 11)) *
@@ -1957,7 +2027,10 @@ export function createGame({ attach, onEvent } = {}) {
       // Only deep returners can move before the landing. Coverage and the
       // receiving setup line stay planted until the kick is touched/lands.
       if (isFreeKick(k) || (k.kind === "punt" && k.landed)) {
-        const aim = k.landed && ball ? ball : { x: k.landingX, y: k.targetY };
+        const aim =
+          k.landed && matchState.ball
+            ? matchState.ball
+            : { x: k.landingX, y: k.targetY };
         ret.intent = k.landed ? "recover-loose-kick" : "track-kick";
         steer(ret, aim.x - ret.x, aim.y - ret.y, dt, 1.01);
         if (secondary) {
@@ -1976,18 +2049,24 @@ export function createGame({ attach, onEvent } = {}) {
             0.98,
           );
         }
-        if (k.landed && ball) {
+        if (k.landed && matchState.ball) {
           // Both units release when the kick first touches down, not only after
           // a returner has collected it. Keep existing tackle/contact rules.
           const claimed = new Set();
-          for (const o of off) {
+          for (const o of matchState.off) {
             if (o !== ret && o !== secondary && !grounded.has(o.key))
               returnBlockerAI(o, ret, dt, claimed);
           }
-          for (const d of def) {
+          for (const d of matchState.def) {
             if (d.key === "K" || grounded.has(d.key)) continue;
             d.intent = "loose-kick-coverage";
-            steer(d, ball.x - d.x, ball.y - d.y, dt, 0.97);
+            steer(
+              d,
+              matchState.ball.x - d.x,
+              matchState.ball.y - d.y,
+              dt,
+              0.97,
+            );
           }
           resolveBlocks(dt);
         }
@@ -1996,13 +2075,13 @@ export function createGame({ attach, onEvent } = {}) {
       if (k.kind === "punt" && k.elapsed < k.airtime) {
         ret.intent = "punt-track-kick";
         steer(ret, k.landingX - ret.x, k.targetY - ret.y, dt, 0.96);
-        for (const d of def) {
+        for (const d of matchState.def) {
           if (d.key === "K") continue;
           d.intent = "punt-cover";
           steer(d, ret.x - d.x, ret.y - d.y, dt, 0.99);
         }
         const claimed = new Set();
-        for (const o of off) {
+        for (const o of matchState.off) {
           if (o !== ret) returnBlockerAI(o, ret, dt, claimed);
         }
         resolveBlocks(dt);
@@ -2010,10 +2089,10 @@ export function createGame({ attach, onEvent } = {}) {
       }
       if (k.elapsed >= k.airtime && !k.landed) {
         if (isFreeKick(k) && k.landingX > 30) {
-          setDriveSpot(possession, 50);
+          setDriveSpot(matchState.possession, 50);
           finishReturn(
             "fair",
-            yard,
+            matchState.yard,
             "Kick short of landing zone · receiving team ball at own 40",
           );
           return;
@@ -2029,23 +2108,26 @@ export function createGame({ attach, onEvent } = {}) {
         k.groundElapsed = 0;
         // Simplified short roll toward the receiver's goal line. If nobody got
         // underneath the kick, the ball remains loose and the returners must run.
-        if (ball) {
-          ball.x = k.landingX;
-          ball.y = k.targetY;
-          ball.z = 0.18;
-          ball.vx = -3.0;
-          ball.vy = 0;
+        if (matchState.ball) {
+          matchState.ball.x = k.landingX;
+          matchState.ball.y = k.targetY;
+          matchState.ball.z = 0.18;
+          matchState.ball.vx = -3.0;
+          matchState.ball.vy = 0;
         }
       }
-      if (ball) {
+      if (matchState.ball) {
         // The nearest deep player can actually recover the loose kick. Never
         // change any athlete's x/y here: possession requires physical proximity.
         const candidates = [ret, secondary].filter(Boolean);
         const touched = candidates.find(
-          (p) => !p.ground && dist(p, ball) < 1.55 && ball.z < 1.25,
+          (p) =>
+            !p.ground &&
+            dist(p, matchState.ball) < 1.55 &&
+            matchState.ball.z < 1.25,
         );
         if (touched) {
-          if (returnFairCatch && k.kind === "punt") {
+          if (matchState.returnFairCatch && k.kind === "punt") {
             finishReturn(
               "fair",
               touched.x,
@@ -2076,17 +2158,20 @@ export function createGame({ attach, onEvent } = {}) {
           k.returnTouchbackSpot = k.landingX <= 10 ? 45 : 30;
           k.advancedOutOfEndzone = false;
           k.touchbackWindow =
-            k.returnCaughtInEndzone && controlMode === "offense";
+            k.returnCaughtInEndzone && matchState.controlMode === "offense";
           k.returnCommitted = !k.touchbackWindow;
           k.touchbackElapsed = 0;
-          gameFlowNote = k.touchbackWindow
+          matchState.gameFlowNote = k.touchbackWindow
             ? "END ZONE · MOVE TO RETURN OR WAIT 2s FOR TOUCHBACK"
             : "Kick return in progress";
-          ballCarrier = touched;
-          active = controlMode === "defense" ? P(selectedDefenderKey) : touched;
+          matchState.ballCarrier = touched;
+          matchState.active =
+            matchState.controlMode === "defense"
+              ? P(matchState.selectedDefenderKey)
+              : touched;
           touched.touches++;
-          ball = null;
-          clockRunning = true;
+          matchState.ball = null;
+          matchState.clockRunning = true;
           touched.vx = k.touchbackWindow ? 0 : touched.vx;
           touched.vy = k.touchbackWindow ? 0 : touched.vy;
           message(
@@ -2098,7 +2183,7 @@ export function createGame({ attach, onEvent } = {}) {
                   touched.name +
                   " fields the kick.",
           );
-        } else if (k.landed && ball.x <= 10.05) {
+        } else if (k.landed && matchState.ball.x <= 10.05) {
           // A direct kick to the end zone earns the 35; a ball first bouncing
           // in the landing zone and then entering the end zone earns the 20.
           const spot = isFreeKick(k) ? (k.landingX <= 10 ? 45 : 30) : 30;
@@ -2108,8 +2193,15 @@ export function createGame({ attach, onEvent } = {}) {
             "Unfielded kick enters end zone · touchback at own " + (spot - 10),
           );
           return;
-        } else if (k.landed && (ball.y <= 0.1 || ball.y >= H - 0.1)) {
-          finishReturn("out", ball.x, "Loose kick rolls out of bounds");
+        } else if (
+          k.landed &&
+          (matchState.ball.y <= 0.1 || matchState.ball.y >= H - 0.1)
+        ) {
+          finishReturn(
+            "out",
+            matchState.ball.x,
+            "Loose kick rolls out of bounds",
+          );
           return;
         }
       }
@@ -2121,7 +2213,7 @@ export function createGame({ attach, onEvent } = {}) {
       if (stickInput().mag > 0.12) {
         k.returnCommitted = true;
         k.touchbackWindow = false;
-        gameFlowNote = "Kick return in progress";
+        matchState.gameFlowNote = "Kick return in progress";
         message(
           "<strong>RETURN OUT!</strong> " +
             ret.name +
@@ -2137,14 +2229,14 @@ export function createGame({ attach, onEvent } = {}) {
           );
           return;
         }
-        gameFlowNote =
+        matchState.gameFlowNote =
           "END ZONE · MOVE TO RETURN · TOUCHBACK IN " +
           Math.max(0, 2 - k.touchbackElapsed).toFixed(1) +
           "s";
       }
     }
     const claimed = new Set();
-    for (const o of off) {
+    for (const o of matchState.off) {
       if (grounded.has(o.key)) continue;
       if (o === ret) {
         if (k.touchbackWindow && !k.returnCommitted) {
@@ -2154,7 +2246,7 @@ export function createGame({ attach, onEvent } = {}) {
           o.intentTarget = "touchback-or-return";
           o.vx = 0;
           o.vy = 0;
-        } else if (controlMode === "offense") userCarry(o, dt);
+        } else if (matchState.controlMode === "offense") userCarry(o, dt);
         else autoCarry(o, dt);
         continue;
       }
@@ -2162,15 +2254,15 @@ export function createGame({ attach, onEvent } = {}) {
         backupReturnerLeadBlock(o, ret, dt, claimed);
       else returnBlockerAI(o, ret, dt, claimed);
     }
-    for (const d of def) {
+    for (const d of matchState.def) {
       if (grounded.has(d.key)) continue;
       if (d.key === "K") {
         coverReturnAI(d, ret, dt);
         continue;
       }
       if (
-        controlMode === "defense" &&
-        d.key === selectedDefenderKey &&
+        matchState.controlMode === "defense" &&
+        d.key === matchState.selectedDefenderKey &&
         stickInput().mag > 0.13
       )
         manualAthlete(d, dt, "user-defense");
@@ -2190,56 +2282,65 @@ export function createGame({ attach, onEvent } = {}) {
       finishReturn("out", ret.x, `Returner steps out at ${spotText(ret.x)}`);
       return;
     }
-    if (contactEnabled) resolveTackles(ret, dt);
+    if (matchState.contactEnabled) resolveTackles(ret, dt);
     // A live return ends only on a football dead-ball event, never a wall-clock cutoff.
     if (k.elapsed % 0.2 < dt) hud();
   }
   function startThirdQuarter() {
-    if (phase !== "halftime") return false;
-    quarter = 3;
-    quarterSeconds = QUARTER_DURATION_SECONDS;
-    playSeconds = 25;
-    timeOuts = [3, 3];
-    twoMinuteNoted = false;
-    twoMinutePending = false;
-    postWhistle = null;
-    clockRunning = false;
-    setupKickoff(secondHalfReceiver);
-    gameFlowNote = "Third quarter kickoff ready";
-    log("START OF Q3 · " + TEAM_NAMES[secondHalfReceiver] + " receiving");
+    if (matchState.phase !== "halftime") return false;
+    matchState.quarter = 3;
+    matchState.quarterSeconds = QUARTER_DURATION_SECONDS;
+    matchState.playSeconds = 25;
+    matchState.timeOuts = [3, 3];
+    matchState.twoMinuteNoted = false;
+    matchState.twoMinutePending = false;
+    matchState.postWhistle = null;
+    matchState.clockRunning = false;
+    setupKickoff(matchState.secondHalfReceiver);
+    matchState.gameFlowNote = "Third quarter kickoff ready";
+    log(
+      "START OF Q3 · " +
+        TEAM_NAMES[matchState.secondHalfReceiver] +
+        " receiving",
+    );
     hud();
     return true;
   }
   function advancePeriodIfNeeded() {
-    if (quarterSeconds > 0 || matchOver || tryState || phase === "halftime")
+    if (
+      matchState.quarterSeconds > 0 ||
+      matchState.matchOver ||
+      matchState.tryState ||
+      matchState.phase === "halftime"
+    )
       return false;
-    if (quarter === 4) {
-      matchOver = true;
-      phase = "gameover";
-      clockRunning = false;
+    if (matchState.quarter === 4) {
+      matchState.matchOver = true;
+      matchState.phase = "gameover";
+      matchState.clockRunning = false;
       hidePlaybook();
       setResultUI(
         "FINAL",
-        `${TEAM_NAMES[0]} ${teamPoints[0]} – ${teamPoints[1]} ${TEAM_NAMES[1]}`,
+        `${TEAM_NAMES[0]} ${matchState.teamPoints[0]} – ${matchState.teamPoints[1]} ${TEAM_NAMES[1]}`,
         "FINAL",
       );
       emitPresentation({ type: "snapControlChanged", disabled: true });
       hud();
       return true;
     }
-    if (quarter === 2) {
-      phase = "halftime";
-      clockRunning = false;
-      playSeconds = 0;
-      scrimmagePlayCalled = false;
-      specialState = null;
-      postWhistle = null;
+    if (matchState.quarter === 2) {
+      matchState.phase = "halftime";
+      matchState.clockRunning = false;
+      matchState.playSeconds = 0;
+      matchState.scrimmagePlayCalled = false;
+      matchState.specialState = null;
+      matchState.postWhistle = null;
       closeAudibles();
       hidePlaybook();
-      gameFlowNote = "HALFTIME — waiting for continue";
+      matchState.gameFlowNote = "HALFTIME — waiting for continue";
       setResultUI(
         "HALFTIME",
-        `${TEAM_NAMES[0]} ${teamPoints[0]} – ${teamPoints[1]} ${TEAM_NAMES[1]} · ${TEAM_NAMES[secondHalfReceiver]} receives the second-half kickoff`,
+        `${TEAM_NAMES[0]} ${matchState.teamPoints[0]} – ${matchState.teamPoints[1]} ${TEAM_NAMES[1]} · ${TEAM_NAMES[matchState.secondHalfReceiver]} receives the second-half kickoff`,
         "START THIRD QUARTER",
       );
       emitPresentation({ type: "snapControlChanged", disabled: false });
@@ -2247,71 +2348,97 @@ export function createGame({ attach, onEvent } = {}) {
       log("HALFTIME · third quarter requires continue");
       return true;
     }
-    quarter++;
-    quarterSeconds = QUARTER_DURATION_SECONDS;
-    twoMinuteNoted = false;
-    twoMinutePending = false;
-    postWhistle = null;
-    clockRunning = false;
-    if (specialState?.kind === "kickoff") setupKickoff(possession);
+    matchState.quarter++;
+    matchState.quarterSeconds = QUARTER_DURATION_SECONDS;
+    matchState.twoMinuteNoted = false;
+    matchState.twoMinutePending = false;
+    matchState.postWhistle = null;
+    matchState.clockRunning = false;
+    if (matchState.specialState?.kind === "kickoff")
+      setupKickoff(matchState.possession);
     else {
       setup();
-      if (gameStarted && possession === 1) {
+      if (matchState.gameStarted && matchState.possession === 1) {
         chooseCPUPlay();
-        scrimmagePlayCalled = true;
-        playSeconds = PRESNAP_PLAY_SECONDS;
-        cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
+        matchState.scrimmagePlayCalled = true;
+        matchState.playSeconds = PRESNAP_PLAY_SECONDS;
+        matchState.cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
         hidePlaybook();
       } else showPlaybook();
     }
-    gameFlowNote = "Quarter " + quarter + " ready";
-    log("START OF Q" + quarter);
+    matchState.gameFlowNote = "Quarter " + matchState.quarter + " ready";
+    log("START OF Q" + matchState.quarter);
     hud();
     return true;
   }
   function applyDelayOfGame() {
-    if (phase !== "presnap" || specialState || tryState || matchOver)
+    if (
+      matchState.phase !== "presnap" ||
+      matchState.specialState ||
+      matchState.tryState ||
+      matchState.matchOver
+    )
       return false;
-    yard = Math.max(11, yard - 5);
-    first = Math.max(yard + 1, first);
-    togo = Math.max(1, first - yard);
-    penaltyCount++;
-    log("DELAY OF GAME · " + TEAM_NAMES[possession] + " offense -5 yards");
-    gameFlowNote = "Delay of game · " + TEAM_NAMES[possession] + " -5 yards";
+    matchState.yard = Math.max(11, matchState.yard - 5);
+    matchState.first = Math.max(matchState.yard + 1, matchState.first);
+    matchState.togo = Math.max(1, matchState.first - matchState.yard);
+    matchState.penaltyCount++;
+    log(
+      "DELAY OF GAME · " +
+        TEAM_NAMES[matchState.possession] +
+        " offense -5 yards",
+    );
+    matchState.gameFlowNote =
+      "Delay of game · " + TEAM_NAMES[matchState.possession] + " -5 yards";
     setup();
-    playSeconds = possession === 1 && gameStarted ? PRESNAP_PLAY_SECONDS : 40;
-    scrimmagePlayCalled = possession === 1 && gameStarted;
-    if (scrimmagePlayCalled) {
-      cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
+    matchState.playSeconds =
+      matchState.possession === 1 && matchState.gameStarted
+        ? PRESNAP_PLAY_SECONDS
+        : 40;
+    matchState.scrimmagePlayCalled =
+      matchState.possession === 1 && matchState.gameStarted;
+    if (matchState.scrimmagePlayCalled) {
+      matchState.cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
       hidePlaybook();
     } else showPlaybook();
     message(
       "<strong>DELAY OF GAME.</strong> " +
-        TEAM_NAMES[possession] +
+        TEAM_NAMES[matchState.possession] +
         " loses five yards.",
     );
     hud();
     return true;
   }
   function gameTick(dt) {
-    if (matchOver || paused || phase === "halftime") return;
+    if (
+      matchState.matchOver ||
+      matchState.paused ||
+      matchState.phase === "halftime"
+    )
+      return;
     // End a quarter at a dead-ball boundary. Do not accidentally leave a
     // 0:00 clock running while a user is stuck in the play sheet.
-    if (phase === "presnap" && quarterSeconds <= 0 && !tryState) {
+    if (
+      matchState.phase === "presnap" &&
+      matchState.quarterSeconds <= 0 &&
+      !matchState.tryState
+    ) {
       advancePeriodIfNeeded();
       return;
     }
     if (
-      phase === "presnap" &&
-      (scrimmagePlayCalled || specialState || tryState)
+      matchState.phase === "presnap" &&
+      (matchState.scrimmagePlayCalled ||
+        matchState.specialState ||
+        matchState.tryState)
     ) {
-      playSeconds = Math.max(0, playSeconds - dt);
-      if (playSeconds === 0) {
-        if (isFreeKick(specialState)) {
-          playSeconds = 25;
+      matchState.playSeconds = Math.max(0, matchState.playSeconds - dt);
+      if (matchState.playSeconds === 0) {
+        if (isFreeKick(matchState.specialState)) {
+          matchState.playSeconds = 25;
           message("<strong>KICKOFF READY.</strong> Press kick to start.");
-        } else if (tryState) {
-          playSeconds = 25;
+        } else if (matchState.tryState) {
+          matchState.playSeconds = 25;
           message("<strong>TRY READY.</strong> Select extra point or two.");
         } else {
           applyDelayOfGame();
@@ -2319,53 +2446,65 @@ export function createGame({ attach, onEvent } = {}) {
         }
       }
       if (
-        gameStarted &&
-        possession === 1 &&
-        scrimmagePlayCalled &&
-        !specialState &&
-        (!tryState || tryState.mode === "two") &&
-        playSeconds <= cpuSnapAt
+        matchState.gameStarted &&
+        matchState.possession === 1 &&
+        matchState.scrimmagePlayCalled &&
+        !matchState.specialState &&
+        (!matchState.tryState || matchState.tryState.mode === "two") &&
+        matchState.playSeconds <= matchState.cpuSnapAt
       ) {
         snap(true);
         return;
       }
     }
-    if (clockRunning && (phase === "live" || phase === "presnap")) {
-      const old = quarterSeconds;
-      quarterSeconds = Math.max(0, quarterSeconds - dt);
+    if (
+      matchState.clockRunning &&
+      (matchState.phase === "live" || matchState.phase === "presnap")
+    ) {
+      const old = matchState.quarterSeconds;
+      matchState.quarterSeconds = Math.max(0, matchState.quarterSeconds - dt);
       if (
         QUARTER_DURATION_SECONDS > 120 &&
-        !twoMinuteNoted &&
-        (quarter === 2 || quarter === 4) &&
+        !matchState.twoMinuteNoted &&
+        (matchState.quarter === 2 || matchState.quarter === 4) &&
         old > 120 &&
-        quarterSeconds <= 120
+        matchState.quarterSeconds <= 120
       ) {
-        twoMinuteNoted = true;
-        twoMinutePending = phase === "live";
-        if (!twoMinutePending) clockRunning = false;
+        matchState.twoMinuteNoted = true;
+        matchState.twoMinutePending = matchState.phase === "live";
+        if (!matchState.twoMinutePending) matchState.clockRunning = false;
         log("TWO-MINUTE WARNING");
       }
     }
-    if (phase === "presnap" && quarterSeconds === 0) advancePeriodIfNeeded();
+    if (matchState.phase === "presnap" && matchState.quarterSeconds === 0)
+      advancePeriodIfNeeded();
   }
   function requestTimeout() {
-    if (matchOver || phase === "live" || timeOuts[possession] < 1) return false;
-    timeOuts[possession]--;
-    clockRunning = false;
-    playSeconds = 25;
+    if (
+      matchState.matchOver ||
+      matchState.phase === "live" ||
+      matchState.timeOuts[matchState.possession] < 1
+    )
+      return false;
+    matchState.timeOuts[matchState.possession]--;
+    matchState.clockRunning = false;
+    matchState.playSeconds = 25;
     log(
-      TEAM_NAMES[possession] + " TIMEOUT · " + timeOuts[possession] + " left",
+      TEAM_NAMES[matchState.possession] +
+        " TIMEOUT · " +
+        matchState.timeOuts[matchState.possession] +
+        " left",
     );
     hud();
     return true;
   }
 
   function rand() {
-    seq = (Math.imul(1664525, seq) + 1013904223) >>> 0;
-    return seq / 4294967296;
+    matchState.seq = nextRandomSequence(matchState.seq);
+    return matchState.seq / RANDOM_RANGE;
   }
   function seed(v) {
-    seq = v >>> 0;
+    matchState.seq = v >>> 0;
   }
   function speed(p) {
     return hypot(p.vx, p.vy);
@@ -2449,17 +2588,17 @@ export function createGame({ attach, onEvent } = {}) {
     );
   }
   function log(t) {
-    logs.unshift(t);
-    logs = logs.slice(0, 14);
-    emitPresentation({ type: "logChanged", logs });
+    matchState.logs.unshift(t);
+    matchState.logs = matchState.logs.slice(0, 14);
+    emitPresentation({ type: "logChanged", logs: matchState.logs });
   }
   function message(t) {
-    msg = t;
+    matchState.msg = t;
     emitPresentation({ type: "messageChanged", text: t });
   }
   function create(k, x, y) {
     const p = {
-      ...custom[k],
+      ...matchState.custom[k],
       key: k,
       x,
       y,
@@ -2467,10 +2606,10 @@ export function createGame({ attach, onEvent } = {}) {
       spawnY: y,
       vx: 0,
       vy: 0,
-      face: custom[k].team === 1 ? Math.PI : 0,
-      dirX: custom[k].team === 1 ? -1 : 1,
+      face: matchState.custom[k].team === 1 ? Math.PI : 0,
+      dirX: matchState.custom[k].team === 1 ? -1 : 1,
       dirY: 0,
-      stam: fatigueBank[k] ?? 1,
+      stam: matchState.fatigueBank[k] ?? 1,
       gaitCap: null,
       travel: 0,
       touches: 0,
@@ -2555,12 +2694,12 @@ export function createGame({ attach, onEvent } = {}) {
       stiffArmHeld: false,
       airPose: null,
     };
-    players.push(p);
-    (p.team === 0 ? off : def).push(p);
+    matchState.players.push(p);
+    (p.team === 0 ? matchState.off : matchState.def).push(p);
     return p;
   }
   function P(k) {
-    return players.find((q) => q.key === k);
+    return matchState.players.find((q) => q.key === k);
   }
   function snapVariation(p) {
     // Small, seeded execution variance, not a new overall ability rating.
@@ -2600,22 +2739,26 @@ export function createGame({ attach, onEvent } = {}) {
       }
     }
     if (
-      choice === previousMixedCoverage &&
-      mixRepeatCount >= 1 &&
+      choice === matchState.previousMixedCoverage &&
+      matchState.mixRepeatCount >= 1 &&
       rand() < 0.76
     ) {
       const other = choices.filter((c) => c !== choice);
       choice = other[Math.floor(rand() * other.length)];
     }
-    mixRepeatCount = choice === previousMixedCoverage ? mixRepeatCount + 1 : 1;
-    previousMixedCoverage = choice;
+    matchState.mixRepeatCount =
+      choice === matchState.previousMixedCoverage
+        ? matchState.mixRepeatCount + 1
+        : 1;
+    matchState.previousMixedCoverage = choice;
     return choice;
   }
   // Pressure plans alter actual rush personnel and assignments. The QB spy
   // trades underneath coverage for containment; a blitz trades coverage for a
   // fifth rusher. No invisible speed or automatic pass-rush wins are granted.
   function choosePressure() {
-    if (pressurePreference !== "mix") return pressurePreference;
+    if (matchState.pressurePreference !== "mix")
+      return matchState.pressurePreference;
     const opts = ["balanced", "contain", "spy", "blitz", "stunt"];
     const weights = [0.22, 0.22, 0.21, 0.2, 0.15];
     let r = rand(),
@@ -2627,15 +2770,20 @@ export function createGame({ attach, onEvent } = {}) {
         break;
       }
     }
-    if (call === previousPressure && pressureRepeat >= 1 && rand() < 0.7) {
+    if (
+      call === matchState.previousPressure &&
+      matchState.pressureRepeat >= 1 &&
+      rand() < 0.7
+    ) {
       call = opts.filter((o) => o !== call)[Math.floor(rand() * 4)];
     }
-    pressureRepeat = call === previousPressure ? pressureRepeat + 1 : 1;
-    previousPressure = call;
+    matchState.pressureRepeat =
+      call === matchState.previousPressure ? matchState.pressureRepeat + 1 : 1;
+    matchState.previousPressure = call;
     return call;
   }
   function assignPassRushPlan() {
-    for (const d of def) {
+    for (const d of matchState.def) {
       d.spy = false;
       d.blitz = false;
       d.passRushLane = d.spawnY;
@@ -2652,8 +2800,8 @@ export function createGame({ attach, onEvent } = {}) {
         1.16,
       );
     }
-    if (selectedPressure === "spy") {
-      const spy = def
+    if (matchState.selectedPressure === "spy") {
+      const spy = matchState.def
         .filter((d) => !d.rush && ["MLB", "OLB"].includes(d.pos))
         .sort(
           (a, b) =>
@@ -2663,8 +2811,8 @@ export function createGame({ attach, onEvent } = {}) {
             (a.PUR * 0.5 + a.AWR * 0.3 + a.TAK * 0.2),
         )[0];
       if (spy) spy.spy = true;
-    } else if (selectedPressure === "blitz") {
-      const blitz = def
+    } else if (matchState.selectedPressure === "blitz") {
+      const blitz = matchState.def
         .filter((d) => !d.rush && ["MLB", "OLB"].includes(d.pos))
         .sort(
           (a, b) =>
@@ -2678,8 +2826,8 @@ export function createGame({ attach, onEvent } = {}) {
         blitz.blitz = true;
         blitz.passRushLane = blitz.spawnY;
       }
-    } else if (selectedPressure === "stunt") {
-      const interiors = def.filter(
+    } else if (matchState.selectedPressure === "stunt") {
+      const interiors = matchState.def.filter(
         (d) => d.rush && ["DT", "NT", "DE"].includes(d.pos),
       );
       if (interiors.length >= 2) {
@@ -2695,10 +2843,12 @@ export function createGame({ attach, onEvent } = {}) {
   function quarterbackSpyAI(d, qb, dt) {
     // Stay goal-side of the quarterback, mirror lateral rollouts, then attack
     // once the QB threatens the line. Don't abandon the area chasing a fake.
-    const nearLOS = qb.x >= playStart - 2.4;
+    const nearLOS = qb.x >= matchState.playStart - 2.4;
     const near = dist(d, qb) < 4.2;
     const tx =
-      nearLOS || near ? qb.x + 0.3 : Math.max(playStart + 1.0, qb.x + 3.0);
+      nearLOS || near
+        ? qb.x + 0.3
+        : Math.max(matchState.playStart + 1.0, qb.x + 3.0);
     const ty = clamp(qb.y + qb.vy * (nearLOS ? 0.1 : 0.2), 4, H - 4);
     d.intent = nearLOS || near ? "spy-close" : "qb-spy";
     d.intentTarget = "QB";
@@ -2708,7 +2858,8 @@ export function createGame({ attach, onEvent } = {}) {
     const isEdge =
       ["EDGE", "DE"].includes(d.pos) || (d.key === "SAM" && d.rush);
     const left = d.spawnY < 26.65;
-    const threat = qb.x >= playStart - 2.6 || Math.abs(qb.y - 26.65) > 5.0;
+    const threat =
+      qb.x >= matchState.playStart - 2.6 || Math.abs(qb.y - 26.65) > 5.0;
     let tx = qb.x,
       ty = qb.y;
     let mode = "rush-pocket";
@@ -2716,7 +2867,7 @@ export function createGame({ attach, onEvent } = {}) {
       // Set the outside shoulder. Edge rushers must not both dive through center.
       // An actual QB rollout overrides the anchor as the rusher closes downfield.
       const outside = left ? -1 : 1;
-      const offset = selectedPressure === "contain" ? 3.6 : 2.65;
+      const offset = matchState.selectedPressure === "contain" ? 3.6 : 2.65;
       ty = clamp(qb.y + outside * (threat ? 1.0 : offset), 1.8, H - 1.8);
       tx = qb.x + clamp(qb.x - d.x, -0.3, 0.9);
       mode = threat ? "edge-close" : "edge-contain";
@@ -2727,8 +2878,8 @@ export function createGame({ attach, onEvent } = {}) {
       }
     } else if (
       d.passRushStyle === "stunt" &&
-      playClock > 0.4 &&
-      playClock < 2.4
+      matchState.playClock > 0.4 &&
+      matchState.playClock < 2.4
     ) {
       ty = d.passRushLane;
       tx = qb.x + 0.4;
@@ -2741,7 +2892,12 @@ export function createGame({ attach, onEvent } = {}) {
       ty = clamp(qb.y + lane, 3, H - 3);
       mode = "inside-rush";
     }
-    const liveQB = RushAwareness.target(d, qb, playStart, playClock);
+    const liveQB = RushAwareness.target(
+      d,
+      qb,
+      matchState.playStart,
+      matchState.playClock,
+    );
     if (liveQB) {
       tx = liveQB.x;
       ty = liveQB.y;
@@ -2762,7 +2918,11 @@ export function createGame({ attach, onEvent } = {}) {
     const near = closestThreat(d, blockers);
     if (near.p && near.d < 1.65 && qb.x > d.x - 3.5) blockBattle(near.p, d, dt);
     const execution = d.rushExecution || 1;
-    const urgency = RushAwareness.assess(qb, playStart, playClock).urgency;
+    const urgency = RushAwareness.assess(
+      qb,
+      matchState.playStart,
+      matchState.playClock,
+    ).urgency;
     const rushEffort =
       (d.blitz ? 1.09 : 1.05) *
       execution *
@@ -2781,12 +2941,12 @@ export function createGame({ attach, onEvent } = {}) {
     ].filter(Boolean);
   }
   function skillOffense() {
-    return off.filter(
+    return matchState.off.filter(
       (p) => !["LT", "LG", "C", "RG", "RT", "QB"].includes(p.key),
     );
   }
   function alignRoutes() {
-    const x = playStart,
+    const x = matchState.playStart,
       receivers = eligibleTargets();
     const wr1 = P("WR1"),
       wr2 = P("WR2"),
@@ -2797,19 +2957,19 @@ export function createGame({ attach, onEvent } = {}) {
       if (!p) continue;
       const yy = p.y;
       let route;
-      if (selectedPlay === "slants")
+      if (matchState.selectedPlay === "slants")
         route = [
           [x + 4, yy],
           [x + 13, 26.6 + (yy < 26 ? -4 : 4)],
           [x + 22, 26.6 + (yy < 26 ? 1 : -1)],
         ];
-      else if (selectedPlay === "verticals")
+      else if (matchState.selectedPlay === "verticals")
         route = [
           [x + 11, yy],
           [x + 23, yy],
           [x + 42, yy + (yy < 26 ? 2 : -2)],
         ];
-      else if (selectedPlay === "mesh") {
+      else if (matchState.selectedPlay === "mesh") {
         // Mesh is a staggered shallow-cross concept: one crosser passes
         // *behind* the other, not two receivers occupying the same depth.
         if (p === wr1)
@@ -2836,7 +2996,7 @@ export function createGame({ attach, onEvent } = {}) {
             [x + 16, yy],
             [x + 24, yy],
           ];
-      } else if (selectedPlay === "sluggo") {
+      } else if (matchState.selectedPlay === "sluggo") {
         // Slant-and-go: outside WRs sell the slant before redirecting vertical.
         const inward = yy < 26 ? 1 : -1;
         if (p === wr1 || p === wr2)
@@ -2858,7 +3018,7 @@ export function createGame({ attach, onEvent } = {}) {
             [x + 12, yy - inward * 5],
             [x + 20, yy - inward * 6],
           ];
-      } else if (selectedPlay === "flood") {
+      } else if (matchState.selectedPlay === "flood") {
         if (p === wr2)
           route = [
             [x + 11, 46],
@@ -2883,7 +3043,7 @@ export function createGame({ attach, onEvent } = {}) {
             [x + 16, 19],
             [x + 23, 27],
           ];
-      } else if (selectedPlay === "stick") {
+      } else if (matchState.selectedPlay === "stick") {
         if (p === te)
           route = [
             [x + 5, yy],
@@ -2908,7 +3068,7 @@ export function createGame({ attach, onEvent } = {}) {
             [x + 16, yy],
             [x + 25, yy],
           ];
-      } else if (selectedPlay === "dagger") {
+      } else if (matchState.selectedPlay === "dagger") {
         if (p === wr1)
           route = [
             [x + 10, yy],
@@ -2933,7 +3093,7 @@ export function createGame({ attach, onEvent } = {}) {
             [x + 13, clamp(yy + 6, 3, 50)],
             [x + 18, clamp(yy + 8, 3, 50)],
           ];
-      } else if (selectedPlay === "smash") {
+      } else if (matchState.selectedPlay === "smash") {
         if (p === wr1 || p === wr2)
           route = [
             [x + 5, yy],
@@ -2981,11 +3141,14 @@ export function createGame({ attach, onEvent } = {}) {
     }
   }
   function zone(d, tag, depth, lat, width) {
-    const adjusted = DefensivePresnap.compressedDepth(playStart, depth);
+    const adjusted = DefensivePresnap.compressedDepth(
+      matchState.playStart,
+      depth,
+    );
     d.assignment = {
       kind: "zone",
       tag,
-      baseX: playStart + adjusted,
+      baseX: matchState.playStart + adjusted,
       baseY: lat,
       width,
       depth: adjusted,
@@ -2993,13 +3156,13 @@ export function createGame({ attach, onEvent } = {}) {
     };
   }
   function assignCoverage() {
-    const backs = def.filter((d) => !d.rush && !d.spy),
+    const backs = matchState.def.filter((d) => !d.rush && !d.spy),
       rec = skillOffense(),
       safety = P("FS"),
       strong = P("SS"),
       left = P("CB1"),
       right = P("CB2");
-    if (selectedCoverage === "cover1") {
+    if (matchState.selectedCoverage === "cover1") {
       for (const d of backs) zone(d, "deep-middle", 19, 26.65, 15);
       const available = backs.filter((d) => d !== safety);
       const order = [
@@ -3034,7 +3197,7 @@ export function createGame({ attach, onEvent } = {}) {
       }
     } else {
       const zones = [];
-      if (selectedCoverage === "cover2") {
+      if (matchState.selectedCoverage === "cover2") {
         if (safety) zone(safety, "deep-half-left", 19, 13.3, 17);
         if (strong) zone(strong, "deep-half-right", 19, 40, 17);
         if (left) zone(left, "flat-left", 3, 8, 10);
@@ -3044,7 +3207,7 @@ export function createGame({ attach, onEvent } = {}) {
           ["hook-middle", 8, 26.6, 13],
           ["hook-right", 8, 38, 13],
         );
-      } else if (selectedCoverage === "cover3") {
+      } else if (matchState.selectedCoverage === "cover3") {
         if (safety) zone(safety, "deep-middle", 18, 26.65, 12);
         if (left) zone(left, "deep-left", 18, 9, 13);
         if (right) zone(right, "deep-right", 18, 44, 13);
@@ -3083,51 +3246,58 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function setup() {
     closeAudibles();
-    scrimmagePlayCalled = false;
-    paused = false;
+    matchState.scrimmagePlayCalled = false;
+    matchState.paused = false;
     refreshPauseUI();
-    suppressManualUntilNeutral = false;
-    xHoldStart = null;
-    xDiveFired = false;
-    rightStickLatched = false;
-    rightStickDirection = "";
-    queuedCarrierMove = null;
-    players.length = 0;
-    off.length = 0;
-    def.length = 0;
-    if (tackleDiagnostics) tackleDiagnostics.length = 0;
-    if (carrierCollisionDiagnostics) carrierCollisionDiagnostics.length = 0;
+    matchState.suppressManualUntilNeutral = false;
+    matchState.xHoldStart = null;
+    matchState.xDiveFired = false;
+    matchState.rightStickLatched = false;
+    matchState.rightStickDirection = "";
+    matchState.queuedCarrierMove = null;
+    matchState.players.length = 0;
+    matchState.off.length = 0;
+    matchState.def.length = 0;
+    if (matchState.tackleDiagnostics) matchState.tackleDiagnostics.length = 0;
+    if (matchState.carrierCollisionDiagnostics)
+      matchState.carrierCollisionDiagnostics.length = 0;
     ChaosContactEvidence.reset();
-    lastAnatomyTackle = null;
-    lowDiveContacts = 0;
-    lastLowDiveImpact = null;
-    blockLinks.clear();
-    tackleLinks.clear();
-    pileState = null;
-    pileStarts = 0;
-    pilePushYards = 0;
-    chainHits = 0;
-    tackleCount = 0;
-    brokenTackleCount = 0;
-    blockShedCount = 0;
-    hitStickCount = 0;
-    impactBlockCount = 0;
-    powerMoveCount = 0;
-    windedHits = 0;
-    standUps = 0;
-    playStart = yard;
-    selectedCoverage =
-      coveragePreference === "mix" ? chooseMixedCoverage() : coveragePreference;
-    selectedPressure = choosePressure();
-    ballCarrier = null;
-    ball = null;
-    intended = null;
-    passThrown = false;
-    active = null;
-    manualReceiver = false;
-    airSelection = { offense: null, defense: null, defenderKey: null };
-    lastAirResult = null;
-    cpuQB = {
+    matchState.lastAnatomyTackle = null;
+    matchState.lowDiveContacts = 0;
+    matchState.lastLowDiveImpact = null;
+    matchState.blockLinks.clear();
+    matchState.tackleLinks.clear();
+    matchState.pileState = null;
+    matchState.pileStarts = 0;
+    matchState.pilePushYards = 0;
+    matchState.chainHits = 0;
+    matchState.tackleCount = 0;
+    matchState.brokenTackleCount = 0;
+    matchState.blockShedCount = 0;
+    matchState.hitStickCount = 0;
+    matchState.impactBlockCount = 0;
+    matchState.powerMoveCount = 0;
+    matchState.windedHits = 0;
+    matchState.standUps = 0;
+    matchState.playStart = matchState.yard;
+    matchState.selectedCoverage =
+      matchState.coveragePreference === "mix"
+        ? chooseMixedCoverage()
+        : matchState.coveragePreference;
+    matchState.selectedPressure = choosePressure();
+    matchState.ballCarrier = null;
+    matchState.ball = null;
+    matchState.intended = null;
+    matchState.passThrown = false;
+    matchState.active = null;
+    matchState.manualReceiver = false;
+    matchState.airSelection = {
+      offense: null,
+      defense: null,
+      defenderKey: null,
+    };
+    matchState.lastAirResult = null;
+    matchState.cpuQB = {
       nextRead: 0,
       choice: null,
       reads: 0,
@@ -3135,37 +3305,37 @@ export function createGame({ attach, onEvent } = {}) {
       lastScore: 0,
       lastRisk: 0,
     };
-    lastContact = 0;
-    playClock = 0;
-    burstTime = 0;
-    burstCool = 0;
-    evadeTime = 0;
-    evadeCool = 0;
-    moveCooldown = 0;
-    pendingPass = null;
-    flash = 0;
-    manualDrive = false;
-    contactEnabled = true;
-    const x = yard,
+    matchState.lastContact = 0;
+    matchState.playClock = 0;
+    matchState.burstTime = 0;
+    matchState.burstCool = 0;
+    matchState.evadeTime = 0;
+    matchState.evadeCool = 0;
+    matchState.moveCooldown = 0;
+    matchState.pendingPass = null;
+    matchState.flash = 0;
+    matchState.manualDrive = false;
+    matchState.contactEnabled = true;
+    const x = matchState.yard,
       ly = 26.65;
     let qbdepth =
-      selectedFormation === "iform"
+      matchState.selectedFormation === "iform"
         ? -1.6
-        : selectedFormation === "ace"
+        : matchState.selectedFormation === "ace"
           ? -1.6
           : -4.8;
     create("QB", x + qbdepth, ly);
     create(
       "RB",
       x +
-        (selectedFormation === "iform"
+        (matchState.selectedFormation === "iform"
           ? -8.3
-          : selectedFormation === "ace"
+          : matchState.selectedFormation === "ace"
             ? -6.9
-            : selectedFormation === "pistol"
+            : matchState.selectedFormation === "pistol"
               ? -9.1
               : -6.5),
-      selectedFormation === "spread" ? ly + 3 : ly,
+      matchState.selectedFormation === "spread" ? ly + 3 : ly,
     );
     for (const [k, y] of [
       ["LT", ly - 3.6],
@@ -3175,27 +3345,27 @@ export function createGame({ attach, onEvent } = {}) {
       ["RT", ly + 3.6],
     ])
       create(k, x - 0.65, y);
-    if (selectedFormation === "spread") {
+    if (matchState.selectedFormation === "spread") {
       create("WR1", x - 1.2, 6.5);
       create("WR2", x - 1.2, 47);
       create("WR3", x - 2.5, 16);
       create("TE", x - 2.5, 36.2);
-    } else if (selectedFormation === "trips") {
+    } else if (matchState.selectedFormation === "trips") {
       create("WR1", x - 1.2, 7.5);
       create("WR2", x - 1.2, 47);
       create("WR3", x - 2.5, 40.7);
       create("TE", x - 2.5, 35.6);
-    } else if (selectedFormation === "bunch") {
+    } else if (matchState.selectedFormation === "bunch") {
       create("WR1", x - 1.2, 6.5);
       create("WR2", x - 1.2, 43.3);
       create("WR3", x - 2.1, 48.2);
       create("TE", x - 2.5, 38.0);
-    } else if (selectedFormation === "pistol") {
+    } else if (matchState.selectedFormation === "pistol") {
       create("WR1", x - 1.2, 6.5);
       create("WR2", x - 1.2, 47);
       create("WR3", x - 2.5, 15);
       create("TE", x - 2.0, 36.8);
-    } else if (selectedFormation === "ace") {
+    } else if (matchState.selectedFormation === "ace") {
       create("WR1", x - 2.3, 6.5);
       create("WR2", x - 2.3, 47);
       create("TE2", x - 0.85, ly - 5.8);
@@ -3206,7 +3376,7 @@ export function createGame({ attach, onEvent } = {}) {
       create("TE", x - 0.85, ly + 5.8);
       create("FB", x - 4.3, ly);
     }
-    if (selectedFront === "nickel") {
+    if (matchState.selectedFront === "nickel") {
       create("EDGE1", x + 1.9, ly - 5.4);
       create("DT", x + 1.7, ly - 1.6);
       create("DT2", x + 1.7, ly + 2.1);
@@ -3215,10 +3385,10 @@ export function createGame({ attach, onEvent } = {}) {
       create("OLB", x + 6, ly + 5);
       create("CB1", x + 6, 6.5);
       create("CB2", x + 6, 47);
-      create("CB3", x + 5, selectedFormation === "spread" ? 16 : 39);
+      create("CB3", x + 5, matchState.selectedFormation === "spread" ? 16 : 39);
       create("FS", x + 17, 18);
       create("SS", x + 17, 37);
-    } else if (selectedFront === "base43") {
+    } else if (matchState.selectedFront === "base43") {
       create("EDGE1", x + 1.9, ly - 5.5);
       create("DT", x + 1.7, ly - 1.6);
       create("DT2", x + 1.7, ly + 2.2);
@@ -3246,12 +3416,12 @@ export function createGame({ attach, onEvent } = {}) {
     // Adjust formation geometry *before* building zone and run-fit assignments.
     // The deep safety begins compressing around the 17, while corners and LBs
     // only compress when their own actual depth approaches the goal line.
-    DefensivePresnap.compressFormation(def, playStart);
+    DefensivePresnap.compressFormation(matchState.def, matchState.playStart);
     // Four rushers in nickel/base 4–3; in 3–4 one outside linebacker joins three linemen.
-    for (const d of def) {
+    for (const d of matchState.def) {
       d.rush =
         ["EDGE1", "EDGE2", "DT", "DT2", "DE3A", "DE3B", "NT"].includes(d.key) ||
-        (selectedFront === "base34" && d.key === "SAM");
+        (matchState.selectedFront === "base34" && d.key === "SAM");
       d.assignment = null;
       d.recognition = clamp(0.08 + (100 - d.AWR) * 0.005, 0.08, 0.37);
       d.fit = runFitFor(d);
@@ -3267,15 +3437,15 @@ export function createGame({ attach, onEvent } = {}) {
         1.05,
       );
     }
-    protectionRead = null;
+    matchState.protectionRead = null;
     assignPassRushPlan();
     assignPassProtection();
-    for (const p of players) snapVariation(p);
+    for (const p of matchState.players) snapVariation(p);
     assignCoverage();
     assignRunBlockMatches();
     alignRoutes();
-    if (!RUNS.has(selectedPlay)) {
-      for (const d of def) {
+    if (!RUNS.has(matchState.selectedPlay)) {
+      for (const d of matchState.def) {
         if (d.assignment?.kind !== "man" || d.PRS < 75) continue;
         const t = P(d.assignment.target);
         if (!t || t.pos !== "WR") continue;
@@ -3283,28 +3453,38 @@ export function createGame({ attach, onEvent } = {}) {
         d.y = t.y + Math.sign(d.y - t.y || 1) * 0.25;
       }
     }
-    phase = "presnap";
-    if (controlMode === "defense" && !P(selectedDefenderKey))
-      selectedDefenderKey = def[0]?.key || selectedDefenderKey;
-    active = controlMode === "defense" ? P(selectedDefenderKey) : null;
+    matchState.phase = "presnap";
+    if (
+      matchState.controlMode === "defense" &&
+      !P(matchState.selectedDefenderKey)
+    )
+      matchState.selectedDefenderKey =
+        matchState.def[0]?.key || matchState.selectedDefenderKey;
+    matchState.active =
+      matchState.controlMode === "defense"
+        ? P(matchState.selectedDefenderKey)
+        : null;
     emitPresentation({
       type: "snapControlChanged",
-      text: gameStarted && possession === 1 ? "CPU WILL SNAP" : "SNAP THE BALL",
+      text:
+        matchState.gameStarted && matchState.possession === 1
+          ? "CPU WILL SNAP"
+          : "SNAP THE BALL",
     });
     emitPresentation({
       type: "snapControlChanged",
-      disabled: gameStarted && possession === 1,
+      disabled: matchState.gameStarted && matchState.possession === 1,
     });
     emitPresentation({ type: "playControlsLocked", locked: false });
     emitPresentation({ type: "resultHidden" });
     emitPresentation({ type: "receiverPromptsHidden" });
     message(
       "<strong>Ready.</strong> " +
-        selectedFormation.toUpperCase() +
+        matchState.selectedFormation.toUpperCase() +
         " vs " +
-        selectedFront.toUpperCase() +
+        matchState.selectedFront.toUpperCase() +
         " · " +
-        selectedCoverage.toUpperCase() +
+        matchState.selectedCoverage.toUpperCase() +
         ".",
     );
     schemeReport();
@@ -3312,52 +3492,59 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function choosePlay(n) {
     if (
-      phase === "live" ||
-      specialState ||
-      controlMode === "defense" ||
-      (gameStarted && possession !== 0) ||
-      (!!tryState && !tryState.mode)
+      matchState.phase === "live" ||
+      matchState.specialState ||
+      matchState.controlMode === "defense" ||
+      (matchState.gameStarted && matchState.possession !== 0) ||
+      (!!matchState.tryState && !matchState.tryState.mode)
     )
       return;
-    selectedPlay = n;
+    matchState.selectedPlay = n;
     emitPresentation({ type: "playSelectionChanged", play: n });
     setup();
-    playSeconds = PRESNAP_PLAY_SECONDS;
-    scrimmagePlayCalled = true;
+    matchState.playSeconds = PRESNAP_PLAY_SECONDS;
+    matchState.scrimmagePlayCalled = true;
     hidePlaybook();
     message(
       "<strong>Play called.</strong> " +
-        selectedPlay.toUpperCase() +
+        matchState.selectedPlay.toUpperCase() +
         " · A to snap · 20 seconds on the play clock.",
     );
     hud();
   }
   function snap(cpu = false) {
-    if (phase === "live" || matchOver) return;
-    if (gameStarted && possession === 1 && !cpu && !specialState) return;
+    if (matchState.phase === "live" || matchState.matchOver) return;
+    if (
+      matchState.gameStarted &&
+      matchState.possession === 1 &&
+      !cpu &&
+      !matchState.specialState
+    )
+      return;
     closeAudibles();
-    if (phase === "dead") {
+    if (matchState.phase === "dead") {
       nextDown();
       return;
     }
-    if (phase !== "presnap") return;
-    if (specialState) {
+    if (matchState.phase !== "presnap") return;
+    if (matchState.specialState) {
       kickSpecial();
       return;
     }
-    if (tryState && !tryState.mode) {
+    if (matchState.tryState && !matchState.tryState.mode) {
       showPlaybook();
       return;
     }
-    currentMemoryPlay =
-      !specialState && (!tryState || tryState.mode === "two")
+    matchState.currentMemoryPlay =
+      !matchState.specialState &&
+      (!matchState.tryState || matchState.tryState.mode === "two")
         ? {
-            team: possession,
-            play: selectedPlay,
-            kind: RUNS.has(selectedPlay) ? "run" : "pass",
-            formation: selectedFormation,
-            down,
-            quarter,
+            team: matchState.possession,
+            play: matchState.selectedPlay,
+            kind: RUNS.has(matchState.selectedPlay) ? "run" : "pass",
+            formation: matchState.selectedFormation,
+            down: matchState.down,
+            quarter: matchState.quarter,
             target: null,
             airYards: null,
             scramble: false,
@@ -3366,19 +3553,21 @@ export function createGame({ attach, onEvent } = {}) {
     // Prior observations are frozen at the snap, never recomputed against
     // the offense's hidden current play. Formation alignment is visible.
     const pursuitExperience = RunPursuitPolicy.experience(
-      DefensiveMemory.report(possession)?.history,
-      selectedFormation,
+      DefensiveMemory.report(matchState.possession)?.history,
+      matchState.selectedFormation,
     );
     // Read possible extra rushers from the *visible* defensive alignment.
     // This is a suspicion, not knowledge of whether the defender will actually blitz.
-    protectionRead = ProtectionRead.evaluate(
-      def,
-      playStart,
+    matchState.protectionRead = ProtectionRead.evaluate(
+      matchState.def,
+      matchState.playStart,
       P("QB"),
       P("C"),
       rand(),
     );
-    const visualAlert = protectionRead?.recognized ? protectionRead.key : null;
+    const visualAlert = matchState.protectionRead?.recognized
+      ? matchState.protectionRead.key
+      : null;
     const rbProtector = P("RB");
     if (rbProtector) rbProtector.protectionAlert = visualAlert;
     // The center communicates the look; the nearest outside lineman can help
@@ -3396,26 +3585,31 @@ export function createGame({ attach, onEvent } = {}) {
     }
     // The Inside Zone front is read at the snap, from observable defenders.
     // The combo pair remains committed until contact has played out.
-    if (selectedPlay === "inside") {
+    if (matchState.selectedPlay === "inside") {
       const plan = InsideZoneIQ.assignments(
         ["LT", "LG", "C", "RG", "RT"].map(P).filter(Boolean),
-        def,
-        playStart,
+        matchState.def,
+        matchState.playStart,
       );
-      for (const o of off)
+      for (const o of matchState.off)
         if (plan[o.key]) {
           o.insideZonePlan = plan[o.key];
           o.blockTarget = plan[o.key].target;
         }
     }
     // Freeze the real A/B gap target at the snap; OL movement must not drag it.
-    for (const d of def)
-      if (d.fit) d.fit.gapSpot = DefensivePresnap.gapTarget(d, off, playStart);
+    for (const d of matchState.def)
+      if (d.fit)
+        d.fit.gapSpot = DefensivePresnap.gapTarget(
+          d,
+          matchState.off,
+          matchState.playStart,
+        );
     hidePlaybook();
-    clockRunning = true;
-    phase = "live";
-    gameFlowNote = "Live scrimmage";
-    for (const p of players) {
+    matchState.clockRunning = true;
+    matchState.phase = "live";
+    matchState.gameFlowNote = "Live scrimmage";
+    for (const p of matchState.players) {
       p.animationFlavor = rand();
       p.actionCue = null;
       p.airPose = null;
@@ -3428,33 +3622,33 @@ export function createGame({ attach, onEvent } = {}) {
         p.pursuitExperience = pursuitExperience;
       }
     }
-    active =
-      controlMode === "defense"
-        ? P(selectedDefenderKey)
-        : controlMode === "line"
-          ? P(selectedLinemanKey)
+    matchState.active =
+      matchState.controlMode === "defense"
+        ? P(matchState.selectedDefenderKey)
+        : matchState.controlMode === "line"
+          ? P(matchState.selectedLinemanKey)
           : P("QB");
-    playClock = 0;
+    matchState.playClock = 0;
     const snapHint =
-      controlMode === "defense"
+      matchState.controlMode === "defense"
         ? "Read the play and pursue the ball."
-        : RUNS.has(selectedPlay)
+        : RUNS.has(matchState.selectedPlay)
           ? "Find your lane, then burst through the hole."
           : "Choose a receiver icon or press 1–4 to throw. The QB automatically leads the route.";
     message("<strong>Ball snapped.</strong> " + snapHint);
     emitPresentation({ type: "snapControlChanged", disabled: true });
     emitPresentation({ type: "playControlsLocked", locked: true });
-    log("SNAP · " + selectedPlay.toUpperCase());
-    playTrace = [];
-    traceAccum = 0;
-    lastTraceMeta = {
+    log("SNAP · " + matchState.selectedPlay.toUpperCase());
+    matchState.playTrace = [];
+    matchState.traceAccum = 0;
+    matchState.lastTraceMeta = {
       version: "v0.33",
-      formation: selectedFormation,
-      front: selectedFront,
-      coverage: selectedCoverage,
-      play: selectedPlay,
-      seed: seq,
-      playStart,
+      formation: matchState.selectedFormation,
+      front: matchState.selectedFront,
+      coverage: matchState.selectedCoverage,
+      play: matchState.selectedPlay,
+      seed: matchState.seq,
+      playStart: matchState.playStart,
     };
     emitPresentation({ type: "traceReady" });
     traceSample();
@@ -3463,38 +3657,40 @@ export function createGame({ attach, onEvent } = {}) {
     hud();
   }
   function finish(type, x, detail) {
-    if (phase !== "live") return;
-    if (specialState) {
+    if (matchState.phase !== "live") return;
+    if (matchState.specialState) {
       finishReturn(type, x, detail);
       return;
     }
     traceSample();
     // Record observed play after the whistle, before any new play can be chosen.
-    if (currentMemoryPlay) {
-      const played = { ...currentMemoryPlay, result: type };
+    if (matchState.currentMemoryPlay) {
+      const played = { ...matchState.currentMemoryPlay, result: type };
       played.scramble =
-        played.kind === "pass" && !passThrown && ballCarrier?.key === "QB";
+        played.kind === "pass" &&
+        !matchState.passThrown &&
+        matchState.ballCarrier?.key === "QB";
       DefensiveMemory.record(played.team, played);
-      currentMemoryPlay = null;
+      matchState.currentMemoryPlay = null;
     }
     // A player who was heavily involved recovers less before the next snap.
     // Non-ball-carriers recover more, but prolonged sprints still have a cost.
-    for (const p of players) {
+    for (const p of matchState.players) {
       const hadBall = p.touches > 0,
         effort = clamp((p.travel || 0) / 35, 0, 1);
       // A fully exhausted athlete needs roughly three quiet plays without carrying the ball
       // to recover. Carrying again provides almost no between-play recovery.
       const recovery =
         (hadBall ? 0.015 : 0.345) * (0.85 + p.STA / 500) * (1 - effort * 0.12);
-      fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
+      matchState.fatigueBank[p.key] = clamp(p.stam + recovery, 0.045, 1);
     }
-    pendingPass = null;
-    const progressMark = pileState?.maxX ?? null;
-    phase = "dead";
-    blockLinks.clear();
-    tackleLinks.clear();
-    pileState = null;
-    for (const p of players) {
+    matchState.pendingPass = null;
+    const progressMark = matchState.pileState?.maxX ?? null;
+    matchState.phase = "dead";
+    matchState.blockLinks.clear();
+    matchState.tackleLinks.clear();
+    matchState.pileState = null;
+    for (const p of matchState.players) {
       p.intent = "whistle";
       p.intentTarget = null;
       p.stiffArmHeld = false;
@@ -3505,16 +3701,20 @@ export function createGame({ attach, onEvent } = {}) {
       p.groundLock = 0;
     }
     if (type === "touchdown") x = 110;
-    else if (ballCarrier && type !== "incomplete" && type !== "intercept") {
+    else if (
+      matchState.ballCarrier &&
+      type !== "incomplete" &&
+      type !== "intercept"
+    ) {
       x = clamp(
         type === "tackle" && progressMark !== null
-          ? Math.max(ballCarrier.x, progressMark)
-          : ballCarrier.x,
+          ? Math.max(matchState.ballCarrier.x, progressMark)
+          : matchState.ballCarrier.x,
         10,
         110,
       );
     }
-    const gained = Math.round((x - playStart) * 10) / 10;
+    const gained = Math.round((x - matchState.playStart) * 10) / 10;
     let heading =
       type === "touchdown"
         ? "TOUCHDOWN"
@@ -3531,29 +3731,29 @@ export function createGame({ attach, onEvent } = {}) {
                   : type === "timeout"
                     ? "PLAY CLOCK EXPIRED"
                     : type.toUpperCase();
-    if (tryState?.mode === "two") {
+    if (matchState.tryState?.mode === "two") {
       const scored = type === "touchdown";
       if (scored) {
-        teamPoints[possession] += 2;
-        score = teamPoints[possession];
+        matchState.teamPoints[matchState.possession] += 2;
+        matchState.score = matchState.teamPoints[matchState.possession];
       }
       detail = scored
         ? "Two-point conversion GOOD · +2"
         : "Two-point conversion failed · no points";
       heading = scored ? "TWO POINTS" : "TRY FAILED";
-      tryState = null;
-      postWhistle = "kickoff";
-      clockRunning = false;
+      matchState.tryState = null;
+      matchState.postWhistle = "kickoff";
+      matchState.clockRunning = false;
     } else if (type === "touchdown") {
-      teamPoints[possession] += 6;
-      score = teamPoints[possession];
+      matchState.teamPoints[matchState.possession] += 6;
+      matchState.score = matchState.teamPoints[matchState.possession];
       detail = detail || "Touchdown! Six points; choose the extra-point try.";
-      tryState = { team: possession };
-      postWhistle = "try";
-      clockRunning = false;
-      flash = 2;
+      matchState.tryState = { team: matchState.possession };
+      matchState.postWhistle = "try";
+      matchState.clockRunning = false;
+      matchState.flash = 2;
     }
-    result = heading;
+    matchState.result = heading;
     message("<strong>" + heading + ".</strong> " + detail);
     emitPresentation({
       type: "resultShown",
@@ -3575,66 +3775,75 @@ export function createGame({ attach, onEvent } = {}) {
           : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yd"),
     );
     const nYd = Math.max(10, Math.round(x * 10) / 10);
-    if (tryState || postWhistle === "kickoff" || postWhistle === "try") {
+    if (
+      matchState.tryState ||
+      matchState.postWhistle === "kickoff" ||
+      matchState.postWhistle === "try"
+    ) {
       // The kickoff/try is presented after the whistle, not automatically skipped.
     } else if (type === "intercept") {
       // Spot the ball where the interception was secured, not where the throw began.
       // An end-zone interception is a touchback to the defender's own 20.
       // Interception returns are not live yet; they need a separate possession-state update.
-      newPossession(1 - possession, nYd >= 110 ? 90 : nYd);
-      postWhistle = "scrimmage";
-      clockRunning = false;
+      newPossession(1 - matchState.possession, nYd >= 110 ? 90 : nYd);
+      matchState.postWhistle = "scrimmage";
+      matchState.clockRunning = false;
     } else {
-      yard = type === "incomplete" || type === "timeout" ? playStart : nYd;
+      matchState.yard =
+        type === "incomplete" || type === "timeout"
+          ? matchState.playStart
+          : nYd;
       if (
         type === "safety" ||
         (["tackle", "sack", "out", "down"].includes(type) &&
-          ballCarrier &&
-          ballCarrier.x <= 10.05)
+          matchState.ballCarrier &&
+          matchState.ballCarrier.x <= 10.05)
       ) {
-        teamPoints[1 - possession] += 2;
-        score = teamPoints[possession];
-        postWhistle = "safety-kick";
-        clockRunning = false;
+        matchState.teamPoints[1 - matchState.possession] += 2;
+        matchState.score = matchState.teamPoints[matchState.possession];
+        matchState.postWhistle = "safety-kick";
+        matchState.clockRunning = false;
         heading = "SAFETY";
         emitPresentation({
           type: "resultHeadingChanged",
           heading: "SAFETY · +2",
         });
         log("SAFETY · +2 to defense");
-      } else if (yard >= first - 0.05) {
-        down = 1;
-        first = Math.min(110, yard + 10);
-        togo = first - yard;
+      } else if (matchState.yard >= matchState.first - 0.05) {
+        matchState.down = 1;
+        matchState.first = Math.min(110, matchState.yard + 10);
+        matchState.togo = matchState.first - matchState.yard;
         log("FIRST DOWN · Chains move");
       } else {
-        down++;
-        togo = first - yard;
+        matchState.down++;
+        matchState.togo = matchState.first - matchState.yard;
       }
-      if (down > 4 && postWhistle !== "safety-kick") {
-        const lostTeam = possession;
-        newPossession(1 - lostTeam, yard);
-        postWhistle = "scrimmage";
-        clockRunning = false;
-        log("TURNOVER ON DOWNS · " + TEAM_NAMES[possession] + " ball");
+      if (matchState.down > 4 && matchState.postWhistle !== "safety-kick") {
+        const lostTeam = matchState.possession;
+        newPossession(1 - lostTeam, matchState.yard);
+        matchState.postWhistle = "scrimmage";
+        matchState.clockRunning = false;
+        log(
+          "TURNOVER ON DOWNS · " + TEAM_NAMES[matchState.possession] + " ball",
+        );
       }
     }
     if (
       type === "incomplete" ||
       type === "out" ||
       type === "timeout" ||
-      twoMinutePending
+      matchState.twoMinutePending
     ) {
-      clockRunning = false;
-      twoMinutePending = false;
+      matchState.clockRunning = false;
+      matchState.twoMinutePending = false;
     }
-    if (postWhistle === "try")
+    if (matchState.postWhistle === "try")
       emitPresentation({ type: "snapControlChanged", text: "CHOOSE TRY" });
-    if (postWhistle === "kickoff")
+    if (matchState.postWhistle === "kickoff")
       emitPresentation({ type: "snapControlChanged", text: "KICKOFF" });
-    if (postWhistle === "scrimmage")
+    if (matchState.postWhistle === "scrimmage")
       emitPresentation({ type: "snapControlChanged", text: "NEXT DRIVE" });
-    if (postWhistle === "safety-kick")
+    if (matchState.postWhistle === "safety-kick")
       emitPresentation({
         type: "snapControlChanged",
         text: "SAFETY FREE KICK",
@@ -3642,74 +3851,81 @@ export function createGame({ attach, onEvent } = {}) {
     hud();
   }
   function nextDown() {
-    if (phase === "halftime") {
+    if (matchState.phase === "halftime") {
       startThirdQuarter();
       return;
     }
-    if (phase !== "dead") return;
-    if (quarterSeconds <= 0 && !tryState) {
+    if (matchState.phase !== "dead") return;
+    if (matchState.quarterSeconds <= 0 && !matchState.tryState) {
       advancePeriodIfNeeded();
       return;
     }
-    const action = postWhistle;
-    postWhistle = null;
+    const action = matchState.postWhistle;
+    matchState.postWhistle = null;
     if (action === "try") {
       // Keep the scoring team on the field until the try is selected.
-      yard = 95;
-      down = 1;
-      togo = 10;
-      first = 105;
-      specialState = null;
+      matchState.yard = 95;
+      matchState.down = 1;
+      matchState.togo = 10;
+      matchState.first = 105;
+      matchState.specialState = null;
       setup();
-      playSeconds = 25;
+      matchState.playSeconds = 25;
       showPlaybook();
-      if (gameStarted && possession === 1) chooseSpecial("pat");
+      if (matchState.gameStarted && matchState.possession === 1)
+        chooseSpecial("pat");
     } else if (action === "kickoff") {
-      setupKickoff(1 - possession);
+      setupKickoff(1 - matchState.possession);
     } else if (action === "safety-kick") {
-      setupKickoff(1 - possession, "safety-kick");
+      setupKickoff(1 - matchState.possession, "safety-kick");
     } else {
-      if (gameStarted && possession === 1) chooseCPUPlay();
+      if (matchState.gameStarted && matchState.possession === 1)
+        chooseCPUPlay();
       setup();
-      playSeconds = gameStarted && possession === 1 ? PRESNAP_PLAY_SECONDS : 40;
-      scrimmagePlayCalled = gameStarted && possession === 1;
-      cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
+      matchState.playSeconds =
+        matchState.gameStarted && matchState.possession === 1
+          ? PRESNAP_PLAY_SECONDS
+          : 40;
+      matchState.scrimmagePlayCalled =
+        matchState.gameStarted && matchState.possession === 1;
+      matchState.cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
       // CPU possessions show the field immediately for defensive repositioning.
       // VIEW still opens the optional defensive call sheet.
-      if (gameStarted && possession === 1) hidePlaybook();
+      if (matchState.gameStarted && matchState.possession === 1) hidePlaybook();
       else showPlaybook();
     }
   }
   function reset() {
-    gameFlowNote = "Ready";
-    penaltyCount = 0;
+    matchState.gameFlowNote = "Ready";
+    matchState.penaltyCount = 0;
     DefensiveMemory.reset();
-    currentMemoryPlay = null;
-    gameStarted = false;
+    matchState.currentMemoryPlay = null;
+    matchState.gameStarted = false;
     selectControlMode("offense");
-    possession = 0;
-    teamPoints = [0, 0];
-    quarter = 1;
-    quarterSeconds = QUARTER_DURATION_SECONDS;
-    timeOuts = [3, 3];
-    playSeconds = 40;
-    specialState = null;
-    tryState = null;
-    postWhistle = null;
-    clockRunning = false;
+    matchState.possession = 0;
+    matchState.teamPoints = [0, 0];
+    matchState.quarter = 1;
+    matchState.quarterSeconds = QUARTER_DURATION_SECONDS;
+    matchState.timeOuts = [3, 3];
+    matchState.playSeconds = 40;
+    matchState.specialState = null;
+    matchState.tryState = null;
+    matchState.postWhistle = null;
+    matchState.clockRunning = false;
     hidePlaybook();
-    for (const k of Object.keys(fatigueBank)) delete fatigueBank[k];
-    paused = false;
+    for (const k of Object.keys(matchState.fatigueBank))
+      delete matchState.fatigueBank[k];
+    matchState.paused = false;
     refreshPauseUI();
-    score = 0;
-    down = 1;
-    togo = 10;
-    yard = 30;
-    first = 40;
-    totalClock = 0;
-    logs = [];
-    emitPresentation({ type: "logChanged", logs });
-    seed(Math.floor(Math.random() * 4294967296) >>> 0);
+    matchState.score = 0;
+    matchState.down = 1;
+    matchState.togo = 10;
+    matchState.yard = 30;
+    matchState.first = 40;
+    matchState.totalClock = 0;
+    matchState.logs = [];
+    emitPresentation({ type: "logChanged", logs: matchState.logs });
+    seed(Math.floor(matchRandom() * RANDOM_RANGE) >>> 0);
     setup();
     log("New drive · ball on own 20");
   }
@@ -3726,12 +3942,12 @@ export function createGame({ attach, onEvent } = {}) {
   function stickInput() {
     let screenX = 0,
       screenY = 0;
-    if (keys.w || keys.arrowup) screenY -= 1;
-    if (keys.s || keys.arrowdown) screenY += 1;
-    if (keys.a || keys.arrowleft) screenX -= 1;
-    if (keys.d || keys.arrowright) screenX += 1;
-    screenX += joystick.x + padState.lx;
-    screenY += joystick.y + padState.ly;
+    if (matchState.keys.w || matchState.keys.arrowup) screenY -= 1;
+    if (matchState.keys.s || matchState.keys.arrowdown) screenY += 1;
+    if (matchState.keys.a || matchState.keys.arrowleft) screenX -= 1;
+    if (matchState.keys.d || matchState.keys.arrowright) screenX += 1;
+    screenX += matchState.joystick.x + matchState.padState.lx;
+    screenY += matchState.joystick.y + matchState.padState.ly;
     const mag = Math.hypot(screenX, screenY);
     if (mag > 1) {
       screenX /= mag;
@@ -3750,7 +3966,7 @@ export function createGame({ attach, onEvent } = {}) {
       boost *= 1 + 0.25 * skill;
       p.jukeRecovery = Math.max(0, p.jukeRecovery - dt);
     }
-    if (p === active && burstTime > 0)
+    if (p === matchState.active && matchState.burstTime > 0)
       boost *= 1 + 0.68 * clamp(p.stam / 0.48, 0.15, 1);
     if (p.stun > 0) {
       p.stun = Math.max(0, p.stun - dt);
@@ -3769,7 +3985,7 @@ export function createGame({ attach, onEvent } = {}) {
     // a yard before contact; distance and rated acceleration still govern.
     if (
       p.team === 1 &&
-      ballCarrier &&
+      matchState.ballCarrier &&
       goalDistance > 0.12 &&
       goalDistance < 1 &&
       [
@@ -3837,12 +4053,12 @@ export function createGame({ attach, onEvent } = {}) {
         "air-backup",
       ].includes(p.intent);
     const userSteering =
-      p === active &&
-      (controlMode !== "offense" ||
-        manualDrive ||
-        (!ballCarrier && !passThrown));
+      p === matchState.active &&
+      (matchState.controlMode !== "offense" ||
+        matchState.manualDrive ||
+        (!matchState.ballCarrier && !matchState.passThrown));
     const sprintDistance =
-      fullPursuit && ballCarrier?.team === 0
+      fullPursuit && matchState.ballCarrier?.team === 0
         ? 0.24
         : fullPursuit
           ? 1.3
@@ -3856,10 +4072,12 @@ export function createGame({ attach, onEvent } = {}) {
     // window justifies a maximum-effort chase. No forced speed matching.
     const imminent =
       fullPursuit &&
-      ballCarrier &&
+      matchState.ballCarrier &&
       (goalDistance < 16 ||
-        ballCarrier.x > 75 ||
-        (p.x < ballCarrier.x && ballCarrier.vx > 3 && goalDistance < 28));
+        matchState.ballCarrier.x > 75 ||
+        (p.x < matchState.ballCarrier.x &&
+          matchState.ballCarrier.vx > 3 &&
+          goalDistance < 28));
     const conserve = fullPursuit && p.stam < 0.37 && !imminent;
     const pursueNow =
       fullPursuit &&
@@ -3870,11 +4088,11 @@ export function createGame({ attach, onEvent } = {}) {
     // otherwise use the old energy-saving read for deep, low-threat positions.
     const liveChase =
       fullPursuit &&
-      ballCarrier &&
+      matchState.ballCarrier &&
       p.team === 1 &&
-      (ballCarrier.x > p.x - 1.5 || goalDistance < 28);
+      (matchState.ballCarrier.x > p.x - 1.5 || goalDistance < 28);
     const airChase =
-      !!ball?.flying &&
+      !!matchState.ball?.flying &&
       ["break-on-ball", "air-rally", "air-underneath"].includes(p.intent);
     const aiSprint =
       !userSteering &&
@@ -3974,7 +4192,10 @@ export function createGame({ attach, onEvent } = {}) {
       // orbiting him on leftover lateral velocity. Preserve turning limits at
       // longer distances and keep this correction limited to live pursuit.
       const tackleApproach =
-        p.team === 1 && fullPursuit && ballCarrier && goalDistance < 3.4;
+        p.team === 1 &&
+        fullPursuit &&
+        matchState.ballCarrier &&
+        goalDistance < 3.4;
       const closeControl = tackleApproach ? 1.65 : 1;
       const sidewaysBrake = clamp(
         (2.5 + footwork * 2.9) *
@@ -4174,8 +4395,8 @@ export function createGame({ attach, onEvent } = {}) {
     steer(p, dx, dy, dt, boost);
   }
   function resolvePressMatchups() {
-    if (RUNS.has(selectedPlay)) return;
-    for (const d of def) {
+    if (RUNS.has(matchState.selectedPlay)) return;
+    for (const d of matchState.def) {
       if (d.assignment?.kind !== "man" || d.ground) continue;
       const p = P(d.assignment.target);
       if (!p || !["WR", "TE"].includes(p.pos) || dist(d, p) > 3.9) continue;
@@ -4216,7 +4437,7 @@ export function createGame({ attach, onEvent } = {}) {
     const bend = angleFromCosine((ax * bx + ay * by) / (ma * mb));
     if (bend < 0.34) return;
     const isDouble =
-      selectedPlay === "sluggo" &&
+      matchState.selectedPlay === "sluggo" &&
       newIdx === 2 &&
       (p.key === "WR1" || p.key === "WR2");
     p.routeBreaks++;
@@ -4225,7 +4446,7 @@ export function createGame({ attach, onEvent } = {}) {
       0.2,
       0.49,
     );
-    const matched = def.find(
+    const matched = matchState.def.find(
       (d) =>
         d.assignment?.kind === "man" &&
         d.assignment.target === p.key &&
@@ -4259,7 +4480,7 @@ export function createGame({ attach, onEvent } = {}) {
         const direction = Math.sign(ay) || 1;
         const duration = clamp(0.1 + (fake - 12) * 0.006, 0.1, 0.27);
         matched.falseStep = {
-          until: playClock + duration,
+          until: matchState.playClock + duration,
           x: matched.x + 0.35,
           y:
             matched.y + direction * clamp(0.55 + (fake - 12) * 0.04, 0.55, 1.6),
@@ -4273,7 +4494,7 @@ export function createGame({ attach, onEvent } = {}) {
   // Before the QB crosses LOS, this is still a pass route, NOT downfield blocking.
   function scrambleOpenSpace(p) {
     const qb = P("QB"),
-      forward = qb && qb.x > playStart - 3.0 && qb.vx > 1.2;
+      forward = qb && qb.x > matchState.playStart - 3.0 && qb.vx > 1.2;
     const options = [];
     // A receiver may work underneath, deeper, or horizontally across coverage.
     // Slow receivers prefer shorter windows; smarter route runners anticipate them.
@@ -4284,14 +4505,17 @@ export function createGame({ attach, onEvent } = {}) {
     );
     const depth = [-3, 2.5, 6 + longBreak * 2.3];
     const lateral = [-8, -4, 0, 4, 8];
-    const minX = Math.max(playStart + 1.2, (qb?.x || playStart) + 2.0);
+    const minX = Math.max(
+      matchState.playStart + 1.2,
+      (qb?.x || matchState.playStart) + 2.0,
+    );
     for (const dx of depth)
       for (const dy of lateral) {
         const x = clamp(p.x + dx, Math.min(minX, 108.2), 108.2),
           y = clamp(p.y + dy, 2.4, H - 2.4);
         const move = Math.hypot(x - p.x, y - p.y);
         if (move < 1.3 || move > 12.5) continue;
-        const threats = def
+        const threats = matchState.def
           .filter((d) => !d.ground)
           .map((d) =>
             Math.hypot(x - (d.x + d.vx * 0.17), y - (d.y + d.vy * 0.17)),
@@ -4299,7 +4523,7 @@ export function createGame({ attach, onEvent } = {}) {
           .sort((a, b) => a - b);
         const separation =
           (threats[0] || 10) * 0.84 + (threats[1] || 12) * 0.18;
-        const others = off
+        const others = matchState.off
           .filter((o) => o !== p && o.pos !== "QB" && o.pos !== "RB")
           .map((o) => dist(o, { x, y }));
         const spacing = others.length ? Math.min(...others) : 10;
@@ -4331,12 +4555,12 @@ export function createGame({ attach, onEvent } = {}) {
     // is still available. QB possession beyond the LOS is handled by ballCarrier.
     const done =
       !p.scrambleTarget ||
-      playClock >= p.scrambleReplanAt ||
+      matchState.playClock >= p.scrambleReplanAt ||
       dist(p, p.scrambleTarget) < 1.4;
     if (done) {
       p.scrambleTarget = scrambleOpenSpace(p);
       p.scrambleReplanAt =
-        playClock + clamp(0.5 + (100 - p.AWR) * 0.006, 0.5, 0.82);
+        matchState.playClock + clamp(0.5 + (100 - p.AWR) * 0.006, 0.5, 0.82);
       p.scrambleStepCount = (p.scrambleStepCount || 0) + 1;
     }
     p.intent = "scramble-open";
@@ -4383,7 +4607,11 @@ export function createGame({ attach, onEvent } = {}) {
     p.intentTarget = "waypoint-" + p.routeIdx;
     // Mesh crossers make small, skill-dependent adjustments for real traffic.
     // Keep the original route target and timing; only change the steering vector.
-    const avoid = CoverageRoutePolicy.meshAvoidance(p, off, selectedPlay);
+    const avoid = CoverageRoutePolicy.meshAvoidance(
+      p,
+      matchState.off,
+      matchState.selectedPlay,
+    );
     steer(
       p,
       pt[0] - p.x + avoid.x * 4.5,
@@ -4439,31 +4667,34 @@ export function createGame({ attach, onEvent } = {}) {
     const rg = P("RG"),
       rb = P("RB");
     // A pulling guard or back accelerating into the mesh can reveal a run.
-    const pulling = rg && rg.spawnY - rg.y > 0.4 && rg.x < playStart + 0.2;
+    const pulling =
+      rg && rg.spawnY - rg.y > 0.4 && rg.x < matchState.playStart + 0.2;
     const mesh = rb && rb.x - rb.spawnX > 1.15;
-    return !!(ballCarrier === rb || pulling || mesh);
+    return !!(matchState.ballCarrier === rb || pulling || mesh);
   }
   function recognizeRun(d) {
-    if (!RUNS.has(selectedPlay)) return false;
+    if (!RUNS.has(matchState.selectedPlay)) return false;
     if (d.runRead) return true;
     // Nearby defenders can recognize the football sooner than a deep DB.
-    const local = ballCarrier && dist(d, ballCarrier) < 3.4;
+    const local =
+      matchState.ballCarrier && dist(d, matchState.ballCarrier) < 3.4;
     // Once a handoff is established, deep defenders can recognize the shared
     // backfield/teammate cues even if their eyes are temporarily on a receiver.
     // Require a rating-sensitive read window plus a short post-handoff confirmation;
     // this never reveals a run before the football is actually handed off.
     const confirmedHandoff =
-      ballCarrier === P("RB") &&
-      playClock >= d.readAt + (d.pos === "FS" || d.pos === "SS" ? 0.16 : 0.12);
+      matchState.ballCarrier === P("RB") &&
+      matchState.playClock >=
+        d.readAt + (d.pos === "FS" || d.pos === "SS" ? 0.16 : 0.12);
     if (
-      (local || playClock >= d.readAt) &&
+      (local || matchState.playClock >= d.readAt) &&
       hasRunCue() &&
-      (InsideZoneIQ.visible(d, ballCarrier || P("RB")) ||
+      (InsideZoneIQ.visible(d, matchState.ballCarrier || P("RB")) ||
         local ||
         confirmedHandoff)
     ) {
       d.runRead = true;
-      d.readAtTime = playClock;
+      d.readAtTime = matchState.playClock;
       return true;
     }
     return false;
@@ -4473,10 +4704,11 @@ export function createGame({ attach, onEvent } = {}) {
       role = fit.role,
       inner = role.includes("gap") || role.includes("fill");
     const anchoredGap =
-      fit.gapSpot ?? DefensivePresnap.gapTarget(d, off, playStart);
+      fit.gapSpot ??
+      DefensivePresnap.gapTarget(d, matchState.off, matchState.playStart);
     let x =
       anchoredGap?.x ??
-      playStart +
+      matchState.playStart +
         (inner
           ? role.startsWith("gap")
             ? 0.9
@@ -4487,7 +4719,7 @@ export function createGame({ attach, onEvent } = {}) {
     let y = anchoredGap?.y ?? fit.lane;
     // A defender must actually be facing the running back to update his fit.
     // Do not rotate 180° toward a runner outside the player's field of view.
-    const a = ballCarrier || P("RB");
+    const a = matchState.ballCarrier || P("RB");
     const seesRunner = a && InsideZoneIQ.visible(d, a);
     if (a && d.runRead && seesRunner) {
       const weight = clamp((d.PRC - 35) / 80, 0.2, 0.78);
@@ -4498,18 +4730,18 @@ export function createGame({ attach, onEvent } = {}) {
     d.intent = "run-fit";
     d.intentTarget = role;
     if (
-      selectedPlay === "inside" &&
+      matchState.selectedPlay === "inside" &&
       d.runRead &&
       seesRunner &&
       !d.ground &&
       d.blocked < 0.2 &&
-      playClock > 0.29 &&
+      matchState.playClock > 0.29 &&
       dist(d, a) > 3.4 &&
       dist(d, a) < 13
     ) {
       const response = InsideZoneIQ.response(
         d,
-        off.filter((o) =>
+        matchState.off.filter((o) =>
           ["LT", "LG", "C", "RG", "RT", "TE", "FB"].includes(o.key),
         ),
         a,
@@ -4599,14 +4831,18 @@ export function createGame({ attach, onEvent } = {}) {
     const base = { x: tx, y: ty, lead: t, mode, sep, role };
     // Track only where the live runner has physically been on this play.
     // We do not infer a route or read an unsnapped offensive play call.
-    if (ballCarrier === a && !specialState && Number.isFinite(a.x)) {
+    if (
+      matchState.ballCarrier === a &&
+      !matchState.specialState &&
+      Number.isFinite(a.x)
+    ) {
       if (!Number.isFinite(a.pursuitHighX)) a.pursuitHighX = a.x;
       a.pursuitHighX = Math.max(a.pursuitHighX, a.x);
       // Learn the *observed* backward/outside escape only after the whistle.
       // This is not an observation of the hidden play or an instant AI adjustment.
       if (
-        currentMemoryPlay?.kind === "run" &&
-        currentMemoryPlay.team === possession
+        matchState.currentMemoryPlay?.kind === "run" &&
+        matchState.currentMemoryPlay.team === matchState.possession
       ) {
         const side = a.y < H / 2 ? -1 : 1;
         if (
@@ -4614,7 +4850,8 @@ export function createGame({ attach, onEvent } = {}) {
           (a.vy || 0) * side > 1.1 &&
           a.pursuitHighX - a.x > 2.2
         ) {
-          currentMemoryPlay.retreatSide = side < 0 ? "left" : "right";
+          matchState.currentMemoryPlay.retreatSide =
+            side < 0 ? "left" : "right";
         }
       }
     }
@@ -4622,9 +4859,9 @@ export function createGame({ attach, onEvent } = {}) {
     const planned = RunPursuitPolicy.plan(d, a, base, {
       fieldWidth: H,
       peakX: a.pursuitHighX,
-      enabled: ballCarrier === a && !specialState,
+      enabled: matchState.ballCarrier === a && !matchState.specialState,
     });
-    return ChaosPursuitReaction.aim(d, a, planned, playClock);
+    return ChaosPursuitReaction.aim(d, a, planned, matchState.playClock);
   }
   function pursuitAI(d, a, dt) {
     const aim = pursuitAim(d, a);
@@ -4643,20 +4880,22 @@ export function createGame({ attach, onEvent } = {}) {
   // match the aligned corner on the same side. A receiver does NOT automatically
   // chase the nearest linebacker toward midfield merely because he moved closer.
   function assignRunBlockMatches() {
-    const receivers = off.filter((o) => o.pos === "WR");
-    const available = new Set(def.filter((d) => !d.rush).map((d) => d.key));
+    const receivers = matchState.off.filter((o) => o.pos === "WR");
+    const available = new Set(
+      matchState.def.filter((d) => !d.rush).map((d) => d.key),
+    );
     // Outside receivers get the outside corners first; don't steal CB1 for a
     // slot receiver when a base defense has only two corners.
     for (const o of [...receivers].sort(
       (a, b) => Math.abs(b.spawnY - 26.65) - Math.abs(a.spawnY - 26.65),
     )) {
-      const assigned = def.find(
+      const assigned = matchState.def.find(
         (d) =>
           available.has(d.key) &&
           d.assignment?.kind === "man" &&
           d.assignment.target === o.key,
       );
-      const sameSide = def.filter(
+      const sameSide = matchState.def.filter(
         (d) =>
           available.has(d.key) &&
           d.pos === "CB" &&
@@ -4668,7 +4907,7 @@ export function createGame({ attach, onEvent } = {}) {
           (a, b) =>
             Math.abs(a.spawnY - o.spawnY) - Math.abs(b.spawnY - o.spawnY),
         )[0] ||
-        def
+        matchState.def
           .filter(
             (d) =>
               available.has(d.key) &&
@@ -4679,7 +4918,7 @@ export function createGame({ attach, onEvent } = {}) {
             (a, b) =>
               Math.abs(a.spawnY - o.spawnY) - Math.abs(b.spawnY - o.spawnY),
           )[0] ||
-        def
+        matchState.def
           .filter((d) => available.has(d.key))
           .sort(
             (a, b) =>
@@ -4697,13 +4936,13 @@ export function createGame({ attach, onEvent } = {}) {
   // otherwise locate the closest threat to the WR inside his home lane.
   function receiverRunBlock(o, dt, claims, carrier = null) {
     const primary = o.primaryRunBlock ? P(o.primaryRunBlock) : null;
-    const engaged = blockLinks.get(o.key);
+    const engaged = matchState.blockLinks.get(o.key);
     const laneWidth = o.key === "WR3" ? 9.0 : 8.0;
     const homeY = o.spawnY;
     const onAssignmentSide = (d) =>
       d &&
       !d.ground &&
-      d.beatenUntil < playClock &&
+      d.beatenUntil < matchState.playClock &&
       Math.abs(d.y - homeY) <= laneWidth &&
       Math.sign(d.y - 26.65) === Math.sign(homeY - 26.65) &&
       dist(o, d) < 15.5;
@@ -4719,11 +4958,11 @@ export function createGame({ attach, onEvent } = {}) {
       target = primary;
     if (!target) {
       const otherAssignments = new Set(
-        off
+        matchState.off
           .filter((w) => w !== o && w.pos === "WR" && w.primaryRunBlock)
           .map((w) => w.primaryRunBlock),
       );
-      const inLane = def.filter(
+      const inLane = matchState.def.filter(
         (d) =>
           onAssignmentSide(d) &&
           !claims.has(d.key) &&
@@ -4764,9 +5003,9 @@ export function createGame({ attach, onEvent } = {}) {
       o.intent = "edge-stalk";
       o.intentTarget = primary?.key || "outside-lane";
       const advance = carrier
-        ? Math.min(carrier.x + 3.1, playStart + 13)
-        : playStart + 6;
-      const x = clamp(Math.max(o.x, advance), playStart + 0.6, 109);
+        ? Math.min(carrier.x + 3.1, matchState.playStart + 13)
+        : matchState.playStart + 6;
+      const x = clamp(Math.max(o.x, advance), matchState.playStart + 0.6, 109);
       arrive(o, x, homeY, dt, 0.93);
     }
   }
@@ -4834,9 +5073,9 @@ export function createGame({ attach, onEvent } = {}) {
       -35,
       35,
     );
-    const current = blockLinks.get(o.key)?.defender === d.key;
+    const current = matchState.blockLinks.get(o.key)?.defender === d.key;
     const previous =
-      o.supportTarget === d.key && playClock < (o.supportUntil || 0);
+      o.supportTarget === d.key && matchState.playClock < (o.supportUntil || 0);
     const matchup = assigned === d ? 3.6 : 0;
     // Threat leads, but nearby opponents remain worth blocking before they close.
     return (
@@ -4900,16 +5139,16 @@ export function createGame({ attach, onEvent } = {}) {
   // DL or whoever was first to chase the runner. Current blocks persist until
   // contact truly breaks; new targets are held briefly to prevent oscillation.
   function receiverAfterCatchBlock(o, a, dt, claims) {
-    const linked = blockLinks.get(o.key),
+    const linked = matchState.blockLinks.get(o.key),
       current = linked ? P(linked.defender) : null;
-    const assigned = def.find(
+    const assigned = matchState.def.find(
       (d) => d.assignment?.kind === "man" && d.assignment.target === o.key,
     );
     const eligible = (d) =>
       d &&
       !d.ground &&
       d.stun < 0.65 &&
-      d.beatenUntil < playClock &&
+      d.beatenUntil < matchState.playClock &&
       d.key !== o.beatenTarget &&
       dist(o, d) < 11.5 &&
       d.x >= a.x - 9 &&
@@ -4917,14 +5156,14 @@ export function createGame({ attach, onEvent } = {}) {
     let target = null;
     if (current && !current.ground && dist(o, current) < 2.75) target = current;
     if (!target) {
-      const options = def.filter(eligible);
+      const options = matchState.def.filter(eligible);
       const best = bestLiveBlockTarget(o, a, options, claims, assigned);
       const previous = options.find(
         (d) => d.key === o.supportTarget && !claims.has(d.key),
       );
       if (
         previous &&
-        playClock < (o.supportUntil || 0) &&
+        matchState.playClock < (o.supportUntil || 0) &&
         (!best ||
           blockTargetMerit(o, previous, a, assigned) >=
             blockTargetMerit(o, best, a, assigned) - 8)
@@ -4935,7 +5174,7 @@ export function createGame({ attach, onEvent } = {}) {
     if (target) {
       claims.add(target.key);
       o.supportTarget = target.key;
-      o.supportUntil = playClock + 0.3;
+      o.supportUntil = matchState.playClock + 0.3;
       o.intent = "catch-block";
       o.intentTarget = target.key;
       const intercept = blockInterceptPoint(o, target, a);
@@ -4962,8 +5201,8 @@ export function createGame({ attach, onEvent } = {}) {
   // Stable targets plus claims keep six blockers from chasing the same defender.
   function runSupportAI(o, a, dt, claims) {
     if (
-      pileState?.active &&
-      pileState.carrier === a.key &&
+      matchState.pileState?.active &&
+      matchState.pileState.carrier === a.key &&
       pileSupport(o, a, dt)
     )
       return;
@@ -4972,16 +5211,17 @@ export function createGame({ attach, onEvent } = {}) {
       maxReach = interior ? 12 : 17,
       scope = interior ? 13 : 17;
     const reserved = new Set(
-      off
+      matchState.off
         .filter((p) => p.pos === "WR" && p.primaryRunBlock)
         .map((p) => p.primaryRunBlock),
     );
-    const livePassSupport = !RUNS.has(selectedPlay) && a.x >= playStart;
-    const candidates = def.filter(
+    const livePassSupport =
+      !RUNS.has(matchState.selectedPlay) && a.x >= matchState.playStart;
+    const candidates = matchState.def.filter(
       (d) =>
         !d.ground &&
         d.stun < 0.65 &&
-        d.beatenUntil < playClock &&
+        d.beatenUntil < matchState.playClock &&
         d.key !== o.beatenTarget &&
         d.x > a.x - (livePassSupport ? 9 : 5.5) &&
         d.x < a.x + 16 &&
@@ -4990,7 +5230,7 @@ export function createGame({ attach, onEvent } = {}) {
         (livePassSupport || !reserved.has(d.key) || dist(d, a) < 2.4),
     );
     let chosen = null;
-    const current = blockLinks.get(o.key),
+    const current = matchState.blockLinks.get(o.key),
       engaged = current ? P(current.defender) : null;
     if (engaged && candidates.includes(engaged)) chosen = engaged;
     if (!chosen) {
@@ -5003,7 +5243,7 @@ export function createGame({ attach, onEvent } = {}) {
       if (
         keep &&
         (livePassSupport
-          ? playClock < (o.supportUntil || 0) &&
+          ? matchState.playClock < (o.supportUntil || 0) &&
             (!best ||
               blockTargetMerit(o, keep, a) >= blockTargetMerit(o, best, a) - 8)
           : dist(keep, o) < maxReach * 0.85)
@@ -5027,7 +5267,7 @@ export function createGame({ attach, onEvent } = {}) {
     if (chosen) {
       claims.add(chosen.key);
       o.supportTarget = chosen.key;
-      o.supportUntil = playClock + 0.3;
+      o.supportUntil = matchState.playClock + 0.3;
       o.intent = "block";
       o.intentTarget = chosen.key;
       const intercept = blockInterceptPoint(o, chosen, a);
@@ -5061,7 +5301,7 @@ export function createGame({ attach, onEvent } = {}) {
     q.intent = "trail";
     q.intentTarget = a.key;
     // Having pitched or handed off, the QB does not keep dropping backwards forever.
-    const x = clamp(playStart - 3.6, 10, 109);
+    const x = clamp(matchState.playStart - 3.6, 10, 109);
     const y = clamp(q.spawnY + (a.y < q.spawnY ? 2.8 : -2.8), 1, H - 1);
     arrive(q, x, y, dt, 0.82);
   }
@@ -5092,7 +5332,13 @@ export function createGame({ attach, onEvent } = {}) {
       frontality: facing,
       freeLane: d.blocked < 0.12,
     });
-    d.lastTackleDecision = { choice, gap, closing, facing, time: playClock };
+    d.lastTackleDecision = {
+      choice,
+      gap,
+      closing,
+      facing,
+      time: matchState.playClock,
+    };
     if (choice === "tackle-dive" && !(speed(a) < 0.95 && gap < 2.5)) {
       // A planted or nearly stopped runner needs a controlled wrap, not a
       // repeated launch of low dives through the same crowded rear contact.
@@ -5119,32 +5365,44 @@ export function createGame({ attach, onEvent } = {}) {
   function defenderAI(d, dt) {
     if (d.stun > 0) {
       d.intent = "recover";
-      d.intentTarget = ballCarrier?.key || "play";
+      d.intentTarget = matchState.ballCarrier?.key || "play";
       steer(d, 0, 0, dt, 0.65);
       return;
     }
-    if (tackleLinks.has(d.key) && ballCarrier) {
+    if (matchState.tackleLinks.has(d.key) && matchState.ballCarrier) {
       d.intent = "wrap";
-      d.intentTarget = ballCarrier.key;
-      steer(d, ballCarrier.x - d.x, ballCarrier.y - d.y, dt, 0.82);
+      d.intentTarget = matchState.ballCarrier.key;
+      steer(
+        d,
+        matchState.ballCarrier.x - d.x,
+        matchState.ballCarrier.y - d.y,
+        dt,
+        0.82,
+      );
       return;
     }
     const read = recognizeRun(d);
     // Even when playing the pass, a nearby defender can tackle a runner he can see.
     if (
-      ballCarrier &&
-      (!RUNS.has(selectedPlay) || read || dist(d, ballCarrier) < 3.4)
+      matchState.ballCarrier &&
+      (!RUNS.has(matchState.selectedPlay) ||
+        read ||
+        dist(d, matchState.ballCarrier) < 3.4)
     ) {
-      const seen = InsideZoneIQ.visible(d, ballCarrier);
-      if (seen || dist(d, ballCarrier) < 1.65 || selectedPlay !== "inside") {
+      const seen = InsideZoneIQ.visible(d, matchState.ballCarrier);
+      if (
+        seen ||
+        dist(d, matchState.ballCarrier) < 1.65 ||
+        matchState.selectedPlay !== "inside"
+      ) {
         if (seen)
           d.lastVisibleRunner = {
-            x: ballCarrier.x,
-            y: ballCarrier.y,
-            at: playClock,
+            x: matchState.ballCarrier.x,
+            y: matchState.ballCarrier.y,
+            at: matchState.playClock,
           };
-        chooseDefenderCommitment(d, ballCarrier);
-        pursuitAI(d, ballCarrier, dt);
+        chooseDefenderCommitment(d, matchState.ballCarrier);
+        pursuitAI(d, matchState.ballCarrier, dt);
         return;
       }
       // No instant behind-the-head recognition. Reorient toward the player's
@@ -5153,21 +5411,21 @@ export function createGame({ attach, onEvent } = {}) {
       d.intent = "locate-runner";
       d.intentTarget = "last-seen";
       const target =
-        last && playClock - last.at < 0.7
+        last && matchState.playClock - last.at < 0.7
           ? last
           : {
-              x: d.fit?.gapSpot?.x || playStart + 2,
+              x: d.fit?.gapSpot?.x || matchState.playStart + 2,
               y: d.fit?.lane || d.spawnY,
             };
       steer(d, target.x - d.x, target.y - d.y, dt, 0.86);
       return;
     }
     // Line defenders shoot gaps; linebackers fill; secondary maintains leverage.
-    if (RUNS.has(selectedPlay) && read) {
+    if (RUNS.has(matchState.selectedPlay) && read) {
       runFitAI(d, dt);
       return;
     }
-    if (d.spy && !passThrown && !ballCarrier) {
+    if (d.spy && !matchState.passThrown && !matchState.ballCarrier) {
       quarterbackSpyAI(d, P("QB"), dt);
       return;
     }
@@ -5179,12 +5437,13 @@ export function createGame({ attach, onEvent } = {}) {
     // passer crosses the line: coverage players don't all abandon deep routes.
     const qb = P("QB");
     if (
-      !RUNS.has(selectedPlay) &&
-      !passThrown &&
-      !ballCarrier &&
+      !RUNS.has(matchState.selectedPlay) &&
+      !matchState.passThrown &&
+      !matchState.ballCarrier &&
       qb &&
-      (qb.x >= playStart - 1.9 ||
-        RushAwareness.assess(qb, playStart, playClock).escape) &&
+      (qb.x >= matchState.playStart - 1.9 ||
+        RushAwareness.assess(qb, matchState.playStart, matchState.playClock)
+          .escape) &&
       d.assignment?.kind === "zone" &&
       d.assignment.depth < 12 &&
       dist(d, qb) < 12
@@ -5197,13 +5456,13 @@ export function createGame({ attach, onEvent } = {}) {
     // Coverage stays intact until the player sees the run cues; pass is not
     // broken merely because the offensive playbook chose a running play.
     const as = d.assignment;
-    if (ball?.flying && defenderFlightAI(d, dt)) return;
+    if (matchState.ball?.flying && defenderFlightAI(d, dt)) return;
     if (!as) {
       d.intent = "hold";
       arrive(d, d.spawnX, d.spawnY, dt);
       return;
     }
-    if (playClock < d.recognition) {
+    if (matchState.playClock < d.recognition) {
       d.intent = "read";
       steer(d, 0, 0, dt);
       return;
@@ -5226,7 +5485,10 @@ export function createGame({ attach, onEvent } = {}) {
       const lead = 0.14 + (d.AWR - 70) * 0.005;
       // Preserve a deeper shoulder when the receiver stays on a vertical stem.
       // Do not instantly mirror every fake; existing mirrorDelay still governs cuts.
-      const deepThreat = CoverageRoutePolicy.isVerticalThreat(t, playStart);
+      const deepThreat = CoverageRoutePolicy.isVerticalThreat(
+        t,
+        matchState.playStart,
+      );
       const tx =
           t.x +
           clamp(t.vx * lead, -1, 2) +
@@ -5239,7 +5501,7 @@ export function createGame({ attach, onEvent } = {}) {
         1.09,
       );
       const effort = clamp(0.92 + (d.COV - 75) * 0.003, 0.86, 1.06) * mirror;
-      if (d.falseStep && d.falseStep.until > playClock) {
+      if (d.falseStep && d.falseStep.until > matchState.playClock) {
         d.intent = "cover-fake";
         steer(d, d.falseStep.x - d.x, d.falseStep.y - d.y, dt, effort);
         return;
@@ -5255,28 +5517,37 @@ export function createGame({ attach, onEvent } = {}) {
       ty = as.baseY;
     const candidates = skillOffense().filter(
       (o) =>
-        o.x > playStart - 0.5 &&
+        o.x > matchState.playStart - 0.5 &&
         Math.abs(o.y - as.baseY) < as.width &&
-        (as.depth < 12 ? o.x < playStart + 18 : o.x >= playStart + 7),
+        (as.depth < 12
+          ? o.x < matchState.playStart + 18
+          : o.x >= matchState.playStart + 7),
     );
     if (candidates.length) {
       const deep = as.depth >= 12;
       // Deep defenders prioritize deep threats instead of abandoning a streak
       // for the nearest short receiver. They can carry routes beyond 40 yards.
-      const t = CoverageRoutePolicy.zoneThreat(candidates, as, playStart);
+      const t = CoverageRoutePolicy.zoneThreat(
+        candidates,
+        as,
+        matchState.playStart,
+      );
       const predicted = deep
-        ? CoverageRoutePolicy.deepIntercept(d, t, as, playStart)
+        ? CoverageRoutePolicy.deepIntercept(d, t, as, matchState.playStart)
         : null;
       tx = clamp(
         predicted ? predicted.x : t.x + (deep ? 2.2 : 0.6),
         deep
           ? Math.min(
-              playStart +
-                Math.max(1.5, Math.min(8, (110 - playStart) * 0.6 + 1)),
+              matchState.playStart +
+                Math.max(
+                  1.5,
+                  Math.min(8, (110 - matchState.playStart) * 0.6 + 1),
+                ),
               114.65,
             )
-          : playStart + 2,
-        deep ? 114.65 : Math.min(114.65, playStart + 16),
+          : matchState.playStart + 2,
+        deep ? 114.65 : Math.min(114.65, matchState.playStart + 16),
       );
       ty = clamp(
         predicted ? predicted.y : t.y,
@@ -5314,11 +5585,11 @@ export function createGame({ attach, onEvent } = {}) {
     kind = "body",
   ) {
     if (
-      phase !== "live" ||
+      matchState.phase !== "live" ||
       victim.ground ||
       victim.groundLock > 0 ||
-      victim === ballCarrier ||
-      (victim === active && !passThrown) ||
+      victim === matchState.ballCarrier ||
+      (victim === matchState.active && !matchState.passThrown) ||
       !Number.isFinite(impulse)
     )
       return false;
@@ -5380,12 +5651,16 @@ export function createGame({ attach, onEvent } = {}) {
     victim.vy *= 0.32;
     victim.sprinting = false;
     // Drop existing blocks. Defensive pursuit resumes after recovery.
-    for (const [k, b] of [...blockLinks])
-      if (k === victim.key || b.defender === victim.key) blockLinks.delete(k);
-    if (tackleLinks.has(victim.key)) tackleLinks.delete(victim.key);
-    if (pileState?.active && pileState.pushers)
-      pileState.pushers = pileState.pushers.filter((p) => p.key !== victim.key);
-    windedHits++;
+    for (const [k, b] of [...matchState.blockLinks])
+      if (k === victim.key || b.defender === victim.key)
+        matchState.blockLinks.delete(k);
+    if (matchState.tackleLinks.has(victim.key))
+      matchState.tackleLinks.delete(victim.key);
+    if (matchState.pileState?.active && matchState.pileState.pushers)
+      matchState.pileState.pushers = matchState.pileState.pushers.filter(
+        (p) => p.key !== victim.key,
+      );
+    matchState.windedHits++;
     victim.pulse = 0.35;
     log(
       victim.pos +
@@ -5414,9 +5689,9 @@ export function createGame({ attach, onEvent } = {}) {
         p.ground = null;
         p.groundLock = 0.65;
         p.balance = clamp(p.balance + 0.2, 0.5, 1);
-        standUps++;
+        matchState.standUps++;
         p.intent = "rejoin";
-        p.intentTarget = ballCarrier?.key || "assignment";
+        p.intentTarget = matchState.ballCarrier?.key || "assignment";
         p.diveRecovery = Math.max(p.diveRecovery || 0, 0.23);
         return false;
       }
@@ -5443,19 +5718,19 @@ export function createGame({ attach, onEvent } = {}) {
       o.ground ||
       d.ground ||
       o.team === d.team ||
-      dist(o, d) > (specialState?.returning ? 2.15 : 1.95) ||
+      dist(o, d) > (matchState.specialState?.returning ? 2.15 : 1.95) ||
       d.shedCooldown > 0 ||
-      tackleLinks.has(d.key) ||
-      (specialState?.returning &&
+      matchState.tackleLinks.has(d.key) ||
+      (matchState.specialState?.returning &&
         d.returnBypassBlocker === o.key &&
-        d.returnBypassUntil > playClock)
+        d.returnBypassUntil > matchState.playClock)
     )
       return;
-    let link = blockLinks.get(o.key);
+    let link = matchState.blockLinks.get(o.key);
     if (link && link.defender !== d.key) {
       // Do not teleport a block to a different opponent while still engaged.
       if (link.age < 0.52 && dist(o, P(link.defender)) < 2.25) return;
-      blockLinks.delete(o.key);
+      matchState.blockLinks.delete(o.key);
       link = null;
     }
     if (!link) {
@@ -5469,14 +5744,14 @@ export function createGame({ attach, onEvent } = {}) {
         powerUsed: false,
         mode: "approach",
       };
-      blockLinks.set(o.key, link);
+      matchState.blockLinks.set(o.key, link);
     }
     link.touched = true;
     o.pulse = Math.max(o.pulse, 0.12);
     d.pulse = Math.max(d.pulse, 0.12);
   }
   function resolveBlocks(dt) {
-    for (const [key, e] of blockLinks) {
+    for (const [key, e] of matchState.blockLinks) {
       const o = P(e.blocker),
         d = P(e.defender);
       if (
@@ -5490,25 +5765,25 @@ export function createGame({ attach, onEvent } = {}) {
         if (
           o &&
           d &&
-          selectedPlay === "inside" &&
+          matchState.selectedPlay === "inside" &&
           o.insideZonePlan &&
           d.ground
         ) {
           // A pancake makes a teammate available, but finding his next target is
           // a visible read, not a remote animation snap or an instant 180-degree turn.
           o.beatenTarget = d.key;
-          o.beatenUntil = playClock + 0.7;
+          o.beatenUntil = matchState.playClock + 0.7;
           o.insideZoneReadAfter = Math.max(
             o.insideZoneReadAfter || 0,
-            playClock + InsideZoneIQ.readDelay(o, rand()),
+            matchState.playClock + InsideZoneIQ.readDelay(o, rand()),
           );
         }
-        if (specialState?.returning && d && o) {
+        if (matchState.specialState?.returning && d && o) {
           d.returnBypassBlocker = o.key;
-          d.returnBypassUntil = playClock + 0.65;
+          d.returnBypassUntil = matchState.playClock + 0.65;
           d.returnBypassSide = returnEscapeSide(d, o);
         }
-        blockLinks.delete(key);
+        matchState.blockLinks.delete(key);
         continue;
       }
       // A clean technique block on an anchored 320lb lineman is different from
@@ -5525,7 +5800,7 @@ export function createGame({ attach, onEvent } = {}) {
         d.AGI * 0.17 +
         d.AWR * 0.15 +
         (mass(d) - 105) * 0.05;
-      const helpers = [...blockLinks.values()].filter(
+      const helpers = [...matchState.blockLinks.values()].filter(
         (other) => other !== e && other.defender === d.key,
       ).length;
       const matchup = BlockingPolicy.match(o, d, helpers);
@@ -5536,24 +5811,24 @@ export function createGame({ attach, onEvent } = {}) {
         d.AWR * 0.19 -
         (o.IBL * 0.31 + o.BLO * 0.4 + o.STR * 0.29);
       e.age += dt;
-      if (specialState?.returning) {
+      if (matchState.specialState?.returning) {
         const choice = BlockingPolicy.decideDefender(
           d,
           o,
-          ballCarrier ? dist(d, ballCarrier) : 12,
+          matchState.ballCarrier ? dist(d, matchState.ballCarrier) : 12,
         );
         e.decision = choice;
         // Agile undersized gunners may work around a much larger blocker
         // rather than continue a losing head-on fight indefinitely.
         if (choice === "maneuver" && e.age > 0.24 && e.secured < 0.74) {
-          blockLinks.delete(key);
+          matchState.blockLinks.delete(key);
           d.shedCooldown = 0.28;
           d.blocked = 0;
           d.returnBypassBlocker = o.key;
-          d.returnBypassUntil = playClock + 0.82;
+          d.returnBypassUntil = matchState.playClock + 0.82;
           d.returnBypassSide = returnEscapeSide(d, o);
           d.intent = "return-bypass";
-          d.intentTarget = ballCarrier?.key || "RB";
+          d.intentTarget = matchState.ballCarrier?.key || "RB";
           continue;
         }
         // On returns the coverage player actively disengages, then goes *around*
@@ -5568,18 +5843,18 @@ export function createGame({ attach, onEvent } = {}) {
           1.48,
         );
         if (e.age >= shedAt) {
-          blockLinks.delete(key);
+          matchState.blockLinks.delete(key);
           d.shedCooldown = 0.45;
           d.blocked = 0;
           d.returnBypassBlocker = o.key;
           d.returnBypassUntil =
-            playClock + clamp(0.68 + d.AGI / 400, 0.72, 1.0);
+            matchState.playClock + clamp(0.68 + d.AGI / 400, 0.72, 1.0);
           d.returnBypassSide = returnEscapeSide(d, o);
           o.beatenTarget = d.key;
-          o.beatenUntil = playClock + 0.6;
-          blockShedCount++;
+          o.beatenUntil = matchState.playClock + 0.6;
+          matchState.blockShedCount++;
           d.intent = "return-shed";
-          d.intentTarget = ballCarrier?.key || "RB";
+          d.intentTarget = matchState.ballCarrier?.key || "RB";
           continue;
         }
       }
@@ -5612,7 +5887,7 @@ export function createGame({ attach, onEvent } = {}) {
         e.secured = clamp(e.secured + strike * 0.24, 0, 1);
         o.technique = "impact-block";
         o.pulse = 0.25;
-        impactBlockCount++;
+        matchState.impactBlockCount++;
         groundContact(
           d,
           o,
@@ -5642,23 +5917,23 @@ export function createGame({ attach, onEvent } = {}) {
         d.lean = clamp(d.lean + 0.05 * dt, -0.5, 0.5);
         if (!e.powerUsed) {
           e.powerUsed = true;
-          powerMoveCount++;
+          matchState.powerMoveCount++;
         }
       }
       // A defender can shed once hand-fighting has lasted long enough. High
       // blocker skill increases the hold, high rusher skill shortens it.
       const nearRunLane =
-        selectedPlay === "inside" &&
-        ballCarrier &&
+        matchState.selectedPlay === "inside" &&
+        matchState.ballCarrier &&
         o.insideZonePlan &&
-        dist(d, ballCarrier) < 5.2;
+        dist(d, matchState.ballCarrier) < 5.2;
       const earnedHold =
         nearRunLane && e.secured > 0.35
           ? clamp((e.secured - 0.35) * 0.72, 0, 0.36) *
             clamp((30 - powerEdge) / 28, 0.25, 1)
           : 0;
       if (e.age > e.breakAt + earnedHold && (mismatch < 25 || powerEdge > 16)) {
-        blockLinks.delete(key);
+        matchState.blockLinks.delete(key);
         d.shedCooldown = clamp(0.35 + (d.AGI - 65) * 0.003, 0.3, 0.5);
         // Breaking hand contact takes a fraction of a second of balance recovery.
         // This is not a canned animation lock or an automatic missed tackle.
@@ -5668,15 +5943,16 @@ export function createGame({ attach, onEvent } = {}) {
           nearRunLane ? 0.12 : 0.06,
         );
         o.blockTarget = null;
-        blockShedCount++;
+        matchState.blockShedCount++;
         continue;
       }
       // Finish a clean win: the defender is controlled and moved outside his
       // pursuit lane. The lineman climbs to a linebacker/safety rather than idle.
-      const a = ballCarrier || P("RB");
+      const a = matchState.ballCarrier || P("RB");
       const cleanWin =
-        (RUNS.has(selectedPlay) ||
-          (ballCarrier && ballCarrier.x >= playStart)) &&
+        (RUNS.has(matchState.selectedPlay) ||
+          (matchState.ballCarrier &&
+            matchState.ballCarrier.x >= matchState.playStart)) &&
         e.age > 0.47 &&
         e.secured > 0.74 &&
         mismatch > 9 &&
@@ -5688,14 +5964,15 @@ export function createGame({ attach, onEvent } = {}) {
       if (cleanWin) {
         o.blockWins++;
         o.beatenTarget = d.key;
-        o.beatenUntil = playClock + 1.25;
-        d.beatenUntil = playClock + 0.7;
+        o.beatenUntil = matchState.playClock + 1.25;
+        d.beatenUntil = matchState.playClock + 0.7;
         d.blocked = Math.max(d.blocked, 0.63);
         o.blockTarget = null;
         o.supportTarget = null;
-        blockLinks.delete(key);
-        if (selectedPlay === "inside" && o.insideZonePlan) {
-          o.insideZoneReadAfter = playClock + InsideZoneIQ.readDelay(o, rand());
+        matchState.blockLinks.delete(key);
+        if (matchState.selectedPlay === "inside" && o.insideZonePlan) {
+          o.insideZoneReadAfter =
+            matchState.playClock + InsideZoneIQ.readDelay(o, rand());
         }
         o.intent = "climb-second-level";
         o.intentTarget = "next-threat";
@@ -5712,7 +5989,7 @@ export function createGame({ attach, onEvent } = {}) {
         secured: e.secured,
         age: e.age,
         helpers,
-        runner: ballCarrier || P("RB"),
+        runner: matchState.ballCarrier || P("RB"),
       });
       e.mode = contact.state;
       const desired = clamp(radius(o) + radius(d) + 0.36, 1.28, 1.76);
@@ -5744,7 +6021,7 @@ export function createGame({ attach, onEvent } = {}) {
       o.vx += nx * connected * 0.35 + tangentX * slipBrake * 0.33;
       o.vy += ny * connected * 0.35 + tangentY * slipBrake * 0.33;
       if (
-        selectedPlay === "inside" &&
+        matchState.selectedPlay === "inside" &&
         o.insideZonePlan &&
         d.x >= o.x - 0.1 &&
         e.secured > 0.18
@@ -5796,10 +6073,10 @@ export function createGame({ attach, onEvent } = {}) {
       o.vx -= nx * impulse * 0.28;
       o.vy -= ny * impulse * 0.28;
       d.blocked = Math.max(d.blocked, 0.18 + e.secured * 0.2);
-      if (!tackleLinks.has(d.key)) {
+      if (!matchState.tackleLinks.has(d.key)) {
         // Preserve the rush-lane decision for diagnostics and animation. Block
         // resolution must not erase a live QB-rollout pursuit choice.
-        if (ballCarrier) d.intent = "pursue";
+        if (matchState.ballCarrier) d.intent = "pursue";
         else if (
           ![
             "edge-contain",
@@ -5811,7 +6088,7 @@ export function createGame({ attach, onEvent } = {}) {
           ].includes(d.intent)
         )
           d.intent = "rush";
-        d.intentTarget = ballCarrier?.key || "QB";
+        d.intentTarget = matchState.ballCarrier?.key || "QB";
       }
     }
   }
@@ -5825,7 +6102,7 @@ export function createGame({ attach, onEvent } = {}) {
       o.passAssignment = null;
       o.passHelp = null;
     }
-    const rushers = def
+    const rushers = matchState.def
       .filter((d) => d.rush && !d.ground)
       .sort((a, b) => a.spawnY - b.spawnY);
     for (const d of rushers) {
@@ -5878,20 +6155,21 @@ export function createGame({ attach, onEvent } = {}) {
       .filter((d) => d.shedCooldown <= 0 || d.key !== same)
       .sort((a, b) => {
         const rating = (d) => {
-          const assigned = blockLinks.get(o.key)?.defender === d.key ? -5 : 0;
+          const assigned =
+            matchState.blockLinks.get(o.key)?.defender === d.key ? -5 : 0;
           const home = Math.abs(d.y - lane),
             distance = dist(o, d);
-          const competing = [...blockLinks.values()].some(
+          const competing = [...matchState.blockLinks.values()].some(
             (link) => link.blocker !== o.key && link.defender === d.key,
           );
           const extra = competing ? 3.5 : 0;
           const overreach = home > 6.2 ? (home - 6.2) * 2 : 0;
           const runSide =
-            run && selectedPlay === "power" && o.key === "RG"
+            run && matchState.selectedPlay === "power" && o.key === "RG"
               ? d.y < 23
                 ? -2
                 : 3
-              : run && selectedPlay === "counter" && o.key === "LG"
+              : run && matchState.selectedPlay === "counter" && o.key === "LG"
                 ? d.y > 30
                   ? -2
                   : 3
@@ -5911,17 +6189,19 @@ export function createGame({ attach, onEvent } = {}) {
       (12 - gap) * 1.4 +
       Math.max(0, approach) * 0.8 +
       (d.blitz ? 2.2 : 0) +
-      (d.x < playStart ? 2 : 0) -
+      (d.x < matchState.playStart ? 2 : 0) -
       (d.blocked > 0.2 ? 3.0 : 0)
     );
   }
   function passProtectAI(o, dt) {
     const qb = P("QB"),
       lane = 26.65 + protectionLane(o),
-      own = def.find((d) => d.key === o.passAssignment && d.rush && !d.ground);
-    const locked = blockLinks.get(o.key);
+      own = matchState.def.find(
+        (d) => d.key === o.passAssignment && d.rush && !d.ground,
+      );
+    const locked = matchState.blockLinks.get(o.key);
     let t = locked
-      ? def.find((d) => d.key === locked.defender && !d.ground)
+      ? matchState.def.find((d) => d.key === locked.defender && !d.ground)
       : null;
     if (!t && own) {
       const outside = Math.abs(own.y - lane) > 6.7;
@@ -5930,27 +6210,34 @@ export function createGame({ attach, onEvent } = {}) {
     // A free lineman may pick up an alert only AFTER the defender visibly
     // charges the pocket. The primary blocker never abandons an engaged rusher.
     if (!t && o.protectionAlert) {
-      const alert = def.find((d) => d.key === o.protectionAlert && !d.ground);
+      const alert = matchState.def.find(
+        (d) => d.key === o.protectionAlert && !d.ground,
+      );
       if (
         alert &&
         Math.abs(alert.y - lane) < 7.0 &&
-        ProtectionRead.committing(alert, qb, playStart, playClock)
+        ProtectionRead.committing(
+          alert,
+          qb,
+          matchState.playStart,
+          matchState.playClock,
+        )
       )
         t = alert;
     }
     // Interior help only when the home rusher has left our lane or another
     // free defender would reach the QB sooner. No arbitrary across-line shifts.
     if (!t) {
-      const leaks = def.filter(
+      const leaks = matchState.def.filter(
         (d) =>
           d.rush &&
           !d.ground &&
           Math.abs(d.y - lane) < (o.key === "C" ? 5.2 : 4.3) &&
-          d.x < playStart + 2.4 &&
+          d.x < matchState.playStart + 2.4 &&
           dist(d, qb) < 7.3 &&
           (!d.passProtector ||
             d.passProtector === o.key ||
-            (!blockLinks.has(d.passProtector) &&
+            (!matchState.blockLinks.has(d.passProtector) &&
               dist(P(d.passProtector) || o, d) > 3.6)),
       );
       leaks.sort(
@@ -5965,7 +6252,11 @@ export function createGame({ attach, onEvent } = {}) {
       const depth = o.key === "LT" || o.key === "RT" ? 1.25 : 2.45;
       arrive(
         o,
-        clamp(qb.x + depth, playStart - 3.0, playStart - 0.1),
+        clamp(
+          qb.x + depth,
+          matchState.playStart - 3.0,
+          matchState.playStart - 0.1,
+        ),
         lane,
         dt,
         0.93,
@@ -5982,7 +6273,11 @@ export function createGame({ attach, onEvent } = {}) {
     );
     // Rushers who have penetrated MUST be followed into the pocket. Keeping
     // every OL permanently pinned to the line of scrimmage caused free sacks.
-    const tx = clamp(t.x + t.vx * predict - 0.68, qb.x + 0.55, playStart + 1.2);
+    const tx = clamp(
+      t.x + t.vx * predict - 0.68,
+      qb.x + 0.55,
+      matchState.playStart + 1.2,
+    );
     steer(o, tx - o.x, ty - o.y, dt, 1.04);
     if (dist(o, t) < 1.98) blockBattle(o, t, dt);
   }
@@ -5992,14 +6287,14 @@ export function createGame({ attach, onEvent } = {}) {
       homeY: o.spawnY,
       combo: false,
     };
-    const engaged = blockLinks.get(o.key);
+    const engaged = matchState.blockLinks.get(o.key);
     const contact = engaged ? P(engaged.defender) : null;
     const assigned = info.target ? P(info.target) : null;
     const liveRunner = runner || P("RB");
     const primaryAvailable =
       assigned &&
       !assigned.ground &&
-      assigned.beatenUntil < playClock &&
+      assigned.beatenUntil < matchState.playClock &&
       assigned.key !== o.beatenTarget &&
       dist(o, assigned) < 6.1;
     let target = contact && !contact.ground ? contact : null;
@@ -6008,19 +6303,23 @@ export function createGame({ attach, onEvent } = {}) {
     if (
       !target &&
       primaryAvailable &&
-      (playClock < 1.08 || !runner || dist(o, assigned) < 3.0)
+      (matchState.playClock < 1.08 || !runner || dist(o, assigned) < 3.0)
     )
       target = assigned;
     // Completed assignment: identify a *visible*, physically reachable tackler
     // in the developing RB lane. A blocker can't see someone 180° behind him.
-    if (!target && runner && playClock >= (o.insideZoneReadAfter || 0)) {
-      const nearby = def.filter(
+    if (
+      !target &&
+      runner &&
+      matchState.playClock >= (o.insideZoneReadAfter || 0)
+    ) {
+      const nearby = matchState.def.filter(
         (d) =>
           !d.ground &&
-          d.beatenUntil < playClock &&
+          d.beatenUntil < matchState.playClock &&
           d.key !== o.beatenTarget &&
           dist(o, d) < 11.5 &&
-          d.x > playStart - 0.8 &&
+          d.x > matchState.playStart - 0.8 &&
           d.x < runner.x + 15 &&
           (d.pos === "MLB" ||
             d.pos === "OLB" ||
@@ -6035,14 +6334,14 @@ export function createGame({ attach, onEvent } = {}) {
         .filter((d) => !claims.has(d.key) && InsideZoneIQ.visible(o, d))
         .map((d) => ({
           d,
-          value: InsideZoneIQ.threat(o, d, runner, playStart),
+          value: InsideZoneIQ.threat(o, d, runner, matchState.playStart),
         }))
         .sort((a, b) => b.value - a.value);
       const kept = options.find((q) => q.d.key === o.supportTarget);
       const top = options[0];
       if (
         kept &&
-        playClock < (o.supportUntil || 0) &&
+        matchState.playClock < (o.supportUntil || 0) &&
         (!top || kept.value >= top.value - 6)
       )
         target = kept.d;
@@ -6061,9 +6360,13 @@ export function createGame({ attach, onEvent } = {}) {
       if (!initial) {
         o.supportTarget = target.key;
         o.supportUntil =
-          playClock + clamp(0.35 + (100 - o.AWR) * 0.004, 0.35, 0.54);
+          matchState.playClock +
+          clamp(0.35 + (100 - o.AWR) * 0.004, 0.35, 0.54);
       }
-      const lane = InsideZoneIQ.runnerProjection(liveRunner, playStart);
+      const lane = InsideZoneIQ.runnerProjection(
+        liveRunner,
+        matchState.playStart,
+      );
       const targetX = target.x - 0.62;
       // Anchor first-level footwork to the original gap. On a climb, the blocker
       // may track the live lane, but only in short believable lateral steps.
@@ -6080,10 +6383,10 @@ export function createGame({ attach, onEvent } = {}) {
     }
     o.blockTarget = null;
     o.supportTarget = null;
-    const p = InsideZoneIQ.runnerProjection(liveRunner, playStart);
+    const p = InsideZoneIQ.runnerProjection(liveRunner, matchState.playStart);
     const forward = clamp(
-      playStart + Math.min(6, playClock * 2.2),
-      playStart + 1,
+      matchState.playStart + Math.min(6, matchState.playClock * 2.2),
+      matchState.playStart + 1,
       109,
     );
     const home = clamp(
@@ -6096,38 +6399,38 @@ export function createGame({ attach, onEvent } = {}) {
     arrive(o, forward, home, dt, 0.94);
   }
   function blockerAI(o, dt) {
-    if (selectedPlay === "inside") {
+    if (matchState.selectedPlay === "inside") {
       insideZoneBlockerAI(o, dt, new Set(), null);
       return;
     }
-    const run = RUNS.has(selectedPlay);
+    const run = RUNS.has(matchState.selectedPlay);
     if (!run) {
       passProtectAI(o, dt);
       return;
     }
     o.intent = "protect";
     o.intentTarget = "run-lane";
-    const rushing = def.filter(
+    const rushing = matchState.def.filter(
       (d) =>
         !d.ground &&
-        d.beatenUntil < playClock &&
-        d.x > playStart - 1 &&
-        d.x < playStart + 16 &&
+        d.beatenUntil < matchState.playClock &&
+        d.x > matchState.playStart - 1 &&
+        d.x < matchState.playStart + 16 &&
         Math.abs(d.y - (26.65 + protectionLane(o))) < 10,
     );
     if (!rushing.length) return;
     if (
-      ((selectedPlay === "power" && o.key === "RG") ||
-        (selectedPlay === "counter" && o.key === "LG")) &&
-      playClock < 0.92
+      ((matchState.selectedPlay === "power" && o.key === "RG") ||
+        (matchState.selectedPlay === "counter" && o.key === "LG")) &&
+      matchState.playClock < 0.92
     ) {
       o.intent = "pull";
       o.intentTarget =
-        selectedPlay === "counter" ? "right C-gap" : "left C-gap";
+        matchState.selectedPlay === "counter" ? "right C-gap" : "left C-gap";
       steer(
         o,
-        playStart - 1.0 - o.x,
-        (selectedPlay === "counter" ? 32.0 : 21.8) - o.y,
+        matchState.playStart - 1.0 - o.x,
+        (matchState.selectedPlay === "counter" ? 32.0 : 21.8) - o.y,
         dt,
         0.96,
       );
@@ -6136,9 +6439,9 @@ export function createGame({ attach, onEvent } = {}) {
     const candidates = runningBlockThreats(o, rushing, run).filter(
       (d) => d.key !== o.beatenTarget,
     );
-    const locked = blockLinks.get(o.key),
+    const locked = matchState.blockLinks.get(o.key),
       preferred = locked && rushing.find((d) => d.key === locked.defender);
-    if (!locked && o.beatenTarget && playClock >= o.beatenUntil) {
+    if (!locked && o.beatenTarget && matchState.playClock >= o.beatenUntil) {
       o.beatenTarget = null;
     }
     let t =
@@ -6154,7 +6457,7 @@ export function createGame({ attach, onEvent } = {}) {
       o.intentTarget = "find-linebacker";
       arrive(
         o,
-        playStart + clamp(playClock * 2.0, 2, 9),
+        matchState.playStart + clamp(matchState.playClock * 2.0, 2, 9),
         26.65 + protectionLane(o),
         dt,
         0.92,
@@ -6165,23 +6468,31 @@ export function createGame({ attach, onEvent } = {}) {
     o.intentTarget = t.key;
     const lane = 26.65 + protectionLane(o),
       tY = clamp(t.y, lane - 3.4, lane + 3.4);
-    const tx = Math.max(playStart + 0.15, t.x - 0.6);
-    const ty = tY + (selectedPlay === "stretch" ? -0.35 : 0);
+    const tx = Math.max(matchState.playStart + 0.15, t.x - 0.6);
+    const ty = tY + (matchState.selectedPlay === "stretch" ? -0.35 : 0);
     steer(o, tx - o.x, ty - o.y, dt, 0.96);
     if (dist(o, t) < 1.9) blockBattle(o, t, dt);
   }
   function rbPassProtection(p, dt) {
     const qb = P("QB"),
-      rushers = def.filter((d) => d.rush && !d.ground);
+      rushers = matchState.def.filter((d) => d.rush && !d.ground);
     // A suspicious DB/LB remains only a *candidate*: the RB commits if he
     // actually closes toward the pocket. Covering defenders are never chased.
-    const alert = def.find((d) => d.key === p.protectionAlert && !d.ground);
+    const alert = matchState.def.find(
+      (d) => d.key === p.protectionAlert && !d.ground,
+    );
     const extra =
-      alert && ProtectionRead.committing(alert, qb, playStart, playClock)
+      alert &&
+      ProtectionRead.committing(
+        alert,
+        qb,
+        matchState.playStart,
+        matchState.playClock,
+      )
         ? alert
         : null;
     if (extra && !rushers.includes(extra)) rushers.push(extra);
-    const locked = blockLinks.get(p.key);
+    const locked = matchState.blockLinks.get(p.key);
     let target = locked ? rushers.find((d) => d.key === locked.defender) : null;
     if (!target && p.passAssignment)
       target = rushers.find((d) => d.key === p.passAssignment);
@@ -6191,7 +6502,7 @@ export function createGame({ attach, onEvent } = {}) {
         (d) =>
           !d.passProtector ||
           d.passProtector === "RB" ||
-          (!blockLinks.has(d.passProtector) &&
+          (!matchState.blockLinks.has(d.passProtector) &&
             dist(P(d.passProtector) || p, d) > 3.6),
       );
       unblocked.sort(
@@ -6209,7 +6520,7 @@ export function createGame({ attach, onEvent } = {}) {
     const tx = clamp(
       target.x + target.vx * future - 0.68,
       qb.x + 0.6,
-      playStart + 1.0,
+      matchState.playStart + 1.0,
     );
     const ty = clamp(target.y + target.vy * future, 2, H - 2);
     steer(p, tx - p.x, ty - p.y, dt, 1.09);
@@ -6218,13 +6529,13 @@ export function createGame({ attach, onEvent } = {}) {
   function rbLeadBlock(p, dt) {
     p.intent = "lead-block";
     p.intentTarget = "front";
-    if (p.key === "FB" && selectedPlay === "power") {
+    if (p.key === "FB" && matchState.selectedPlay === "power") {
       let target = closestThreat(
         p,
-        def.filter((d) => !d.rush && d.x > playStart),
+        matchState.def.filter((d) => !d.rush && d.x > matchState.playStart),
       ).p;
       let ty = 22.3,
-        tx = playStart + Math.min(8, playClock * 3);
+        tx = matchState.playStart + Math.min(8, matchState.playClock * 3);
       if (target && dist(p, target) < 3) {
         tx = target.x - 0.65;
         ty = target.y;
@@ -6233,13 +6544,13 @@ export function createGame({ attach, onEvent } = {}) {
       steer(p, tx - p.x, ty - p.y, dt, 0.96);
       return;
     }
-    const rushers = def.filter((d) => d.rush);
+    const rushers = matchState.def.filter((d) => d.rush);
     const t = closestThreat(p, rushers).p;
     if (t && dist(p, t) < 2.3) {
       steer(p, t.x - 0.45 - p.x, t.y - p.y, dt, 0.94);
       blockBattle(p, t, dt);
     } else {
-      steer(p, playStart + 1 - p.x, p.spawnY - p.y, dt, 0.75);
+      steer(p, matchState.playStart + 1 - p.x, p.spawnY - p.y, dt, 0.75);
     }
   }
   // A ball carrier's objective is the opposing end zone. Prior versions used a
@@ -6248,15 +6559,16 @@ export function createGame({ attach, onEvent } = {}) {
   function autoCarry(p, dt) {
     p.intent = "carry-auto";
     p.intentTarget = "endzone";
-    const inBackfield = p.x < playStart + 5.5 && playClock < 2.5;
+    const inBackfield =
+      p.x < matchState.playStart + 5.5 && matchState.playClock < 2.5;
     const lane =
-      selectedPlay === "stretch"
+      matchState.selectedPlay === "stretch"
         ? 16
-        : selectedPlay === "sweep"
+        : matchState.selectedPlay === "sweep"
           ? 39
-          : selectedPlay === "counter"
+          : matchState.selectedPlay === "counter"
             ? 35
-            : selectedPlay === "power"
+            : matchState.selectedPlay === "power"
               ? 22.5
               : 24.2;
     // A run gap influences the FIRST few steps only. After breaking contain, keep
@@ -6267,12 +6579,17 @@ export function createGame({ attach, onEvent } = {}) {
         : p.y;
     // Special teams: the called return lane guides early auto-return decisions;
     // the actual kick side is independent and the user may steer elsewhere.
-    if (specialState?.returning && p === P("RB") && specialState.elapsed < 8)
-      targetY = p.y + clamp(specialState.returnLaneY - p.y, -6, 6) * 0.65;
+    if (
+      matchState.specialState?.returning &&
+      p === P("RB") &&
+      matchState.specialState.elapsed < 8
+    )
+      targetY =
+        p.y + clamp(matchState.specialState.returnLaneY - p.y, -6, 6) * 0.65;
     targetY = clamp(targetY, 1.35, H - 1.35);
     // Only consider defenders AHEAD of the runner. A pursuer behind must never
     // convince an open-field carrier to turn around or cut into the boundary.
-    const inFront = def
+    const inFront = matchState.def
       .filter(
         (d) =>
           d.stun <= 0 &&
@@ -6290,8 +6607,12 @@ export function createGame({ attach, onEvent } = {}) {
     }
     // If the runner is stuck behind a crowded line, look for the less congested
     // side instead of repeatedly steering straight into the same blocking wall.
-    if (!specialState && p === P("RB") && p.x < playStart + 12) {
-      const crowded = def.filter(
+    if (
+      !matchState.specialState &&
+      p === P("RB") &&
+      p.x < matchState.playStart + 12
+    ) {
+      const crowded = matchState.def.filter(
         (d) => !d.ground && Math.abs(d.x - p.x) < 4 && Math.abs(d.y - p.y) < 4,
       );
       const movingForward = p.vx > 0.8;
@@ -6299,7 +6620,7 @@ export function createGame({ attach, onEvent } = {}) {
         ? Math.max(0, (p.runStall || 0) - dt * 2)
         : (p.runStall || 0) + dt;
       if (crowded.length >= 2 && p.runStall > 0.65) {
-        const left = def.filter(
+        const left = matchState.def.filter(
           (d) =>
             !d.ground &&
             d.x > p.x - 1 &&
@@ -6307,7 +6628,7 @@ export function createGame({ attach, onEvent } = {}) {
             d.y < p.y &&
             d.y > p.y - 7,
         ).length;
-        const right = def.filter(
+        const right = matchState.def.filter(
           (d) =>
             !d.ground &&
             d.x > p.x - 1 &&
@@ -6322,7 +6643,7 @@ export function createGame({ attach, onEvent } = {}) {
         p.intentTarget = "escape-congestion";
       }
     }
-    const aheadX = Math.max(p.x + 9, playStart + 10);
+    const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
     const dx = Math.max(2, aheadX - p.x);
     const dy = (targetY - p.y) * 2.0;
     steer(p, dx, dy, dt, 1.02);
@@ -6330,54 +6651,56 @@ export function createGame({ attach, onEvent } = {}) {
   function selectControlMode(mode) {
     if (!["offense", "defense", "line"].includes(mode)) return false;
     protectBall(false);
-    controlMode = mode;
-    manualDrive = false;
-    rightStickLatched = false;
-    rightStickDirection = "";
-    queuedCarrierMove = null;
-    active =
-      phase === "live"
+    matchState.controlMode = mode;
+    matchState.manualDrive = false;
+    matchState.rightStickLatched = false;
+    matchState.rightStickDirection = "";
+    matchState.queuedCarrierMove = null;
+    matchState.active =
+      matchState.phase === "live"
         ? mode === "defense"
-          ? P(selectedDefenderKey)
+          ? P(matchState.selectedDefenderKey)
           : mode === "line"
-            ? P(selectedLinemanKey)
-            : ballCarrier || P("QB")
+            ? P(matchState.selectedLinemanKey)
+            : matchState.ballCarrier || P("QB")
         : null;
     emitPresentation({ type: "controlModeChanged", mode });
     hud();
     return true;
   }
   function cycleControlMode() {
-    if (gameStarted) {
+    if (matchState.gameStarted) {
       message(
         "<strong>GAME DAY.</strong> HOME controls offense when receiving and defense when AWAY has the football. Use practice reset for manual role testing.",
       );
-      return controlMode;
+      return matchState.controlMode;
     }
     const all = ["offense", "defense", "line"];
-    return selectControlMode(all[(all.indexOf(controlMode) + 1) % all.length]);
+    return selectControlMode(
+      all[(all.indexOf(matchState.controlMode) + 1) % all.length],
+    );
   }
   // Movement updates only the selected player's actual location and the
   // matching zone shade / run-fit lane. Man targets and rush/spy roles persist.
   function positionSelectedDefender(dt) {
     if (
-      paused ||
-      phase !== "presnap" ||
-      controlMode !== "defense" ||
-      specialState ||
-      playbookOpen ||
-      audibleOpen ||
-      !scrimmagePlayCalled
+      matchState.paused ||
+      matchState.phase !== "presnap" ||
+      matchState.controlMode !== "defense" ||
+      matchState.specialState ||
+      matchState.playbookOpen ||
+      matchState.audibleOpen ||
+      !matchState.scrimmagePlayCalled
     )
       return false;
-    const d = P(selectedDefenderKey),
+    const d = P(matchState.selectedDefenderKey),
       axes = stickInput();
     const next = DefensivePresnap.move(
       d,
       axes,
       dt,
-      playStart,
-      def,
+      matchState.playStart,
+      matchState.def,
       sprintHeld(),
     );
     if (!next) return false;
@@ -6404,10 +6727,13 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function switchDefender() {
-    if (controlMode !== "defense" || (phase !== "live" && phase !== "presnap"))
+    if (
+      matchState.controlMode !== "defense" ||
+      (matchState.phase !== "live" && matchState.phase !== "presnap")
+    )
       return false;
     let next;
-    if (phase === "presnap") {
+    if (matchState.phase === "presnap") {
       // Predictable left-to-right sequence: defensive front, linebackers, corners, safeties.
       const category = (d) =>
         ["EDGE", "DE", "DT", "NT"].includes(d.pos)
@@ -6417,19 +6743,23 @@ export function createGame({ attach, onEvent } = {}) {
             : d.pos === "CB"
               ? 2
               : 3;
-      const order = [...def].sort(
+      const order = [...matchState.def].sort(
         (a, b) => category(a) - category(b) || a.y - b.y,
       );
-      const i = order.findIndex((d) => d.key === selectedDefenderKey);
+      const i = order.findIndex(
+        (d) => d.key === matchState.selectedDefenderKey,
+      );
       next = order[(i + 1) % order.length];
     } else {
-      const carrier = ballCarrier || P("QB");
+      const carrier = matchState.ballCarrier || P("QB");
       if (!carrier) return false;
-      const airborne = !!ball?.flying;
-      const spot = airborne ? intended || flightMarkers() : carrier;
+      const airborne = !!matchState.ball?.flying;
+      const spot = airborne ? matchState.intended || flightMarkers() : carrier;
       const point =
-        airborne && !intended ? { x: spot.catchX, y: spot.catchY } : spot;
-      const order = [...def]
+        airborne && !matchState.intended
+          ? { x: spot.catchX, y: spot.catchY }
+          : spot;
+      const order = [...matchState.def]
         .filter((d) => !d.ground)
         .sort((a, b) => {
           const distance = dist(a, point) - dist(b, point);
@@ -6437,11 +6767,11 @@ export function createGame({ attach, onEvent } = {}) {
             ? distance
             : a.key.localeCompare(b.key);
         });
-      next = order.find((d) => d.key !== selectedDefenderKey);
+      next = order.find((d) => d.key !== matchState.selectedDefenderKey);
     }
     if (!next) return false;
-    selectedDefenderKey = next.key;
-    active = next;
+    matchState.selectedDefenderKey = next.key;
+    matchState.active = next;
     hud();
     log("USER DEFENDER → " + next.pos);
     return true;
@@ -6469,9 +6799,9 @@ export function createGame({ attach, onEvent } = {}) {
   function defenderAirEligibility(d) {
     return AirContestPolicy.evaluate(
       d,
-      intended,
+      matchState.intended,
       flightMarkers(),
-      ball,
+      matchState.ball,
       d ? maxSpeed(d) : 0,
       d ? catchReach(d) : 0,
     );
@@ -6480,13 +6810,13 @@ export function createGame({ attach, onEvent } = {}) {
     return defenderAirEligibility(d).eligible;
   }
   function defensiveOpenFieldDive() {
-    const d = P(selectedDefenderKey);
+    const d = P(matchState.selectedDefenderKey);
     if (
-      controlMode !== "defense" ||
-      phase !== "live" ||
+      matchState.controlMode !== "defense" ||
+      matchState.phase !== "live" ||
       !d ||
-      paused ||
-      !ball?.flying ||
+      matchState.paused ||
+      !matchState.ball?.flying ||
       d.stun > 0 ||
       d.ground ||
       d.tackleCooldown > 0 ||
@@ -6514,20 +6844,20 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function defensiveFaceButton(button) {
-    const d = P(selectedDefenderKey);
+    const d = P(matchState.selectedDefenderKey);
     if (
-      controlMode !== "defense" ||
-      phase !== "live" ||
+      matchState.controlMode !== "defense" ||
+      matchState.phase !== "live" ||
       !d ||
-      paused ||
-      ball?.flying
+      matchState.paused ||
+      matchState.ball?.flying
     )
       return false;
     if (button === "A") {
       // Only indicate intent; no phantom animation, grip, or tackle. A may be
       // held for many frames without any opponent in reach.
       d.conservativeHeld = true;
-      d.conservativeUntil = playClock + 0.23;
+      d.conservativeUntil = matchState.playClock + 0.23;
       return true;
     }
     if (button !== "X") return false;
@@ -6546,7 +6876,7 @@ export function createGame({ attach, onEvent } = {}) {
       return false;
     // No target selection: launch along player motion or left-stick direction.
     const dir = ChaosTackleIntelligence.direction(d, stickInput());
-    const nearest = off
+    const nearest = matchState.off
       .filter((o) => !o.ground)
       .map((o) => ({ o, gap: dist(d, o) }))
       .sort((a, b) => a.gap - b.gap)[0];
@@ -6585,43 +6915,51 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function defensiveStick(kind) {
-    const d = P(selectedDefenderKey);
+    const d = P(matchState.selectedDefenderKey);
     if (
-      controlMode !== "defense" ||
-      phase !== "live" ||
+      matchState.controlMode !== "defense" ||
+      matchState.phase !== "live" ||
       !d ||
-      paused ||
-      ball?.flying
+      matchState.paused ||
+      matchState.ball?.flying
     )
       return false;
     if (kind !== "hit-stick" && kind !== "cut-stick") return false;
     return commitDefenderImpact(d, kind);
   }
   function lineImpact() {
-    const o = P(selectedLinemanKey);
-    if (controlMode !== "line" || phase !== "live" || !o || paused)
+    const o = P(matchState.selectedLinemanKey);
+    if (
+      matchState.controlMode !== "line" ||
+      matchState.phase !== "live" ||
+      !o ||
+      matchState.paused
+    )
       return false;
     o.action = { kind: "impact-block", time: 0.53, age: 0, used: false };
     o.technique = "impact-block";
     o.pulse = 0.33;
     o.stam = Math.max(0, o.stam - 0.021);
-    const threat = closestThreat(o, def);
+    const threat = closestThreat(o, matchState.def);
     if (threat.p && threat.d < 2.5) blockBattle(o, threat.p, 1 / 60);
     log(o.pos + " drives impact block");
     return true;
   }
   function sprintHeld() {
-    return !!keys.shift || (padState.connected && padState.rt > 0.24);
+    return (
+      !!matchState.keys.shift ||
+      (matchState.padState.connected && matchState.padState.rt > 0.24)
+    );
   }
   function userCarry(p, dt) {
     const input = stickInput();
-    if (suppressManualUntilNeutral) {
-      if (input.mag <= 0.12) suppressManualUntilNeutral = false;
+    if (matchState.suppressManualUntilNeutral) {
+      if (input.mag <= 0.12) matchState.suppressManualUntilNeutral = false;
       autoCarry(p, dt);
       return;
     }
-    if (input.mag > 0.12) manualDrive = true;
-    if (manualDrive) {
+    if (input.mag > 0.12) matchState.manualDrive = true;
+    if (matchState.manualDrive) {
       p.intent = input.mag > 0.12 ? "carry-manual" : "carry-coast";
       p.intentTarget = "user";
       if (input.mag > 0.12)
@@ -6649,7 +6987,7 @@ export function createGame({ attach, onEvent } = {}) {
     let danger = 0,
       nearest = 100,
       inside = 0;
-    for (const d of def) {
+    for (const d of matchState.def) {
       if (d.ground) continue;
       // Defensive coverage can reach the catch point after reacting, not teleport.
       const distNow = Math.hypot(arrival.x - d.x, arrival.y - d.y);
@@ -6691,7 +7029,7 @@ export function createGame({ attach, onEvent } = {}) {
     const openness = clamp((nearest - 0.7) / 3.7, 0, 1);
     const catchSkill = rec.CAT * 0.07 + rec.RTE * 0.025;
     // Decision model values yards gained, but may prioritize an easy checkdown.
-    const progress = Math.max(0, arrival.x - playStart);
+    const progress = Math.max(0, arrival.x - matchState.playStart);
     const score =
       16 * openness +
       catchSkill +
@@ -6701,11 +7039,11 @@ export function createGame({ attach, onEvent } = {}) {
     return { rec, arrival, flight, range, danger, openness, score, inside };
   }
   function cpuQuarterback(qb, dt) {
-    if (passThrown || ballCarrier) return;
+    if (matchState.passThrown || matchState.ballCarrier) return;
     // Pressure is physical: an unassigned safety who actually comes downhill
     // counts once close enough to threaten the pocket. A defender merely
     // disguising a blitz before the snap does not.
-    const activeRush = def.filter(
+    const activeRush = matchState.def.filter(
       (d) =>
         !d.ground &&
         (d.rush ||
@@ -6716,7 +7054,7 @@ export function createGame({ attach, onEvent } = {}) {
     const rush = closestThreat(qb, activeRush);
     const pressure = clamp((5.2 - rush.d) / 4.7, 0, 1);
     // Stay in a pocket with lateral evasions. BSK affects escape composure.
-    let wantX = playStart - 4.2,
+    let wantX = matchState.playStart - 4.2,
       wantY = 26.65;
     if (rush.p && rush.d < 4) {
       wantX = qb.x - (0.6 + pressure * 0.8);
@@ -6727,10 +7065,10 @@ export function createGame({ attach, onEvent } = {}) {
       );
     }
     qb.intent = "qb-read";
-    qb.intentTarget = cpuQB.choice?.key || "pocket";
+    qb.intentTarget = matchState.cpuQB.choice?.key || "pocket";
     arrive(qb, wantX, wantY, dt, 0.58 + qb.BSK * 0.002);
-    if (playClock < cpuQB.nextRead) return;
-    cpuQB.reads++;
+    if (matchState.playClock < matchState.cpuQB.nextRead) return;
+    matchState.cpuQB.reads++;
     const options = eligibleTargets().map((r) => quarterbackWindow(qb, r));
     options.sort((a, b) => b.score - a.score);
     // Field vision determines how much coverage the QB correctly perceives.
@@ -6741,15 +7079,26 @@ export function createGame({ attach, onEvent } = {}) {
       const chance = rand();
       chosen = options[chance < 0.5 ? 1 : chance < 0.81 ? 2 : 3] || chosen;
     }
-    cpuQB.choice = chosen?.rec || null;
-    cpuQB.lastScore = chosen?.score || 0;
-    cpuQB.lastRisk = chosen?.danger || 0;
+    matchState.cpuQB.choice = chosen?.rec || null;
+    matchState.cpuQB.lastScore = chosen?.score || 0;
+    matchState.cpuQB.lastRisk = chosen?.danger || 0;
     const patience = clamp((100 - qb.DEC) / 100, 0, 1);
-    const timeDemand = CpuQBPolicy.minimumSettle(selectedPlay, qb.DEC, qb.VIS);
-    const progress = chosen ? Math.max(0, chosen.arrival.x - playStart) : 0;
+    const timeDemand = CpuQBPolicy.minimumSettle(
+      matchState.selectedPlay,
+      qb.DEC,
+      qb.VIS,
+    );
+    const progress = chosen
+      ? Math.max(0, chosen.arrival.x - matchState.playStart)
+      : 0;
     const developed =
       chosen &&
-      CpuQBPolicy.hasDeveloped(selectedPlay, playClock, progress, pressure);
+      CpuQBPolicy.hasDeveloped(
+        matchState.selectedPlay,
+        matchState.playClock,
+        progress,
+        pressure,
+      );
     const readable =
       chosen &&
       chosen.score > CpuQBPolicy.selectThreshold(qb.DEC, qb.VIS) &&
@@ -6760,17 +7109,20 @@ export function createGame({ attach, onEvent } = {}) {
     const emergency =
       (pressure > 0.86 &&
         rush.d < 2.2 &&
-        playClock > Math.max(0.9, timeDemand - 0.75)) ||
-      playClock > Math.max(4.7, timeDemand + 2.6);
+        matchState.playClock > Math.max(0.9, timeDemand - 0.75)) ||
+      matchState.playClock > Math.max(4.7, timeDemand + 2.6);
     const panic = pressure > 0.86 && rush.d < 2.1;
-    if (playClock >= timeDemand && ((developed && readable) || emergency)) {
+    if (
+      matchState.playClock >= timeDemand &&
+      ((developed && readable) || emergency)
+    ) {
       const index = eligibleTargets().indexOf(chosen.rec);
       if (index >= 0) {
         const hold =
           chosen.range > 19 ? 0.11 : chosen.danger > 0.42 ? 0.46 : 0.29;
         const fired = passTo(index, hold);
         if (fired) {
-          cpuQB.passes++;
+          matchState.cpuQB.passes++;
           log(
             "CPU QB · " +
               (emergency ? "UNDER PRESSURE" : "READ") +
@@ -6783,18 +7135,22 @@ export function createGame({ attach, onEvent } = {}) {
         }
       }
     }
-    if (panic && playClock > Math.max(1.2, timeDemand - 0.3) && qb.BSK >= 58) {
+    if (
+      panic &&
+      matchState.playClock > Math.max(1.2, timeDemand - 0.3) &&
+      qb.BSK >= 58
+    ) {
       // Scramble path responds to rush angle; crossing the LOS disables passing.
       arrive(
         qb,
-        playStart + 3,
+        matchState.playStart + 3,
         clamp(qb.y + (qb.y >= rush.p.y ? 5 : -5), 5, H - 5),
         dt,
         1.1,
       );
     }
-    cpuQB.nextRead =
-      playClock + clamp(0.19 + (100 - qb.DEC) * 0.004, 0.18, 0.49);
+    matchState.cpuQB.nextRead =
+      matchState.playClock + clamp(0.19 + (100 - qb.DEC) * 0.004, 0.18, 0.49);
   }
   function qbAI(p, dt) {
     p.intent = "qb-control";
@@ -6819,9 +7175,9 @@ export function createGame({ attach, onEvent } = {}) {
       rb = radius(b) * (b.ground ? 0.65 : 1),
       minSep = ra + rb;
     const engaged =
-      !!ballCarrier &&
-      ((a === ballCarrier && tackleLinks.has(b.key)) ||
-        (b === ballCarrier && tackleLinks.has(a.key)));
+      !!matchState.ballCarrier &&
+      ((a === matchState.ballCarrier && matchState.tackleLinks.has(b.key)) ||
+        (b === matchState.ballCarrier && matchState.tackleLinks.has(a.key)));
     minSep = ChaosBodyConstraint.minimumSeparation(ra, rb, engaged);
     const broadSep = minSep;
     // Non-gripped carrier/defender pad collisions were being held farther apart
@@ -6830,15 +7186,15 @@ export function createGame({ attach, onEvent } = {}) {
     // Permit a small shoulder/hip engagement depth; no grip is awarded here.
     if (
       !engaged &&
-      ballCarrier &&
+      matchState.ballCarrier &&
       !a.ground &&
       !b.ground &&
       a.team !== b.team &&
-      (a === ballCarrier || b === ballCarrier)
+      (a === matchState.ballCarrier || b === matchState.ballCarrier)
     )
       minSep = Math.max(0.3, minSep - 0.17);
     const meshRoutePair =
-      selectedPlay === "mesh" &&
+      matchState.selectedPlay === "mesh" &&
       a.team === 0 &&
       b.team === 0 &&
       !!a.route &&
@@ -6887,8 +7243,12 @@ export function createGame({ attach, onEvent } = {}) {
         act.used = true;
         act.impactContactKey = victim.key;
         if (
-          victim !== ballCarrier &&
-          !(victim.key === "QB" && !ballCarrier && !passThrown)
+          victim !== matchState.ballCarrier &&
+          !(
+            victim.key === "QB" &&
+            !matchState.ballCarrier &&
+            !matchState.passThrown
+          )
         ) {
           victim.vx += (dir.x * impulse.strength * mass(attacker)) / (ma + mb);
           victim.vy += (dir.y * impulse.strength * mass(attacker)) / (ma + mb);
@@ -6914,19 +7274,19 @@ export function createGame({ attach, onEvent } = {}) {
     // the tackle solver still checks eligibility, cooldown, and grip progression.
     if (
       pass === 0 &&
-      ballCarrier &&
+      matchState.ballCarrier &&
       a.team !== b.team &&
       !a.ground &&
       !b.ground &&
-      (a === ballCarrier || b === ballCarrier)
+      (a === matchState.ballCarrier || b === matchState.ballCarrier)
     ) {
-      const runner = a === ballCarrier ? a : b,
+      const runner = a === matchState.ballCarrier ? a : b,
         defender = runner === a ? b : a;
       const body = ChaosContactOutcomes.evaluate(runner, defender);
       if (body.bodyContact && body.penetration >= 0.095) {
-        const old = liveTackleContacts.get(defender.key);
+        const old = matchState.liveTackleContacts.get(defender.key);
         if (!old || body.penetration > old.penetration)
-          liveTackleContacts.set(defender.key, body);
+          matchState.liveTackleContacts.set(defender.key, body);
       }
     }
     const penetration = Math.max(0, minSep - sep);
@@ -6937,23 +7297,23 @@ export function createGame({ attach, onEvent } = {}) {
       !a.ground &&
       !b.ground &&
       a.team !== b.team &&
-      ballCarrier &&
-      (a === ballCarrier || b === ballCarrier)
+      matchState.ballCarrier &&
+      (a === matchState.ballCarrier || b === matchState.ballCarrier)
         ? ChaosSquareContact.classify(a, b, nx, ny)
         : null;
     if (candidate?.square > 0.32 && pass === 0) {
-      const runner = a === ballCarrier ? a : b,
+      const runner = a === matchState.ballCarrier ? a : b,
         defender = runner === a ? b : a;
       const previous = defender.squareImpact;
       if (
         !previous ||
-        previous.time < playClock - 0.05 ||
+        previous.time < matchState.playClock - 0.05 ||
         candidate.square > previous.score
       ) {
         defender.squareImpact = {
           carrier: runner.key,
           score: candidate.square,
-          time: playClock,
+          time: matchState.playClock,
         };
       }
       // Impact posture persists only during real contact and is not a tackle award.
@@ -7005,10 +7365,10 @@ export function createGame({ attach, onEvent } = {}) {
     b.vy += jt * invB * nx;
     const hit = J * YARD_M;
     if (
-      carrierCollisionDiagnostics &&
-      (a === ballCarrier || b === ballCarrier)
+      matchState.carrierCollisionDiagnostics &&
+      (a === matchState.ballCarrier || b === matchState.ballCarrier)
     ) {
-      carrierCollisionDiagnostics.push({
+      matchState.carrierCollisionDiagnostics.push({
         pair: [a.key, b.key],
         pass,
         normalNs: hit,
@@ -7068,8 +7428,8 @@ export function createGame({ attach, onEvent } = {}) {
       }
     }
     if (hit > 13) {
-      chainHits++;
-      lastContact = Math.round(hit);
+      matchState.chainHits++;
+      matchState.lastContact = Math.round(hit);
       const sideA = Math.sin(a.face) * nx - Math.cos(a.face) * ny;
       const sideB = -Math.sin(b.face) * nx + Math.cos(b.face) * ny;
       const angularA = clamp(
@@ -7108,21 +7468,24 @@ export function createGame({ attach, onEvent } = {}) {
     // Rotating iteration order prevents all outcomes depending on roster order.
     for (let pass = 0; pass < 4; pass++) {
       const forward = pass % 2 === 0;
-      for (let ii = 0; ii < players.length; ii++) {
-        const i = forward ? ii : players.length - 1 - ii;
-        for (let jj = 0; jj < players.length; jj++) {
-          const j = forward ? jj : players.length - 1 - jj;
+      for (let ii = 0; ii < matchState.players.length; ii++) {
+        const i = forward ? ii : matchState.players.length - 1 - ii;
+        for (let jj = 0; jj < matchState.players.length; jj++) {
+          const j = forward ? jj : matchState.players.length - 1 - jj;
           if (i >= j) continue;
-          bodyCoupling(players[i], players[j], pass);
+          bodyCoupling(matchState.players[i], matchState.players[j], pass);
         }
       }
     }
   }
   function applyMotion(dt) {
-    liveTackleContacts.clear();
-    if (carrierCollisionDiagnostics) carrierCollisionDiagnostics.length = 0;
-    const anatomyBefore = players.map((p) => ChaosContactEvidence.poseCopy(p));
-    for (const p of players) {
+    matchState.liveTackleContacts.clear();
+    if (matchState.carrierCollisionDiagnostics)
+      matchState.carrierCollisionDiagnostics.length = 0;
+    const anatomyBefore = matchState.players.map((p) =>
+      ChaosContactEvidence.poseCopy(p),
+    );
+    for (const p of matchState.players) {
       if (p.ground) {
         p.vx *= 0.66;
         p.vy *= 0.66;
@@ -7151,14 +7514,14 @@ export function createGame({ attach, onEvent } = {}) {
     // React to downed defenders ahead; this is a *small* conditional hop, not
     // invulnerability, and a reachable grounded defender may still grab the foot.
     if (
-      phase === "live" &&
-      ballCarrier &&
-      !ballCarrier.ground &&
-      ballCarrier.team === 0
+      matchState.phase === "live" &&
+      matchState.ballCarrier &&
+      !matchState.ballCarrier.ground &&
+      matchState.ballCarrier.team === 0
     ) {
-      const r = ballCarrier;
+      const r = matchState.ballCarrier;
       if (!r.airState && r.action?.kind !== "hurdle")
-        for (const d of def) {
+        for (const d of matchState.def) {
           if (ChaosLowContact.shouldAutoHop(r, d)) {
             if (ChaosLowContact.initiate(r, "hop")) {
               r.autoHopCooldown = 1.05;
@@ -7173,41 +7536,45 @@ export function createGame({ attach, onEvent } = {}) {
     // Physically stop low diving shoulders/arms crossing the runner's legs.
     // This applies to special-teams returns and scrimmage; contact is NOT a
     // tackle award and a genuinely wide miss is untouched.
-    if (phase === "live" && ballCarrier && !ballCarrier.ground) {
+    if (
+      matchState.phase === "live" &&
+      matchState.ballCarrier &&
+      !matchState.ballCarrier.ground
+    ) {
       const pre = new Map(anatomyBefore.map((p) => [p.key, p]));
-      for (const d of def) {
+      for (const d of matchState.def) {
         if (d.ground || d.action?.kind !== "tackle-dive" || d.action.time <= 0)
           continue;
-        const runnerBefore = pre.get(ballCarrier.key),
+        const runnerBefore = pre.get(matchState.ballCarrier.key),
           diveBefore = pre.get(d.key);
         if (!runnerBefore || !diveBefore) continue;
         const sample = ChaosDiveCollision.evaluate(
           runnerBefore,
-          ballCarrier,
+          matchState.ballCarrier,
           diveBefore,
           d,
         );
         if (!sample.hit) continue;
         // Avoid injecting the impulse repeatedly during one continuing overlap.
-        const fresh = playClock - (d.lowDiveImpactAt ?? -999) > 0.13;
+        const fresh = matchState.playClock - (d.lowDiveImpactAt ?? -999) > 0.13;
         const outcome = fresh
           ? ChaosDiveCollision.response(
-              ballCarrier,
+              matchState.ballCarrier,
               d,
               runnerBefore,
               diveBefore,
               sample,
               dt,
-              mass(ballCarrier),
+              mass(matchState.ballCarrier),
               mass(d),
             )
           : sample;
         if (fresh) {
-          d.lowDiveImpactAt = playClock;
-          lowDiveContacts++;
-          lastLowDiveImpact = {
-            time: +playClock.toFixed(3),
-            runner: ballCarrier.key,
+          d.lowDiveImpactAt = matchState.playClock;
+          matchState.lowDiveContacts++;
+          matchState.lastLowDiveImpact = {
+            time: +matchState.playClock.toFixed(3),
+            runner: matchState.ballCarrier.key,
             defender: d.key,
             kind: outcome.kind,
             physical: !!outcome.physical,
@@ -7220,14 +7587,14 @@ export function createGame({ attach, onEvent } = {}) {
     // Low foot/ankle impacts: momentum, balance and lower-body placement
     // choose a stumble, a trip or a clean clearance. This works on kickoffs too.
     if (
-      phase === "live" &&
-      ballCarrier &&
-      !ballCarrier.ground &&
-      ballCarrier.team === 0
+      matchState.phase === "live" &&
+      matchState.ballCarrier &&
+      !matchState.ballCarrier.ground &&
+      matchState.ballCarrier.team === 0
     ) {
-      const r = ballCarrier,
+      const r = matchState.ballCarrier,
         prior = new Map(anatomyBefore.map((p) => [p.key, p]));
-      for (const d of def) {
+      for (const d of matchState.def) {
         if (!ChaosLowContact.isLowThreat(d) || r.lowContactCooldown > 0)
           continue;
         const hit = ChaosLowContact.evaluate(
@@ -7284,7 +7651,7 @@ export function createGame({ attach, onEvent } = {}) {
         const truckWon =
           r.lastTruckOutcome?.win &&
           r.lastTruckOutcome.defender === d.key &&
-          playClock - r.lastTruckOutcome.at < 0.48;
+          matchState.playClock - r.lastTruckOutcome.at < 0.48;
         // Keep real ankle forces even during a truck, but do not overwrite a
         // successfully resolved TRUCK cue with a small leg-contact notification.
         const feedback = ChaosContactFeedback.label({
@@ -7300,7 +7667,7 @@ export function createGame({ attach, onEvent } = {}) {
         const tripped =
           (severity > 0.88 && (r.balance < 0.72 || severity > 1.08)) ||
           (severity > 0.64 && r.balance < 0.45);
-        lastFootContact = {
+        matchState.lastFootContact = {
           kind: hit.kind,
           part: hit.part,
           airHeight: +hit.height.toFixed(3),
@@ -7313,9 +7680,9 @@ export function createGame({ attach, onEvent } = {}) {
                 ? "stumble"
                 : "minor-leg-contact",
           defender: d.key,
-          time: +playClock.toFixed(3),
+          time: +matchState.playClock.toFixed(3),
         };
-        footContacts++;
+        matchState.footContacts++;
         if (tripped) {
           actionCue(r, "TRIPPED", true);
           r.airState = null;
@@ -7332,7 +7699,7 @@ export function createGame({ attach, onEvent } = {}) {
             severity,
           };
           log(d.pos + " trips " + r.name + " at " + hit.part);
-          if (specialState)
+          if (matchState.specialState)
             finishReturn("tackle", r.x, r.name + " tripped at the ankles");
           else finish("tackle", r.x, r.name + " tripped at the ankles");
           break;
@@ -7342,18 +7709,18 @@ export function createGame({ attach, onEvent } = {}) {
     }
     // Read-only swept anatomical evidence after contact resolution. Physical
     // outcomes remain governed by the existing, stable tackle/block solvers.
-    if (phase === "live")
+    if (matchState.phase === "live")
       ChaosContactEvidence.scan(
         anatomyBefore,
-        players.map((p) => {
+        matchState.players.map((p) => {
           const s = ChaosContactEvidence.poseCopy(p);
-          s.isCarrier = p === ballCarrier;
+          s.isCarrier = p === matchState.ballCarrier;
           return s;
         }),
-        playClock,
+        matchState.playClock,
         { all: ChaosContactEvidence.isFullScan() },
       );
-    for (const p of players) {
+    for (const p of matchState.players) {
       p.x = clamp(p.x, 0, 120);
       p.y = clamp(p.y, -0.3, H + 0.3);
       const v = speed(p),
@@ -7381,7 +7748,7 @@ export function createGame({ attach, onEvent } = {}) {
     )
       return false;
     if (dist(o, a) > 14) return false;
-    const eligible = off
+    const eligible = matchState.off
       .filter(
         (p) =>
           p !== a &&
@@ -7403,12 +7770,12 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function resolvePileDrive(dt) {
-    for (const p of off) p.pushing = false;
-    if (!pileState?.active || !ballCarrier) return;
-    const a = ballCarrier,
-      pile = pileState;
+    for (const p of matchState.off) p.pushing = false;
+    if (!matchState.pileState?.active || !matchState.ballCarrier) return;
+    const a = matchState.ballCarrier,
+      pile = matchState.pileState;
     pile.pushers = [];
-    for (const p of off) {
+    for (const p of matchState.off) {
       if (p === a || p.intent !== "pile-support") continue;
       const dx = a.x - p.x,
         side = Math.abs(a.y - p.y);
@@ -7443,7 +7810,7 @@ export function createGame({ attach, onEvent } = {}) {
       p.lean = clamp(p.lean * 0.92 - 0.1 * output, -0.42, 0.42);
       pile.pushers.push({ key: p.key, output: Number(output.toFixed(3)) });
     }
-    const grips = [...tackleLinks.values()]
+    const grips = [...matchState.tackleLinks.values()]
       .map((e) => P(e.defender))
       .filter(Boolean);
     pile.wrappers = grips.map((p) => p.key);
@@ -7461,25 +7828,25 @@ export function createGame({ attach, onEvent } = {}) {
     }
   }
   function maintainPile(a, engaged, grip, dt) {
-    if (!pileState?.active) return false;
-    const pile = pileState;
+    if (!matchState.pileState?.active) return false;
+    const pile = matchState.pileState;
     if (pile.carrier !== a.key) {
-      pileState = null;
+      matchState.pileState = null;
       return false;
     }
     pile.age += dt;
     const advance = a.x - pile.lastX;
-    if (advance > 0) pilePushYards += advance;
+    if (advance > 0) matchState.pilePushYards += advance;
     // Forward progress resets the stall clock; a tiny head/hip bob doesn't.
     const progress = advance > dt * 0.34;
     pile.stalled = clamp(pile.stalled + (progress ? -dt * 1.4 : dt), 0, 5);
     pile.lastX = a.x;
     pile.maxX = Math.max(pile.maxX, a.x);
-    pile.wrappers = [...tackleLinks.keys()];
+    pile.wrappers = [...matchState.tackleLinks.keys()];
     if (engaged < 2) {
       pile.loose += dt;
       if (pile.loose > 0.24) {
-        pileState = null;
+        matchState.pileState = null;
         return false;
       }
     } else pile.loose = 0;
@@ -7498,7 +7865,7 @@ export function createGame({ attach, onEvent } = {}) {
         " yd driven" +
         (pusherNames ? " · pushed by " + pusherNames : "");
       log(summary);
-      shake = 0.22;
+      matchState.shake = 0.22;
       finish("tackle", a.x, summary);
       return true;
     }
@@ -7539,15 +7906,20 @@ export function createGame({ attach, onEvent } = {}) {
     };
   }
   function releaseTackle(d, a, reason, contest = null) {
-    const link = tackleLinks.get(d.key);
+    const link = matchState.tackleLinks.get(d.key);
     if (!link) return;
-    tackleLinks.delete(d.key);
+    matchState.tackleLinks.delete(d.key);
     d.wrapLinked = false;
     d.wrapReach = 0;
     d.intent = "recover";
     d.intentTarget = a.key;
     if (reason === "escape") {
-      ChaosTackleReengagement.release(d, a, radius(a) + radius(d), playClock);
+      ChaosTackleReengagement.release(
+        d,
+        a,
+        radius(a) + radius(d),
+        matchState.playClock,
+      );
       const reaction = ChaosEscapeReactions.release(
         a,
         d,
@@ -7617,7 +7989,7 @@ export function createGame({ attach, onEvent } = {}) {
         1,
       );
       d.stam = Math.max(0.045, d.stam - 0.015);
-      brokenTackleCount++;
+      matchState.brokenTackleCount++;
       const secured = contest?.kind === "wrap break";
       actionCue(a, secured ? "WRAP BREAK" : "BREAK TACKLE", true);
       log(
@@ -7640,7 +8012,7 @@ export function createGame({ attach, onEvent } = {}) {
   function tackleStyle(a, d, hit) {
     if (
       d.conservativeHeld ||
-      d.conservativeUntil > playClock ||
+      d.conservativeUntil > matchState.playClock ||
       (d.action?.time > 0 && d.action.kind === "conservative")
     )
       return "wrap";
@@ -7651,7 +8023,7 @@ export function createGame({ attach, onEvent } = {}) {
     if (
       !d.action &&
       d.lastTackleDecision?.choice === "hit-stick" &&
-      playClock - d.lastTackleDecision.time < 0.15
+      matchState.playClock - d.lastTackleDecision.time < 0.15
     )
       return "hit";
     if (
@@ -7683,7 +8055,7 @@ export function createGame({ attach, onEvent } = {}) {
     a.stam = Math.max(0.045, a.stam - 0.022);
     for (const c of contacts) c.d.stam = Math.max(0.045, c.d.stam - 0.037);
     log(description);
-    shake = 0.18;
+    matchState.shake = 0.18;
 
     a.ground = {
       stage: "fall",
@@ -7712,9 +8084,9 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function resolveTackles(a, dt) {
     if (!a || a.team !== 0) return;
-    const report = tackleDiagnostics;
+    const report = matchState.tackleDiagnostics;
     if (report) report.length = 0;
-    for (const d of def) {
+    for (const d of matchState.def) {
       const recovery = d.ground
         ? "grounded"
         : d.stun > 0
@@ -7733,7 +8105,12 @@ export function createGame({ attach, onEvent } = {}) {
       // Rush assignments affect pursuit and blocking, not tackle eligibility.
       const proximity = dist(a, d);
       if (
-        !ChaosTackleReengagement.observe(d, a, radius(a) + radius(d), playClock)
+        !ChaosTackleReengagement.observe(
+          d,
+          a,
+          radius(a) + radius(d),
+          matchState.playClock,
+        )
       ) {
         report?.push({ defender: d.key, reason: "reengagement" });
         d.wrapReach = 0;
@@ -7744,7 +8121,7 @@ export function createGame({ attach, onEvent } = {}) {
       // collision awards or grip probabilities; it only drives the shared rig.
       const committedDive =
         d.action?.kind === "tackle-dive" && d.action.time > 0;
-      const linkActive = tackleLinks.has(d.key);
+      const linkActive = matchState.tackleLinks.has(d.key);
       const towardX = a.x - d.x,
         towardY = a.y - d.y;
       const lookDot =
@@ -7758,7 +8135,7 @@ export function createGame({ attach, onEvent } = {}) {
       // the carrier ineligible forever. Only a nearby *live* blocker may deny
       // access to the runner; block wins and shed recovery remain meaningful away
       // from the ball. This applies equally to scrimmage and kickoff plays.
-      const nearbyBlock = [...blockLinks.values()].some(
+      const nearbyBlock = [...matchState.blockLinks.values()].some(
         (link) =>
           link.defender === d.key &&
           P(link.blocker) &&
@@ -7796,7 +8173,7 @@ export function createGame({ attach, onEvent } = {}) {
       // Broadphase stays cheap; only nearby runners need 15-region analysis.
       const anatomical =
         proximity < 1.65 ? ChaosContactOutcomes.evaluate(a, d) : null;
-      const physicalContact = liveTackleContacts.get(d.key) || null;
+      const physicalContact = matchState.liveTackleContacts.get(d.key) || null;
       const touching =
         !!physicalContact ||
         proximity < radius(a) + radius(d) + 0.2 ||
@@ -7804,7 +8181,7 @@ export function createGame({ attach, onEvent } = {}) {
           anatomical &&
           anatomical.potential &&
           proximity < 1.45);
-      const activeBlock = [...blockLinks.values()].find(
+      const activeBlock = [...matchState.blockLinks.values()].find(
         (link) =>
           link.defender === d.key &&
           link.secured > 0.42 &&
@@ -7812,11 +8189,13 @@ export function createGame({ attach, onEvent } = {}) {
       );
       if (activeBlock)
         d.blocked = Math.max(d.blocked, 0.34 + activeBlock.secured * 0.15);
-      if (touching && specialState?.returning && d.blocked >= 0.25) {
-        const link = [...blockLinks].find(([, e]) => e.defender === d.key);
+      if (touching && matchState.specialState?.returning && d.blocked >= 0.25) {
+        const link = [...matchState.blockLinks].find(
+          ([, e]) => e.defender === d.key,
+        );
         const blocker = link ? P(link[1].blocker) : null;
         if (!blocker || dist(d, blocker) > 2.05) {
-          if (link) blockLinks.delete(link[0]);
+          if (link) matchState.blockLinks.delete(link[0]);
           d.blocked = 0;
         }
       }
@@ -7853,8 +8232,8 @@ export function createGame({ attach, onEvent } = {}) {
             (e) =>
               e.pair.includes(a.key) &&
               e.pair.includes(d.key) &&
-              playClock - e.time >= 0 &&
-              playClock - e.time < 0.075 &&
+              matchState.playClock - e.time >= 0 &&
+              matchState.playClock - e.time < 0.075 &&
               e.penetration >= 0.095,
           );
         const committedDive =
@@ -7900,13 +8279,13 @@ export function createGame({ attach, onEvent } = {}) {
         d.stam = Math.max(0, d.stam - 0.02);
         d.touches++;
         a.touches++;
-        lastContact = Math.round(hit.impulse);
-        tackleCount++;
+        matchState.lastContact = Math.round(hit.impulse);
+        matchState.tackleCount++;
         // Independent evidence: legacy radius contact can occur without a capsule hit.
         // Record this divergence for calibration rather than silently awarding a new tackle.
         if (ChaosContactEvidence.isEnabled())
-          lastAnatomyTackle = {
-            time: +playClock.toFixed(3),
+          matchState.lastAnatomyTackle = {
+            time: +matchState.playClock.toFixed(3),
             carrier: a.key,
             defender: d.key,
             regions: AnatomyHitboxes.contacts(
@@ -7920,7 +8299,7 @@ export function createGame({ attach, onEvent } = {}) {
           style === "cut"
             ? clamp((d.TAK - 70) * 0.003 - (a.w - 220) * 0.0003, -0.06, 0.12)
             : d.conservativeHeld ||
-                d.conservativeUntil > playClock ||
+                d.conservativeUntil > matchState.playClock ||
                 d.action?.kind === "conservative"
               ? DefensiveControls.conservativeGrip(d.TAK)
               : style === "dive"
@@ -7962,7 +8341,7 @@ export function createGame({ attach, onEvent } = {}) {
         }
         const freshSquare =
           d.squareImpact?.carrier === a.key &&
-          playClock - d.squareImpact.time < 0.2
+          matchState.playClock - d.squareImpact.time < 0.2
             ? d.squareImpact.score
             : 0;
         const link = {
@@ -7984,11 +8363,11 @@ export function createGame({ attach, onEvent } = {}) {
           contact: contactState,
           quality: placementQuality,
         });
-        tackleLinks.set(d.key, link);
+        matchState.tackleLinks.set(d.key, link);
         d.wrapLinked = true;
         d.technique = style === "hit" ? "hit-stick" : "wrap";
         if (style === "hit") {
-          hitStickCount++;
+          matchState.hitStickCount++;
           const gap = Math.max(0.05, dist(a, d)),
             nx = (a.x - d.x) / gap,
             ny = (a.y - d.y) / gap;
@@ -8024,10 +8403,10 @@ export function createGame({ attach, onEvent } = {}) {
       engaged = 0,
       totalBrake = 0,
       contacts = [];
-    for (const [key, t] of [...tackleLinks]) {
+    for (const [key, t] of [...matchState.tackleLinks]) {
       const d = P(key);
       if (!d || d.tackleCooldown > 0) {
-        tackleLinks.delete(key);
+        matchState.tackleLinks.delete(key);
         continue;
       }
       const gap = dist(a, d),
@@ -8171,7 +8550,7 @@ export function createGame({ attach, onEvent } = {}) {
       }
     }
     if (!engaged) {
-      pileState = null;
+      matchState.pileState = null;
       return;
     }
     const inertia = clamp(mass(a) / 97, 0.68, 1.55);
@@ -8251,7 +8630,7 @@ export function createGame({ attach, onEvent } = {}) {
     // forever, letting an exhausted runner be pushed downfield without a whistle.
     // Escapes still happen through the existing grip-break/leverage rules.
     if (
-      specialState?.returning &&
+      matchState.specialState?.returning &&
       contacts.some(
         ({ t }) => t.age > 1.1 + struggle.finishDelay && t.grip > 0.68,
       ) &&
@@ -8265,12 +8644,12 @@ export function createGame({ attach, onEvent } = {}) {
       engaged >= 2 &&
       oldest > 0.17 &&
       combinedGrip > clamp(1.06 - (engaged - 2) * 0.2, 0.52, 1.06);
-    if (pileState?.active) {
+    if (matchState.pileState?.active) {
       // Three-plus secured defenders defeat a small unsupported pile quickly.
       if (
         engaged >= 3 &&
-        pileState.age > 0.4 &&
-        pileState.pushers.length < engaged - 1
+        matchState.pileState.age > 0.4 &&
+        matchState.pileState.pushers.length < engaged - 1
       ) {
         finishTackle(a, contacts, "Gang tackle");
         return;
@@ -8279,14 +8658,14 @@ export function createGame({ attach, onEvent } = {}) {
       return;
     }
     if (groupReady) {
-      const nearbyPushers = off.some(
+      const nearbyPushers = matchState.off.some(
         (p) => p !== a && p.pos !== "QB" && dist(p, a) < 5.2 && p.x < a.x + 1,
       );
       const runnerUpright =
         a.balance > 0.63 && (speed(a) > 1.2 || a.TRK >= 87) && engaged <= 2;
       const canScrum = runnerUpright && nearbyPushers;
       if (canScrum) {
-        pileState = {
+        matchState.pileState = {
           active: true,
           carrier: a.key,
           startX: a.x,
@@ -8298,7 +8677,7 @@ export function createGame({ attach, onEvent } = {}) {
           pushers: [],
           wrappers: contacts.map((c) => c.d.key),
         };
-        pileStarts++;
+        matchState.pileStarts++;
         log("STANDING PILE · teammates can push");
         return;
       }
@@ -8334,25 +8713,25 @@ export function createGame({ attach, onEvent } = {}) {
   function convertQuarterbackScramble() {
     const qb = P("QB");
     if (
-      phase !== "live" ||
-      RUNS.has(selectedPlay) ||
-      passThrown ||
-      ballCarrier ||
+      matchState.phase !== "live" ||
+      RUNS.has(matchState.selectedPlay) ||
+      matchState.passThrown ||
+      matchState.ballCarrier ||
       !qb ||
-      qb.x <= playStart + 0.1
+      qb.x <= matchState.playStart + 0.1
     )
       return false;
-    pendingPass = null;
-    ballCarrier = qb;
+    matchState.pendingPass = null;
+    matchState.ballCarrier = qb;
     qb.touches++;
     // Stay under user control, including if the left stick remains held forward.
-    if (controlMode === "offense") {
-      active = qb;
-      manualDrive = true;
-      suppressManualUntilNeutral = false;
+    if (matchState.controlMode === "offense") {
+      matchState.active = qb;
+      matchState.manualDrive = true;
+      matchState.suppressManualUntilNeutral = false;
     }
-    tackleLinks.clear();
-    pileState = null;
+    matchState.tackleLinks.clear();
+    matchState.pileState = null;
     emitPresentation({ type: "receiverPromptsHidden" });
     message(
       "<strong>QB scramble!</strong> Beyond the line of scrimmage: forward passing is locked and the offense blocks.",
@@ -8364,43 +8743,47 @@ export function createGame({ attach, onEvent } = {}) {
   function startPass(index, source = "keyboard") {
     convertQuarterbackScramble();
     if (
-      paused ||
-      phase !== "live" ||
-      RUNS.has(selectedPlay) ||
-      passThrown ||
-      ballCarrier
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      RUNS.has(matchState.selectedPlay) ||
+      matchState.passThrown ||
+      matchState.ballCarrier
     )
       return false;
-    if (pendingPass) return false;
+    if (matchState.pendingPass) return false;
     if (!eligibleTargets()[index]) return false;
-    pendingPass = { index, start: playClock, source };
+    matchState.pendingPass = { index, start: matchState.playClock, source };
     return true;
   }
   function releasePass(duration = null) {
-    if (!pendingPass) return false;
-    const pending = pendingPass;
-    pendingPass = null;
+    if (!matchState.pendingPass) return false;
+    const pending = matchState.pendingPass;
+    matchState.pendingPass = null;
     return passTo(
       pending.index,
-      duration === null ? playClock - pending.start : duration,
+      duration === null ? matchState.playClock - pending.start : duration,
     );
   }
   function passTo(index, hold = 0.27) {
     convertQuarterbackScramble();
     if (
-      paused ||
-      phase !== "live" ||
-      RUNS.has(selectedPlay) ||
-      passThrown ||
-      ballCarrier ||
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      RUNS.has(matchState.selectedPlay) ||
+      matchState.passThrown ||
+      matchState.ballCarrier ||
       !P("QB")
     )
       return false;
     const qb = P("QB"),
       rec = eligibleTargets()[index];
     if (!rec) return false;
-    airSelection = { offense: null, defense: null, defenderKey: null };
-    lastAirResult = null;
+    matchState.airSelection = {
+      offense: null,
+      defense: null,
+      defenderKey: null,
+    };
+    matchState.lastAirResult = null;
     const dx = rec.x - qb.x,
       dy = rec.y - qb.y,
       range = hypot(dx, dy);
@@ -8415,7 +8798,7 @@ export function createGame({ attach, onEvent } = {}) {
     const predicted = projectedReceiver(rec, flight);
     const pressureDist = closestThreat(
       qb,
-      def.filter((d) => d.rush),
+      matchState.def.filter((d) => d.rush),
     ).d;
     const pressure = clamp((4.8 - pressureDist) / 4.8, 0, 1);
     const motion = clamp(speed(qb) / 7, 0, 1);
@@ -8461,7 +8844,7 @@ export function createGame({ attach, onEvent } = {}) {
     const vx = (aimX - originX) / flight,
       vy = (aimY - originY) / flight;
     const vz = (targetZ - originZ + 0.5 * G * flight * flight) / flight;
-    ball = {
+    matchState.ball = {
       x: originX,
       y: originY,
       z: originZ,
@@ -8483,14 +8866,17 @@ export function createGame({ attach, onEvent } = {}) {
       attempts: [],
       deflected: false,
     };
-    if (currentMemoryPlay) {
-      currentMemoryPlay.target = rec.key;
-      currentMemoryPlay.airYards = Math.max(0, aimX - playStart);
+    if (matchState.currentMemoryPlay) {
+      matchState.currentMemoryPlay.target = rec.key;
+      matchState.currentMemoryPlay.airYards = Math.max(
+        0,
+        aimX - matchState.playStart,
+      );
     }
-    intended = rec;
-    active = null;
-    passThrown = true;
-    for (const o of off) {
+    matchState.intended = rec;
+    matchState.active = null;
+    matchState.passThrown = true;
+    for (const o of matchState.off) {
       const skill = 0.56 * o.AWR + 0.44 * (o.RTE || o.AWR);
       o.airReadAt = clamp(
         (o === rec ? 0.045 : 0.19) +
@@ -8500,7 +8886,7 @@ export function createGame({ attach, onEvent } = {}) {
         0.48,
       );
     }
-    for (const d of def) {
+    for (const d of matchState.def) {
       const primary = d.assignment?.target === rec.key || dist(d, rec) < 4.6;
       const recognize =
         0.48 * d.AWR + 0.32 * d.PRC + 0.2 * (d.RCR || d.COV || d.AWR);
@@ -8520,7 +8906,7 @@ export function createGame({ attach, onEvent } = {}) {
     const mph = Math.hypot(vx, vy, vz) * YARD_M * MPS_TO_MPH;
     message(
       "<strong>" +
-        ball.style +
+        matchState.ball.style +
         " · " +
         quality +
         ".</strong> " +
@@ -8535,7 +8921,7 @@ export function createGame({ attach, onEvent } = {}) {
     );
     log(
       "PASS " +
-        ball.style +
+        matchState.ball.style +
         " " +
         PASS_ICONS[index] +
         " → " +
@@ -8554,7 +8940,7 @@ export function createGame({ attach, onEvent } = {}) {
   // The intended receiving point is calculated once by the QB's actual ballistic
   // throw. Tracking AI may REACT to that information, but it never teleports or
   // moves the ball. The separate ground intercept follows the live trajectory.
-  function flightMarkers(b = ball) {
+  function flightMarkers(b = matchState.ball) {
     if (!b?.flying) return null;
     const remaining = Math.max(0, (b.flight ?? b.t) - b.t);
     const catchX = clamp(
@@ -8587,19 +8973,24 @@ export function createGame({ attach, onEvent } = {}) {
   // arrives. Only the target and teammates who could realistically reach the
   // ball join the contest; unrelated receivers keep running their routes.
   function receiverFlightAI(o, dt) {
-    if (!ball?.flying || !["WR", "TE", "FB", "RB"].includes(o.pos) || o.ground)
+    if (
+      !matchState.ball?.flying ||
+      !["WR", "TE", "FB", "RB"].includes(o.pos) ||
+      o.ground
+    )
       return false;
     const m = flightMarkers(),
       target = { x: m.catchX, y: m.catchY };
     const distance = dist(o, target),
-      primary = o === intended;
+      primary = o === matchState.intended;
     const remaining = Math.max(0.02, m.remaining);
     const attainable =
       distance <= maxSpeed(o) * (remaining + 0.11) + catchReach(o) * 0.35;
     if (!primary && (!attainable || distance > 13.5)) return false;
-    if (ball.t < (o.airReadAt ?? (primary ? 0.07 : 0.26))) return false;
+    if (matchState.ball.t < (o.airReadAt ?? (primary ? 0.07 : 0.26)))
+      return false;
     o.intent = primary ? "air-track" : "air-backup";
-    o.intentTarget = intended?.key || "football";
+    o.intentTarget = matchState.intended?.key || "football";
     // Lower-rated players take a slightly wider path to the spot. Skill is not
     // overridden by the marker or a button press.
     const reach =
@@ -8614,17 +9005,17 @@ export function createGame({ attach, onEvent } = {}) {
   // can arrive in time. Backside corners and safeties rally in support; no
   // guaranteed ball-hawk outcomes or synthetic pursuit speed are added.
   function defenderFlightAI(d, dt) {
-    if (!ball?.flying || d.ground) return false;
+    if (!matchState.ball?.flying || d.ground) return false;
     const m = flightMarkers(),
       target = { x: m.catchX, y: m.catchY };
     const db = ["CB", "FS", "SS"].includes(d.pos),
       lb = ["OLB", "MLB"].includes(d.pos);
     if (!db && !lb) return false;
-    if (ball.t < (d.airReadAt ?? 0.34)) return false;
+    if (matchState.ball.t < (d.airReadAt ?? 0.34)) return false;
     const distance = dist(d, target),
       primary =
-        d.assignment?.target === intended?.key ||
-        (intended && dist(d, intended) < 4.6);
+        d.assignment?.target === matchState.intended?.key ||
+        (matchState.intended && dist(d, matchState.intended) < 4.6);
     // A linebacker may flow underneath a deep throw, but won't instantly vacate
     // his zone and sprint 40 yards to where a corner should be responsible.
     if (lb && distance > 28) return false;
@@ -8635,27 +9026,27 @@ export function createGame({ attach, onEvent } = {}) {
     }
     const effort = db ? clamp(1.02 + (d.PRC - 70) * 0.0014, 0.97, 1.09) : 0.95;
     d.intent = primary ? "break-on-ball" : db ? "air-rally" : "air-underneath";
-    d.intentTarget = intended?.key || "football";
+    d.intentTarget = matchState.intended?.key || "football";
     steer(d, aimX - d.x, aimY - d.y, dt, effort);
     return true;
   }
   function switchToIntendedReceiver() {
     if (
-      phase !== "live" ||
-      controlMode !== "offense" ||
-      !ball?.flying ||
-      !intended ||
-      intended.ground
+      matchState.phase !== "live" ||
+      matchState.controlMode !== "offense" ||
+      !matchState.ball?.flying ||
+      !matchState.intended ||
+      matchState.intended.ground
     )
       return false;
-    active = intended;
-    manualReceiver = true;
+    matchState.active = matchState.intended;
+    matchState.manualReceiver = true;
     message(
       "<strong>USER RECEIVER · " +
-        intended.name +
+        matchState.intended.name +
         ".</strong> Left stick adjusts the catch point · X RAC / A possession / Y aggressive.",
     );
-    log("USER SWITCH → " + intended.key + " (airborne pass)");
+    log("USER SWITCH → " + matchState.intended.key + " (airborne pass)");
     hud();
     return true;
   }
@@ -8714,20 +9105,22 @@ export function createGame({ attach, onEvent } = {}) {
     if (stage === "attempt") actionCue(p, kind, true);
   }
   function cueForSelectedCatch() {
-    if (phase !== "live" || !ball?.flying) return;
+    if (matchState.phase !== "live" || !matchState.ball?.flying) return;
     const f = flightMarkers(),
       remaining = f.remaining;
     if (remaining > 0.37) return;
-    const receiv = intended;
+    const receiv = matchState.intended;
     if (
       receiv &&
       !receiv.ground &&
       dist(receiv, { x: f.catchX, y: f.catchY }) < 3.8 &&
-      airSelection.offense
+      matchState.airSelection.offense
     ) {
-      startAirAnimation(receiv, airSelection.offense, "attempt");
+      startAirAnimation(receiv, matchState.airSelection.offense, "attempt");
     }
-    const d = airSelection.defenderKey ? P(airSelection.defenderKey) : null;
+    const d = matchState.airSelection.defenderKey
+      ? P(matchState.airSelection.defenderKey)
+      : null;
     // Queuing from 20 yards away never starts a jump. Only a defender arriving
     // within the actual catch area can begin the attempt pose as the ball drops.
     if (
@@ -8735,39 +9128,44 @@ export function createGame({ attach, onEvent } = {}) {
       !d.ground &&
       dist(d, { x: f.catchX, y: f.catchY }) < 2.9 &&
       defenderAirEligibility(d).reachable &&
-      airSelection.defense
+      matchState.airSelection.defense
     ) {
-      startAirAnimation(d, airSelection.defense, "attempt");
+      startAirAnimation(d, matchState.airSelection.defense, "attempt");
     }
   }
   function chooseAirAction(kind, source = "gamepad") {
-    if (phase !== "live" || !ball?.flying || paused) return false;
     if (
-      controlMode === "defense" &&
-      !defenderAirInteractionZone(P(selectedDefenderKey))
+      matchState.phase !== "live" ||
+      !matchState.ball?.flying ||
+      matchState.paused
+    )
+      return false;
+    if (
+      matchState.controlMode === "defense" &&
+      !defenderAirInteractionZone(P(matchState.selectedDefenderKey))
     ) {
       // An uninvolved defender cannot claim a remote pass reaction; X remains
       // the regular committed tackle dive. A/Y can be HELD and queued once the
       // moving player legitimately becomes eligible (see controller polling).
       return kind === "swat" ? defensiveOpenFieldDive() : false;
     }
-    if (controlMode === "offense") {
+    if (matchState.controlMode === "offense") {
       if (!["rac", "possession", "aggressive"].includes(kind)) return false;
-      airSelection.offense = kind;
-      if (intended) {
-        startAirAnimation(intended, kind, "ready");
-        actionCue(intended, kind);
+      matchState.airSelection.offense = kind;
+      if (matchState.intended) {
+        startAirAnimation(matchState.intended, kind, "ready");
+        actionCue(matchState.intended, kind);
       }
       message(
         "<strong>" +
           kind.toUpperCase() +
           " CATCH selected.</strong> Timing, ratings, flight and defensive positioning still decide.",
       );
-    } else if (controlMode === "defense") {
+    } else if (matchState.controlMode === "defense") {
       if (!["swat", "ball", "receiver"].includes(kind)) return false;
-      airSelection.defense = kind;
-      airSelection.defenderKey = selectedDefenderKey;
-      const d = P(selectedDefenderKey);
+      matchState.airSelection.defense = kind;
+      matchState.airSelection.defenderKey = matchState.selectedDefenderKey;
+      const d = P(matchState.selectedDefenderKey);
       // Queue intent only. Reaching/jumping is an entirely separate late-ball
       // animation that plays only when the receiver contest develops physically.
       if (d) actionCue(d, kind);
@@ -8783,8 +9181,12 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function airOffenseStyle(p, crowd) {
-    if (p === intended && controlMode === "offense" && airSelection.offense)
-      return airSelection.offense;
+    if (
+      p === matchState.intended &&
+      matchState.controlMode === "offense" &&
+      matchState.airSelection.offense
+    )
+      return matchState.airSelection.offense;
     // CPU receivers also make situational choices; this is not a global guarantee.
     if (crowd >= 2 && p.JMP > p.CAT - 4) return "aggressive";
     if (crowd >= 1) return "possession";
@@ -8792,11 +9194,11 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function airDefenseStyle(d) {
     if (
-      controlMode === "defense" &&
-      airSelection.defenderKey === d.key &&
-      airSelection.defense
+      matchState.controlMode === "defense" &&
+      matchState.airSelection.defenderKey === d.key &&
+      matchState.airSelection.defense
     )
-      return airSelection.defense;
+      return matchState.airSelection.defense;
     const instinct = 0.46 * d.COV + 0.29 * d.AWR + 0.25 * d.CAT;
     const ballSkill = 0.55 * d.CAT + 0.3 * d.JMP + 0.15 * d.RCR;
     if (ballSkill > 86 && instinct > 81 && rand() < 0.57) return "ball";
@@ -8804,7 +9206,7 @@ export function createGame({ attach, onEvent } = {}) {
     return rand() < 0.21 + clamp((d.CAT - 67) / 100, 0, 0.22) ? "ball" : "swat";
   }
   function airContext(p, point) {
-    const opposing = players.filter(
+    const opposing = matchState.players.filter(
       (d) =>
         d.team !== p.team &&
         !d.ground &&
@@ -8834,15 +9236,18 @@ export function createGame({ attach, onEvent } = {}) {
     if (style === "rac") chance += ctx.crowd ? -0.085 : 0.045;
     if (style === "possession") chance += 0.09 - (ctx.crowd === 0 ? 0.025 : 0);
     if (style === "aggressive") chance += ctx.crowd ? 0.065 : -0.07;
-    if (p === intended) chance += 0.035;
+    if (p === matchState.intended) chance += 0.035;
     if (p.team === 1) chance -= 0.075;
-    if (ball?.deflected) chance -= 0.12;
+    if (matchState.ball?.deflected) chance -= 0.12;
     return clamp(chance, 0.08, 0.94);
   }
   function defenderAirProbability(d, style, receiver) {
     const near = receiver ? dist(d, receiver) : 1.7;
     const leverage = clamp((2.8 - near) / 2.5, 0, 1);
-    const ballDist = Math.hypot(d.x - ball.x, d.y - ball.y);
+    const ballDist = Math.hypot(
+      d.x - matchState.ball.x,
+      d.y - matchState.ball.y,
+    );
     const geometry = clamp((1.6 - ballDist) / 1.5, 0, 1);
     const grade =
       style === "ball"
@@ -8863,39 +9268,47 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function awardAirInterception(d) {
     startAirAnimation(d, "ball");
-    ball.flying = false;
-    lastAirResult = {
+    matchState.ball.flying = false;
+    matchState.lastAirResult = {
       result: "interception",
       player: d.key,
       action: "ball",
-      distance: dist(d, intended || d),
+      distance: dist(d, matchState.intended || d),
     };
-    airCounters.interception++;
+    matchState.airCounters.interception++;
     log("BALL HAWK · " + d.name + " INTERCEPTION");
-    ball = null;
+    matchState.ball = null;
     finish("intercept", d.x, "Defender " + d.name + " intercepted the pass.");
   }
   function awardAirBreakup(d, style) {
     startAirAnimation(d, style);
-    lastAirResult = { result: "breakup", player: d.key, action: style };
-    airCounters.broken++;
-    if (style === "swat") airCounters.swat++;
-    else airCounters.playReceiver++;
+    matchState.lastAirResult = {
+      result: "breakup",
+      player: d.key,
+      action: style,
+    };
+    matchState.airCounters.broken++;
+    if (style === "swat") matchState.airCounters.swat++;
+    else matchState.airCounters.playReceiver++;
     log(
       (style === "swat" ? "SWAT / PASS BREAKUP" : "PLAY RECEIVER / BREAKUP") +
         " · " +
         d.name,
     );
-    ball = null;
-    finish("incomplete", playStart, "Pass broken up by " + d.name + ".");
+    matchState.ball = null;
+    finish(
+      "incomplete",
+      matchState.playStart,
+      "Pass broken up by " + d.name + ".",
+    );
   }
   function awardAirCatch(p, style, chance) {
     startAirAnimation(p, style);
-    ball.flying = false;
-    tackleLinks.clear();
-    pileState = null;
-    ballCarrier = p;
-    if (controlMode === "offense") active = p;
+    matchState.ball.flying = false;
+    matchState.tackleLinks.clear();
+    matchState.pileState = null;
+    matchState.ballCarrier = p;
+    if (matchState.controlMode === "offense") matchState.active = p;
     // RAC preserves momentum. Secure possession and jumping contests take
     // extra time to plant after the catch; no magical sprint animation.
     if (style === "possession") {
@@ -8912,15 +9325,15 @@ export function createGame({ attach, onEvent } = {}) {
       p.shield = 0.12;
     }
     p.touches++;
-    lastAirResult = {
+    matchState.lastAirResult = {
       result: p.team === 1 ? "interception" : "complete",
       player: p.key,
       style,
       chance,
     };
     if (p.team === 0) {
-      airCounters[style]++;
-      airCounters.complete++;
+      matchState.airCounters[style]++;
+      matchState.airCounters.complete++;
     }
     log(
       (p.team === 1 ? "INTERCEPTION" : "CATCH · " + style.toUpperCase()) +
@@ -8937,20 +9350,20 @@ export function createGame({ attach, onEvent } = {}) {
         p.name +
         " secures the pass.",
     );
-    ball = null;
+    matchState.ball = null;
     if (p.team === 1)
       finish("intercept", p.x, "Defender " + p.name + " intercepted the pass.");
   }
   function airBall(dt) {
-    if (!ball || !ball.flying) return;
+    if (!matchState.ball || !matchState.ball.flying) return;
     cueForSelectedCatch();
-    ball.t += dt;
-    ball.x += ball.vx * dt;
-    ball.y += ball.vy * dt;
-    ball.z += ball.vz * dt - 0.5 * G * dt * dt;
-    ball.vz -= G * dt;
-    if (ball.t > Math.max(0.2, ball.flight * 0.6)) {
-      const recs = players.filter(
+    matchState.ball.t += dt;
+    matchState.ball.x += matchState.ball.vx * dt;
+    matchState.ball.y += matchState.ball.vy * dt;
+    matchState.ball.z += matchState.ball.vz * dt - 0.5 * G * dt * dt;
+    matchState.ball.vz -= G * dt;
+    if (matchState.ball.t > Math.max(0.2, matchState.ball.flight * 0.6)) {
+      const recs = matchState.players.filter(
         (p) =>
           p.team === 0 && !p.ground && ["WR", "TE", "FB", "RB"].includes(p.pos),
       );
@@ -8970,27 +9383,27 @@ export function createGame({ attach, onEvent } = {}) {
         })
         .filter(
           (o) =>
-            !ball.attempts.includes(o.p.key) &&
-            ball.z >= 0.18 &&
-            ball.z <= o.reach &&
-            dist(o.p, ball) < o.range,
+            !matchState.ball.attempts.includes(o.p.key) &&
+            matchState.ball.z >= 0.18 &&
+            matchState.ball.z <= o.reach &&
+            dist(o.p, matchState.ball) < o.range,
         );
       // Defenders have their own independent opportunity to attack the ball.
       // Their reach, spacing and ratings matter; mere proximity never guarantees a pick.
-      const defenders = def
+      const defenders = matchState.def
         .filter(
           (d) =>
             !d.ground &&
-            !ball.attempts.includes(d.key) &&
+            !matchState.ball.attempts.includes(d.key) &&
             ["CB", "FS", "SS", "OLB", "MLB"].includes(d.pos) &&
-            dist(d, ball) < 1.32 + (d.COV - 70) * 0.003 &&
-            ball.z > 0.2 &&
-            ball.z <= catchReach(d) + 0.09,
+            dist(d, matchState.ball) < 1.32 + (d.COV - 70) * 0.003 &&
+            matchState.ball.z > 0.2 &&
+            matchState.ball.z <= catchReach(d) + 0.09,
         )
-        .sort((a, b) => dist(a, ball) - dist(b, ball));
+        .sort((a, b) => dist(a, matchState.ball) - dist(b, matchState.ball));
       for (const d of defenders) {
-        if (!ball?.flying) return;
-        ball.attempts.push(d.key);
+        if (!matchState.ball?.flying) return;
+        matchState.ball.attempts.push(d.key);
         const style = airDefenseStyle(d);
         const nearest = recs.reduce(
           (best, p) => (dist(p, d) < dist(best, d) ? p : best),
@@ -9009,10 +9422,12 @@ export function createGame({ attach, onEvent } = {}) {
           d.coverAim = null;
         }
       }
-      reachable.sort((a, b) => dist(a.p, ball) - dist(b.p, ball));
+      reachable.sort(
+        (a, b) => dist(a.p, matchState.ball) - dist(b.p, matchState.ball),
+      );
       for (const { p, style, ctx } of reachable) {
-        if (!ball?.flying) return;
-        ball.attempts.push(p.key);
+        if (!matchState.ball?.flying) return;
+        matchState.ball.attempts.push(p.key);
         startAirAnimation(p, style);
         const chance = airCatchProbability(p, style, ctx);
         if (rand() < chance) {
@@ -9021,8 +9436,8 @@ export function createGame({ attach, onEvent } = {}) {
         }
         // A dropped pass may be tipped to another receiver behind the target.
         // A player cannot attempt the same pass twice.
-        ball.deflected = true;
-        airCounters.drops++;
+        matchState.ball.deflected = true;
+        matchState.airCounters.drops++;
         log(
           "CATCH MISSED · " +
             p.name +
@@ -9035,62 +9450,67 @@ export function createGame({ attach, onEvent } = {}) {
       }
     }
     if (
-      ball &&
-      (ball.z <= 0.1 ||
-        ball.t > ball.ttl ||
-        ball.x > 112 ||
-        ball.y < -0.5 ||
-        ball.y > H + 0.5)
+      matchState.ball &&
+      (matchState.ball.z <= 0.1 ||
+        matchState.ball.t > matchState.ball.ttl ||
+        matchState.ball.x > 112 ||
+        matchState.ball.y < -0.5 ||
+        matchState.ball.y > H + 0.5)
     ) {
-      if (!lastAirResult)
-        lastAirResult = { result: "incomplete", action: "uncaught" };
-      ball = null;
-      finish("incomplete", playStart, "Pass falls incomplete.");
+      if (!matchState.lastAirResult)
+        matchState.lastAirResult = { result: "incomplete", action: "uncaught" };
+      matchState.ball = null;
+      finish("incomplete", matchState.playStart, "Pass falls incomplete.");
     }
   }
 
   function update(dt) {
-    if (specialState) {
+    if (matchState.specialState) {
       stepSpecial(dt);
       return;
     }
-    if (controlMode === "defense") {
-      const selected = P(selectedDefenderKey);
+    if (matchState.controlMode === "defense") {
+      const selected = P(matchState.selectedDefenderKey);
       if (selected) {
         selected.conservativeHeld =
-          !!keys.z || !!(padState.connected && padState.previous[XBOX.A]);
+          !!matchState.keys.z ||
+          !!(
+            matchState.padState.connected &&
+            matchState.padState.previous[XBOX.A]
+          );
         if (selected.conservativeHeld)
-          selected.conservativeUntil = playClock + 0.13;
+          selected.conservativeUntil = matchState.playClock + 0.13;
       }
     }
     convertQuarterbackScramble();
-    totalClock += dt;
-    playClock += dt;
-    burstTime = Math.max(0, burstTime - dt);
-    burstCool = Math.max(0, burstCool - dt);
-    evadeTime = Math.max(0, evadeTime - dt);
-    evadeCool = Math.max(0, evadeCool - dt);
-    shake = Math.max(0, shake - dt);
-    const running = RUNS.has(selectedPlay);
-    moveCooldown = Math.max(0, moveCooldown - dt);
+    matchState.totalClock += dt;
+    matchState.playClock += dt;
+    matchState.burstTime = Math.max(0, matchState.burstTime - dt);
+    matchState.burstCool = Math.max(0, matchState.burstCool - dt);
+    matchState.evadeTime = Math.max(0, matchState.evadeTime - dt);
+    matchState.evadeCool = Math.max(0, matchState.evadeCool - dt);
+    matchState.shake = Math.max(0, matchState.shake - dt);
+    const running = RUNS.has(matchState.selectedPlay);
+    matchState.moveCooldown = Math.max(0, matchState.moveCooldown - dt);
     // Accept a second quick flick during a plant. It is executed as soon as the
     // physical replant window ends, rather than silently discarded by the input.
-    if (queuedCarrierMove && moveCooldown <= 0) {
-      const queued = queuedCarrierMove;
-      queuedCarrierMove = null;
-      if (playClock <= queued.expires) carrierMove(queued.kind, queued.side);
+    if (matchState.queuedCarrierMove && matchState.moveCooldown <= 0) {
+      const queued = matchState.queuedCarrierMove;
+      matchState.queuedCarrierMove = null;
+      if (matchState.playClock <= queued.expires)
+        carrierMove(queued.kind, queued.side);
     }
     if (
-      xHoldStart !== null &&
-      !xDiveFired &&
-      phase === "live" &&
-      playClock - xHoldStart >= 0.27
+      matchState.xHoldStart !== null &&
+      !matchState.xDiveFired &&
+      matchState.phase === "live" &&
+      matchState.playClock - matchState.xHoldStart >= 0.27
     ) {
-      xDiveFired = true;
+      matchState.xDiveFired = true;
       diveForYards();
     }
 
-    for (const p of players) {
+    for (const p of matchState.players) {
       if (p.airPose) {
         p.airPose.time -= dt;
         p.airPose.age = (p.airPose.age || 0) + dt;
@@ -9101,7 +9521,7 @@ export function createGame({ attach, onEvent } = {}) {
         if (p.actionCue.time <= 0) p.actionCue = null;
       }
     }
-    for (const p of players)
+    for (const p of matchState.players)
       if (p.action) {
         if (
           p.action.kind === "stiff" &&
@@ -9118,8 +9538,9 @@ export function createGame({ attach, onEvent } = {}) {
         }
       }
     if (
-      pendingPass &&
-      playClock - pendingPass.start >= PASS_AUTO_RELEASE_SECONDS
+      matchState.pendingPass &&
+      matchState.playClock - matchState.pendingPass.start >=
+        PASS_AUTO_RELEASE_SECONDS
     ) {
       releasePass(PASS_AUTO_RELEASE_SECONDS);
     }
@@ -9129,43 +9550,51 @@ export function createGame({ attach, onEvent } = {}) {
     // or pass-protection target simply because it was assigned before the handoff.
     const claims = new Set();
     const grounded = new Set();
-    for (const p of players) if (tickGround(p, dt)) grounded.add(p.key);
-    for (const o of off) {
+    for (const p of matchState.players)
+      if (tickGround(p, dt)) grounded.add(p.key);
+    for (const o of matchState.off) {
       if (grounded.has(o.key)) continue;
-      if (manualReceiver && o === active && ball?.flying) {
+      if (
+        matchState.manualReceiver &&
+        o === matchState.active &&
+        matchState.ball?.flying
+      ) {
         const input = stickInput();
         if (input.mag > 0.12) manualAthlete(o, dt, "user-receiver");
         else if (!receiverFlightAI(o, dt)) AIroute(o, dt);
         continue;
       }
-      if (o === ballCarrier) {
-        if (controlMode === "offense") userCarry(o, dt);
+      if (o === matchState.ballCarrier) {
+        if (matchState.controlMode === "offense") userCarry(o, dt);
         else autoCarry(o, dt);
         continue;
       }
-      if (ballCarrier) {
+      if (matchState.ballCarrier) {
         if (
-          selectedPlay === "inside" &&
+          matchState.selectedPlay === "inside" &&
           ["LT", "LG", "C", "RG", "RT"].includes(o.key)
         ) {
-          insideZoneBlockerAI(o, dt, claims, ballCarrier);
+          insideZoneBlockerAI(o, dt, claims, matchState.ballCarrier);
           continue;
         }
-        if (o === qb) quarterbackSupport(o, ballCarrier, dt);
+        if (o === qb) quarterbackSupport(o, matchState.ballCarrier, dt);
         else if (running && o.pos === "WR")
-          receiverRunBlock(o, dt, claims, ballCarrier);
+          receiverRunBlock(o, dt, claims, matchState.ballCarrier);
         else if (
           !running &&
-          ballCarrier.x >= playStart &&
+          matchState.ballCarrier.x >= matchState.playStart &&
           (o.pos === "WR" || o.pos === "TE")
         )
-          receiverAfterCatchBlock(o, ballCarrier, dt, claims);
-        else runSupportAI(o, ballCarrier, dt, claims);
+          receiverAfterCatchBlock(o, matchState.ballCarrier, dt, claims);
+        else runSupportAI(o, matchState.ballCarrier, dt, claims);
         continue;
       }
-      if (ball?.flying && receiverFlightAI(o, dt)) continue;
+      if (matchState.ball?.flying && receiverFlightAI(o, dt)) continue;
       if (["LT", "LG", "C", "RG", "RT"].includes(o.key)) {
-        if (controlMode === "line" && o.key === selectedLinemanKey)
+        if (
+          matchState.controlMode === "line" &&
+          o.key === matchState.selectedLinemanKey
+        )
           manualAthlete(o, dt, "user-block");
         else blockerAI(o, dt);
         continue;
@@ -9174,12 +9603,12 @@ export function createGame({ attach, onEvent } = {}) {
         if (running) {
           o.intent = "handoff";
           o.intentTarget = "RB";
-          arrive(o, playStart - 2.1, 26.65, dt, 0.7);
-        } else if (passThrown) {
+          arrive(o, matchState.playStart - 2.1, 26.65, dt, 0.7);
+        } else if (matchState.passThrown) {
           o.intent = "post-throw";
           o.intentTarget = null;
           arrive(o, o.x - 0.1, o.y, dt, 0.7);
-        } else if (controlMode === "offense") qbAI(o, dt);
+        } else if (matchState.controlMode === "offense") qbAI(o, dt);
         else cpuQuarterback(o, dt);
         continue;
       }
@@ -9198,7 +9627,7 @@ export function createGame({ attach, onEvent } = {}) {
         rbLeadBlock(o, dt);
       else AIroute(o, dt);
     }
-    for (let d of def) {
+    for (let d of matchState.def) {
       if (grounded.has(d.key)) continue;
       if (
         ["tackle-dive", "hit-stick", "cut-stick"].includes(d.action?.kind) &&
@@ -9210,8 +9639,8 @@ export function createGame({ attach, onEvent } = {}) {
         continue;
       }
       if (
-        controlMode === "defense" &&
-        d.key === selectedDefenderKey &&
+        matchState.controlMode === "defense" &&
+        d.key === matchState.selectedDefenderKey &&
         stickInput().mag > 0.12
       ) {
         // Manual input temporarily overrides the defender's responsibility.
@@ -9221,20 +9650,20 @@ export function createGame({ attach, onEvent } = {}) {
     resolveBlocks(dt);
     resolvePileDrive(dt);
     applyMotion(dt);
-    if (phase !== "live") return;
+    if (matchState.phase !== "live") return;
     convertQuarterbackScramble();
     if (
       running &&
-      !ballCarrier &&
-      playClock >
-        (selectedFormation === "iform"
+      !matchState.ballCarrier &&
+      matchState.playClock >
+        (matchState.selectedFormation === "iform"
           ? I_FORM_HANDOFF_SECONDS
           : DEFAULT_HANDOFF_SECONDS)
     ) {
-      tackleLinks.clear();
-      pileState = null;
-      ballCarrier = rb;
-      if (controlMode === "offense") active = rb;
+      matchState.tackleLinks.clear();
+      matchState.pileState = null;
+      matchState.ballCarrier = rb;
+      if (matchState.controlMode === "offense") matchState.active = rb;
       rb.touches++;
       message(
         "<strong>Handoff!</strong> Drive upfield; your weight and momentum can break a tackle.",
@@ -9242,15 +9671,20 @@ export function createGame({ attach, onEvent } = {}) {
       log("HANDOFF · " + rb.name);
     }
 
-    if (ball) airBall(dt);
+    if (matchState.ball) airBall(dt);
     // The quarterback has the football before a pass or handoff, despite ballCarrier
     // remaining null. Otherwise the tackle system never runs and sacks are impossible.
-    if (!running && !passThrown && !ballCarrier && contactEnabled) {
+    if (
+      !running &&
+      !matchState.passThrown &&
+      !matchState.ballCarrier &&
+      matchState.contactEnabled
+    ) {
       resolveTackles(qb, dt);
-      if (phase !== "live") return;
+      if (matchState.phase !== "live") return;
     }
-    if (ballCarrier) {
-      const p = ballCarrier;
+    if (matchState.ballCarrier) {
+      const p = matchState.ballCarrier;
       if (p.action?.kind === "dive" && p.action.age >= 0.42) {
         finish("down", p.x, p.name + " dives forward.");
         return;
@@ -9264,7 +9698,7 @@ export function createGame({ attach, onEvent } = {}) {
           110,
           p.name +
             " scores from " +
-            Math.round(110 - playStart) +
+            Math.round(110 - matchState.playStart) +
             " yards out.",
         );
         return;
@@ -9273,10 +9707,12 @@ export function createGame({ attach, onEvent } = {}) {
         finish("out", p.x, p.name + " steps out of bounds.");
         return;
       }
-      if (contactEnabled) resolveTackles(p, dt);
-      if (phase !== "live") return;
+      if (matchState.contactEnabled) resolveTackles(p, dt);
+      if (matchState.phase !== "live") return;
       // Forward progress can be ruled stopped during a sustained, crowded contact pile.
-      const crowd = def.filter((d) => !d.ground && dist(d, p) < 2.65).length;
+      const crowd = matchState.def.filter(
+        (d) => !d.ground && dist(d, p) < 2.65,
+      ).length;
       if (crowd >= 2 && Math.hypot(p.vx, p.vy) < 0.65) {
         p.stoppedProgress = (p.stoppedProgress || 0) + dt;
         if (p.stoppedProgress > 2.1) {
@@ -9292,40 +9728,49 @@ export function createGame({ attach, onEvent } = {}) {
     }
     // QB contact was already resolved above. Never force all non-rushers into
     // tackle cooldown here: it made user-blitzing safeties pass harmlessly through the QB.
-    traceAccum += dt;
-    if (traceAccum >= 0.1) {
+    matchState.traceAccum += dt;
+    if (matchState.traceAccum >= 0.1) {
       traceSample();
-      traceAccum = 0;
+      matchState.traceAccum = 0;
     }
-    if (playClock % 0.25 < dt) hud();
+    if (matchState.playClock % 0.25 < dt) hud();
   }
 
   // The action itself is cheap; exertion and contact determine the additional
   // cost. Each collision is rated, not a guaranteed special-move animation.
   function availableRunner() {
-    if (ballCarrier?.team === 0) return ballCarrier;
+    if (matchState.ballCarrier?.team === 0) return matchState.ballCarrier;
     // LT modifies quarterback face buttons into ball skills. It doesn't throw.
-    return !RUNS.has(selectedPlay) &&
-      !passThrown &&
-      (padState.lt > 0.45 || keys.alt) &&
-      phase === "live"
+    return !RUNS.has(matchState.selectedPlay) &&
+      !matchState.passThrown &&
+      (matchState.padState.lt > 0.45 || matchState.keys.alt) &&
+      matchState.phase === "live"
       ? P("QB")
       : null;
   }
   function carrierMove(kind, side = 0) {
     const a = availableRunner();
-    if (paused || phase !== "live" || !a || controlMode !== "offense")
+    if (
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      !a ||
+      matchState.controlMode !== "offense"
+    )
       return false;
-    if (moveCooldown > 0) {
+    if (matchState.moveCooldown > 0) {
       // One buffered footwork input, replaced by the most recent flick. No free
       // extra actions: fatigue and move costs apply only when it actually fires.
       if (kind === "juke" || kind === "hesi") {
-        queuedCarrierMove = { kind, side, expires: playClock + 0.42 };
+        matchState.queuedCarrierMove = {
+          kind,
+          side,
+          expires: matchState.playClock + 0.42,
+        };
         return true;
       }
       return false;
     }
-    queuedCarrierMove = null;
+    matchState.queuedCarrierMove = null;
     const exhaustion = clamp(a.stam / 0.38, 0.2, 1);
     const base =
       kind === "juke"
@@ -9354,7 +9799,7 @@ export function createGame({ attach, onEvent } = {}) {
       power: exhaustion,
     };
     // This is a timing/replant cost, not a one-move-per-play restriction.
-    moveCooldown =
+    matchState.moveCooldown =
       kind === "juke"
         ? 0.2
         : kind === "hesi"
@@ -9424,8 +9869,13 @@ export function createGame({ attach, onEvent } = {}) {
   }
   function holdStiffArm(held) {
     const a = availableRunner();
-    for (const p of off) if (p !== a) p.stiffArmHeld = false;
-    if (!a || controlMode !== "offense" || phase !== "live" || paused) {
+    for (const p of matchState.off) if (p !== a) p.stiffArmHeld = false;
+    if (
+      !a ||
+      matchState.controlMode !== "offense" ||
+      matchState.phase !== "live" ||
+      matchState.paused
+    ) {
       if (a) a.stiffArmHeld = false;
       return false;
     }
@@ -9443,7 +9893,7 @@ export function createGame({ attach, onEvent } = {}) {
     return !!a.stiffArmHeld;
   }
   function protectBall(held) {
-    const a = availableRunner() || ballCarrier;
+    const a = availableRunner() || matchState.ballCarrier;
     if (a && a.team === 0) {
       a.covering = !!held;
       return true;
@@ -9451,11 +9901,11 @@ export function createGame({ attach, onEvent } = {}) {
     return false;
   }
   function downSafe() {
-    const a = availableRunner() || ballCarrier;
+    const a = availableRunner() || matchState.ballCarrier;
     if (
-      paused ||
-      phase !== "live" ||
-      controlMode !== "offense" ||
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      matchState.controlMode !== "offense" ||
       !a ||
       a.team !== 0
     )
@@ -9468,11 +9918,11 @@ export function createGame({ attach, onEvent } = {}) {
     return true;
   }
   function diveForYards() {
-    const a = availableRunner() || ballCarrier;
+    const a = availableRunner() || matchState.ballCarrier;
     if (
-      paused ||
-      phase !== "live" ||
-      controlMode !== "offense" ||
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      matchState.controlMode !== "offense" ||
       !a ||
       a.team !== 0 ||
       a.ground ||
@@ -9527,7 +9977,7 @@ export function createGame({ attach, onEvent } = {}) {
       a.lastTruckOutcome = {
         defender: d.key,
         win,
-        at: playClock,
+        at: matchState.playClock,
         margin: +margin.toFixed(2),
       };
       actionCue(a, win ? "TRUCK" : "TRUCK STOPPED", win);
@@ -9580,8 +10030,13 @@ export function createGame({ attach, onEvent } = {}) {
   }
 
   function burst() {
-    if (paused || phase !== "live" || burstCool > 0) return;
-    const p = ballCarrier || P("QB");
+    if (
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      matchState.burstCool > 0
+    )
+      return;
+    const p = matchState.ballCarrier || P("QB");
     if (!p || p.stam < 0.13) return;
     let stick = stickInput(),
       len = Math.hypot(stick.x, stick.y);
@@ -9597,19 +10052,24 @@ export function createGame({ attach, onEvent } = {}) {
       p.vx *= hardCap / burstSpeed;
       p.vy *= hardCap / burstSpeed;
     }
-    burstTime = 0.75;
-    burstCool = 3.2;
+    matchState.burstTime = 0.75;
+    matchState.burstCool = 3.2;
     p.stam = Math.max(0.045, p.stam - 0.18);
     p.shield = Math.max(p.shield, 0.12);
     log(p.name + " accelerates · ACC " + p.ACC);
   }
   function evade() {
-    if (ballCarrier) return carrierMove("juke");
-    if (paused || phase !== "live" || evadeCool > 0) return;
-    const p = ballCarrier || P("QB");
+    if (matchState.ballCarrier) return carrierMove("juke");
+    if (
+      matchState.paused ||
+      matchState.phase !== "live" ||
+      matchState.evadeCool > 0
+    )
+      return;
+    const p = matchState.ballCarrier || P("QB");
     if (!p) return;
-    evadeTime = 0.45;
-    evadeCool = 2.6;
+    matchState.evadeTime = 0.45;
+    matchState.evadeCool = 2.6;
     p.stam = Math.max(0.3, p.stam - 0.15);
     const dir = stickInput();
     p.vy +=
@@ -9624,26 +10084,31 @@ export function createGame({ attach, onEvent } = {}) {
 
   function receiverPromptTargets() {
     if (
-      controlMode !== "offense" ||
-      possession !== 0 ||
-      paused ||
-      matchOver ||
-      specialState ||
-      (tryState && tryState.mode !== "two") ||
-      (phase !== "presnap" && phase !== "live") ||
-      RUNS.has(selectedPlay) ||
-      passThrown ||
-      ball?.flying ||
-      ballCarrier
+      matchState.controlMode !== "offense" ||
+      matchState.possession !== 0 ||
+      matchState.paused ||
+      matchState.matchOver ||
+      matchState.specialState ||
+      (matchState.tryState && matchState.tryState.mode !== "two") ||
+      (matchState.phase !== "presnap" && matchState.phase !== "live") ||
+      RUNS.has(matchState.selectedPlay) ||
+      matchState.passThrown ||
+      matchState.ball?.flying ||
+      matchState.ballCarrier
     )
       return [];
     // Dropback possession is implicit until the QB throws or becomes a runner.
     const qb = P("QB");
-    if (!qb || (phase === "live" && (active !== qb || qb.x > playStart + 0.1)))
+    if (
+      !qb ||
+      (matchState.phase === "live" &&
+        (matchState.active !== qb || qb.x > matchState.playStart + 0.1))
+    )
       return [];
     return eligibleTargets();
   }
   function emitPresentation(event) {
+    if (tickEvents) tickEvents.push(structuredClone(event));
     presentation?.emit(event);
     onEvent?.(event);
   }
@@ -9665,313 +10130,313 @@ export function createGame({ attach, onEvent } = {}) {
   const presentation = attach?.({
     chooseCoinToss,
     get sheetFocusKey() {
-      return sheetFocusKey;
+      return matchState.sheetFocusKey;
     },
     set sheetFocusKey(value) {
-      sheetFocusKey = value;
+      matchState.sheetFocusKey = value;
     },
     set sheetFocusIndex(value) {
-      sheetFocusIndex = value;
+      matchState.sheetFocusIndex = value;
     },
     get sheetFocusIndex() {
-      return sheetFocusIndex;
+      return matchState.sheetFocusIndex;
     },
     get TEAM_STYLES() {
       return TEAM_STYLES;
     },
     get active() {
-      return active;
+      return matchState.active;
     },
     get airSelection() {
-      return airSelection;
+      return matchState.airSelection;
     },
     get AUDIBLE_BUTTONS() {
       return AUDIBLE_BUTTONS;
     },
     get audibleOpen() {
-      return audibleOpen;
+      return matchState.audibleOpen;
     },
     get ball() {
-      return ball;
+      return matchState.ball;
     },
     get ballCarrier() {
-      return ballCarrier;
+      return matchState.ballCarrier;
     },
     get blockLinks() {
-      return blockLinks;
+      return matchState.blockLinks;
     },
     get burstCool() {
-      return burstCool;
+      return matchState.burstCool;
     },
     get burstTime() {
-      return burstTime;
+      return matchState.burstTime;
     },
     get controlMode() {
-      return controlMode;
+      return matchState.controlMode;
     },
     get coverageDesc() {
       return coverageDesc;
     },
     get coveragePreference() {
-      return coveragePreference;
+      return matchState.coveragePreference;
     },
     set coveragePreference(value) {
-      coveragePreference = value;
+      matchState.coveragePreference = value;
     },
     get custom() {
-      return custom;
+      return matchState.custom;
     },
     get def() {
-      return def;
+      return matchState.def;
     },
     get defenseDesc() {
       return defenseDesc;
     },
     get down() {
-      return down;
+      return matchState.down;
     },
     get first() {
-      return first;
+      return matchState.first;
     },
     get flash() {
-      return flash;
+      return matchState.flash;
     },
     set flash(value) {
-      flash = value;
+      matchState.flash = value;
     },
     get formationDesc() {
       return formationDesc;
     },
     get gameFlowNote() {
-      return gameFlowNote;
+      return matchState.gameFlowNote;
     },
     get gamepadStatusLast() {
-      return gamepadStatusLast;
+      return matchState.gamepadStatusLast;
     },
     set gamepadStatusLast(value) {
-      gamepadStatusLast = value;
+      matchState.gamepadStatusLast = value;
     },
     get gameStarted() {
-      return gameStarted;
+      return matchState.gameStarted;
     },
     get H() {
       return H;
     },
     get intended() {
-      return intended;
+      return matchState.intended;
     },
     get joystick() {
-      return joystick;
+      return matchState.joystick;
     },
     get keys() {
-      return keys;
+      return matchState.keys;
     },
     get lastContact() {
-      return lastContact;
+      return matchState.lastContact;
     },
     get lastTraceMeta() {
-      return lastTraceMeta;
+      return matchState.lastTraceMeta;
     },
     get logs() {
-      return logs;
+      return matchState.logs;
     },
     get manualDrive() {
-      return manualDrive;
+      return matchState.manualDrive;
     },
     set manualDrive(value) {
-      manualDrive = value;
+      matchState.manualDrive = value;
     },
     get manualReceiver() {
-      return manualReceiver;
+      return matchState.manualReceiver;
     },
     get moveCooldown() {
-      return moveCooldown;
+      return matchState.moveCooldown;
     },
     get MPS_TO_MPH() {
       return MPS_TO_MPH;
     },
     get off() {
-      return off;
+      return matchState.off;
     },
     get padState() {
-      return padState;
+      return matchState.padState;
     },
     get PASS_ICONS() {
       return PASS_ICONS;
     },
     get passThrown() {
-      return passThrown;
+      return matchState.passThrown;
     },
     get paused() {
-      return paused;
+      return matchState.paused;
     },
     set paused(value) {
-      paused = value;
+      matchState.paused = value;
     },
     get pendingPass() {
-      return pendingPass;
+      return matchState.pendingPass;
     },
     set pendingPass(value) {
-      pendingPass = value;
+      matchState.pendingPass = value;
     },
     get phase() {
-      return phase;
+      return matchState.phase;
     },
     get pileState() {
-      return pileState;
+      return matchState.pileState;
     },
     get playbookOpen() {
-      return playbookOpen;
+      return matchState.playbookOpen;
     },
     get playClock() {
-      return playClock;
+      return matchState.playClock;
     },
     get players() {
-      return players;
+      return matchState.players;
     },
     get plays() {
       return plays;
     },
     get playSeconds() {
-      return playSeconds;
+      return matchState.playSeconds;
     },
     set playSeconds(value) {
-      playSeconds = value;
+      matchState.playSeconds = value;
     },
     get playStart() {
-      return playStart;
+      return matchState.playStart;
     },
     get playTrace() {
-      return playTrace;
+      return matchState.playTrace;
     },
     get possession() {
-      return possession;
+      return matchState.possession;
     },
     get pressureDesc() {
       return pressureDesc;
     },
     get pressurePreference() {
-      return pressurePreference;
+      return matchState.pressurePreference;
     },
     set pressurePreference(value) {
-      pressurePreference = value;
+      matchState.pressurePreference = value;
     },
     get quarter() {
-      return quarter;
+      return matchState.quarter;
     },
     get quarterSeconds() {
-      return quarterSeconds;
+      return matchState.quarterSeconds;
     },
     get queuedCarrierMove() {
-      return queuedCarrierMove;
+      return matchState.queuedCarrierMove;
     },
     set queuedCarrierMove(value) {
-      queuedCarrierMove = value;
+      matchState.queuedCarrierMove = value;
     },
     get returnCall() {
-      return returnCall;
+      return matchState.returnCall;
     },
     set returnCall(value) {
-      returnCall = value;
+      matchState.returnCall = value;
     },
     get returnFairCatch() {
-      return returnFairCatch;
+      return matchState.returnFairCatch;
     },
     set returnFairCatch(value) {
-      returnFairCatch = value;
+      matchState.returnFairCatch = value;
     },
     get rightStickDirection() {
-      return rightStickDirection;
+      return matchState.rightStickDirection;
     },
     set rightStickDirection(value) {
-      rightStickDirection = value;
+      matchState.rightStickDirection = value;
     },
     get rightStickLatched() {
-      return rightStickLatched;
+      return matchState.rightStickLatched;
     },
     set rightStickLatched(value) {
-      rightStickLatched = value;
+      matchState.rightStickLatched = value;
     },
     get RUNS() {
       return RUNS;
     },
     get scrimmagePlayCalled() {
-      return scrimmagePlayCalled;
+      return matchState.scrimmagePlayCalled;
     },
     set scrimmagePlayCalled(value) {
-      scrimmagePlayCalled = value;
+      matchState.scrimmagePlayCalled = value;
     },
     get secondHalfReceiver() {
-      return secondHalfReceiver;
+      return matchState.secondHalfReceiver;
     },
     get selectedCoverage() {
-      return selectedCoverage;
+      return matchState.selectedCoverage;
     },
     get selectedDefenderKey() {
-      return selectedDefenderKey;
+      return matchState.selectedDefenderKey;
     },
     get selectedFormation() {
-      return selectedFormation;
+      return matchState.selectedFormation;
     },
     set selectedFormation(value) {
-      selectedFormation = value;
+      matchState.selectedFormation = value;
     },
     get selectedFront() {
-      return selectedFront;
+      return matchState.selectedFront;
     },
     set selectedFront(value) {
-      selectedFront = value;
+      matchState.selectedFront = value;
     },
     get selectedLinemanKey() {
-      return selectedLinemanKey;
+      return matchState.selectedLinemanKey;
     },
     get selectedPlay() {
-      return selectedPlay;
+      return matchState.selectedPlay;
     },
     get selectedPressure() {
-      return selectedPressure;
+      return matchState.selectedPressure;
     },
     get shake() {
-      return shake;
+      return matchState.shake;
     },
     get specialState() {
-      return specialState;
+      return matchState.specialState;
     },
     get suppressManualUntilNeutral() {
-      return suppressManualUntilNeutral;
+      return matchState.suppressManualUntilNeutral;
     },
     set suppressManualUntilNeutral(value) {
-      suppressManualUntilNeutral = value;
+      matchState.suppressManualUntilNeutral = value;
     },
     get tackleLinks() {
-      return tackleLinks;
+      return matchState.tackleLinks;
     },
     get TEAM_NAMES() {
       return TEAM_NAMES;
     },
     get teamPoints() {
-      return teamPoints;
+      return matchState.teamPoints;
     },
     get timeOuts() {
-      return timeOuts;
+      return matchState.timeOuts;
     },
     get togo() {
-      return togo;
+      return matchState.togo;
     },
     get tossPadPrevious() {
-      return tossPadPrevious;
+      return matchState.tossPadPrevious;
     },
     set tossPadPrevious(value) {
-      tossPadPrevious = value;
+      matchState.tossPadPrevious = value;
     },
     get tossStage() {
-      return tossStage;
+      return matchState.tossStage;
     },
     get totalClock() {
-      return totalClock;
+      return matchState.totalClock;
     },
     get tryState() {
-      return tryState;
+      return matchState.tryState;
     },
     get W() {
       return W;
@@ -9980,19 +10445,19 @@ export function createGame({ attach, onEvent } = {}) {
       return XBOX;
     },
     get xDiveFired() {
-      return xDiveFired;
+      return matchState.xDiveFired;
     },
     set xDiveFired(value) {
-      xDiveFired = value;
+      matchState.xDiveFired = value;
     },
     get xHoldStart() {
-      return xHoldStart;
+      return matchState.xHoldStart;
     },
     set xHoldStart(value) {
-      xHoldStart = value;
+      matchState.xHoldStart = value;
     },
     get yard() {
-      return yard;
+      return matchState.yard;
     },
     get YARD_M() {
       return YARD_M;
@@ -10056,7 +10521,62 @@ export function createGame({ attach, onEvent } = {}) {
   });
   startNewMatch();
   presentation?.startFrames();
+  function snapshot() {
+    return captureMatchSnapshot(matchState);
+  }
+
+  function restore(snapshot) {
+    const restored = readMatchSnapshot(snapshot);
+    if (
+      !restored ||
+      Object.getPrototypeOf(restored) !== Object.prototype ||
+      Object.keys(restored).length !== Object.keys(matchState).length ||
+      Object.keys(matchState).some((key) => !Object.hasOwn(restored, key))
+    ) {
+      throw new TypeError("Invalid CHAOS match state");
+    }
+    Object.assign(matchState, restored);
+  }
+
+  function advanceTick(commands) {
+    // Keyboard, controller, and AI translation still live at their existing entry points.
+    const actions = {
+      coinToss: ({ choice }) => chooseCoinToss(choice),
+      selectPlay: ({ play }) => choosePlay(play),
+      snap: () => snap(),
+      pass: ({ receiver, hold }) => passTo(receiver, hold),
+    };
+    for (const command of commands) {
+      if (!command || !Object.hasOwn(actions, command.type)) {
+        throw new TypeError("Unknown CHAOS tick command");
+      }
+    }
+    const events = [];
+    tickEvents = events;
+    try {
+      for (const command of commands) actions[command.type](command);
+      if (!matchState.paused) {
+        if (matchState.phase === "dead") {
+          for (const player of matchState.players) {
+            if (player.ground?.kind === "tackle")
+              tickGround(player, TICK_SECONDS);
+          }
+        }
+        gameTick(TICK_SECONDS);
+        if (matchState.phase === "live") update(TICK_SECONDS);
+        if (matchState.phase === "presnap")
+          positionSelectedDefender(TICK_SECONDS);
+      }
+    } finally {
+      tickEvents = null;
+    }
+    return events;
+  }
+
   const debug = {
+    captureSnapshot: snapshot,
+    restoreSnapshot: restore,
+    advanceTick,
     policies: Object.freeze({
       AnimationPolicy,
       BlockingPolicy,
@@ -10070,46 +10590,52 @@ export function createGame({ attach, onEvent } = {}) {
       const d = P(key);
       if (!d || d.team !== 1) return false;
       d.conservativeHeld = !!held;
-      d.conservativeUntil = held ? playClock + 0.15 : 0;
+      d.conservativeUntil = held ? matchState.playClock + 0.15 : 0;
       return true;
     },
     getDefensiveMemory: (team = 0) => DefensiveMemory.report(team),
     getDefensivePosition: () => ({
-      key: selectedDefenderKey,
-      assignment: DefensivePresnap.description(P(selectedDefenderKey)),
+      key: matchState.selectedDefenderKey,
+      assignment: DefensivePresnap.description(
+        P(matchState.selectedDefenderKey),
+      ),
       gapTarget: DefensivePresnap.gapTarget(
-        P(selectedDefenderKey),
-        off,
-        playStart,
+        P(matchState.selectedDefenderKey),
+        matchState.off,
+        matchState.playStart,
       ),
     }),
     debugPositionDefender: (key, x, y) => {
-      if (phase !== "presnap" || controlMode !== "defense") return false;
-      selectedDefenderKey = key;
-      active = P(key);
-      if (!active || active.team !== 1) return false;
-      const dx = x - active.x,
-        dy = y - active.y;
+      if (
+        matchState.phase !== "presnap" ||
+        matchState.controlMode !== "defense"
+      )
+        return false;
+      matchState.selectedDefenderKey = key;
+      matchState.active = P(key);
+      if (!matchState.active || matchState.active.team !== 1) return false;
+      const dx = x - matchState.active.x,
+        dy = y - matchState.active.y;
       const length = Math.hypot(dx, dy);
       for (let i = 0; i < Math.ceil(length / 0.055) && i < 1500; i++) {
         const step = DefensivePresnap.move(
-          active,
+          matchState.active,
           { x: dx / (length || 1), y: dy / (length || 1) },
           1 / 60,
-          playStart,
-          def,
+          matchState.playStart,
+          matchState.def,
         );
         if (!step) break;
-        active.x = step.x;
-        active.y = step.y;
+        matchState.active.x = step.x;
+        matchState.active.y = step.y;
       }
-      if (active.assignment?.kind === "zone") {
-        const a = active.assignment;
+      if (matchState.active.assignment?.kind === "zone") {
+        const a = matchState.active.assignment;
         if (a.homeX === undefined) {
           a.homeX = a.baseX;
           a.homeY = a.baseY;
         }
-        const v = DefensivePresnap.zoneAnchor(active);
+        const v = DefensivePresnap.zoneAnchor(matchState.active);
         a.baseX = v.x;
         a.baseY = v.y;
       }
@@ -10126,36 +10652,41 @@ export function createGame({ attach, onEvent } = {}) {
     defensiveFaceButton,
     cycleSheetFormation,
     debugDefensePresnap: () => {
-      possession = 1;
+      matchState.possession = 1;
       selectControlMode("defense");
       setup();
-      playSeconds = 20;
-      scrimmagePlayCalled = true;
+      matchState.playSeconds = 20;
+      matchState.scrimmagePlayCalled = true;
       hud();
     },
     getAudibles: () => ({
-      open: audibleOpen,
+      open: matchState.audibleOpen,
       choices: audibleChoices(),
-      clock: playSeconds,
+      clock: matchState.playSeconds,
     }),
     openAudibles,
     applyAudible,
     getSheet: () => ({
-      open: playbookOpen,
-      index: sheetFocusIndex,
+      open: matchState.playbookOpen,
+      index: matchState.sheetFocusIndex,
       items: presentation?.getSheetItems() ?? [],
     }),
     debugCpuTiming: () =>
       CpuQBPolicy.minimumSettle(
-        selectedPlay,
+        matchState.selectedPlay,
         P("QB")?.DEC || 75,
         P("QB")?.VIS || 75,
       ),
     debugRushTarget: (key) =>
-      RushAwareness.target(P(key), P("QB"), playStart, playClock),
-    debugWhistle: (type) => finish(type, playStart, type),
+      RushAwareness.target(
+        P(key),
+        P("QB"),
+        matchState.playStart,
+        matchState.playClock,
+      ),
+    debugWhistle: (type) => finish(type, matchState.playStart, type),
     debugForceWhistleAt: (type, x) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       finish(type, x, "Test whistle");
       return true;
     },
@@ -10164,7 +10695,8 @@ export function createGame({ attach, onEvent } = {}) {
     requestTimeout,
     nextDown,
     startKick: kickSpecial,
-    getProtectionRead: () => (protectionRead ? { ...protectionRead } : null),
+    getProtectionRead: () =>
+      matchState.protectionRead ? { ...matchState.protectionRead } : null,
     debugProtectionStep: () => {
       const rb = P("RB");
       if (!rb) return null;
@@ -10175,110 +10707,114 @@ export function createGame({ attach, onEvent } = {}) {
     startThirdQuarter,
     applyDelayOfGame,
     getCoinToss: () => ({
-      stage: tossStage,
-      call: tossCall,
-      winner: tossWinner,
-      firstHalfReceiver,
-      secondHalfReceiver,
+      stage: matchState.tossStage,
+      call: matchState.tossCall,
+      winner: matchState.tossWinner,
+      firstHalfReceiver: matchState.firstHalfReceiver,
+      secondHalfReceiver: matchState.secondHalfReceiver,
     }),
     debugFinishCoinToss: (call = "heads", choice = "receive") => {
-      if (tossStage === "call") flipCoin(call);
-      if (tossStage === "decision") {
-        tossWinner = 0;
+      if (matchState.tossStage === "call") flipCoin(call);
+      if (matchState.tossStage === "decision") {
+        matchState.tossWinner = 0;
         resolveToss(choice);
       }
-      return tossStage;
+      return matchState.tossStage;
     },
     getMatch: () => ({
-      gameFlowNote,
-      penaltyCount,
-      phase,
-      quarter,
-      quarterSeconds,
-      playSeconds,
-      clockRunning,
-      teamPoints: [...teamPoints],
-      possession,
-      controlMode,
-      returnCall,
+      gameFlowNote: matchState.gameFlowNote,
+      penaltyCount: matchState.penaltyCount,
+      phase: matchState.phase,
+      quarter: matchState.quarter,
+      quarterSeconds: matchState.quarterSeconds,
+      playSeconds: matchState.playSeconds,
+      clockRunning: matchState.clockRunning,
+      teamPoints: [...matchState.teamPoints],
+      possession: matchState.possession,
+      controlMode: matchState.controlMode,
+      returnCall: matchState.returnCall,
       kicker: { ...kickRatings() },
-      timeOuts: [...timeOuts],
-      specialState: specialState ? { ...specialState } : null,
-      tryState: tryState ? { ...tryState } : null,
-      postWhistle,
-      matchOver,
-      playbookOpen,
+      timeOuts: [...matchState.timeOuts],
+      specialState: matchState.specialState
+        ? { ...matchState.specialState }
+        : null,
+      tryState: matchState.tryState ? { ...matchState.tryState } : null,
+      postWhistle: matchState.postWhistle,
+      matchOver: matchState.matchOver,
+      playbookOpen: matchState.playbookOpen,
     }),
     debugSetQuarterTime: (v) => {
-      quarterSeconds = v;
+      matchState.quarterSeconds = v;
       hud();
     },
     debugSetPlayClock: (v) => {
-      playSeconds = v;
+      matchState.playSeconds = v;
       hud();
     },
     debugSetSpot: (x, d = 1) => {
-      yard = x;
-      down = d;
-      first = x + 10;
-      togo = 10;
+      matchState.yard = x;
+      matchState.down = d;
+      matchState.first = x + 10;
+      matchState.togo = 10;
       setup();
       hud();
     },
     getTrace: () => ({
-      meta: lastTraceMeta,
-      samples: playTrace.length,
-      last: playTrace.at(-1) || null,
+      meta: matchState.lastTraceMeta,
+      samples: matchState.playTrace.length,
+      last: matchState.playTrace.at(-1) || null,
     }),
     getVisual,
     getController: () => ({
-      connected: padState.connected,
-      index: padState.index,
-      id: padState.id,
-      standard: padState.standard,
-      lx: padState.lx,
-      ly: padState.ly,
-      rx: padState.rx,
-      ry: padState.ry,
-      lt: padState.lt,
-      rt: padState.rt,
-      paused,
+      connected: matchState.padState.connected,
+      index: matchState.padState.index,
+      id: matchState.padState.id,
+      standard: matchState.padState.standard,
+      lx: matchState.padState.lx,
+      ly: matchState.padState.ly,
+      rx: matchState.padState.rx,
+      ry: matchState.padState.ry,
+      lt: matchState.padState.lt,
+      rt: matchState.padState.rt,
+      paused: matchState.paused,
     }),
     getSteering: () => ({ viewMode: getVisualMode(), ...stickInput() }),
     getState: () => ({
-      paused,
-      manualDrive,
-      controlMode,
-      selectedDefenderKey,
-      selectedLinemanKey,
-      moveCooldown,
-      queuedCarrierMove: queuedCarrierMove ? { ...queuedCarrierMove } : null,
-      rightStickLatched,
-      rightStickDirection,
-      burstCool,
-      evadeCool,
-      formation: selectedFormation,
-      front: selectedFront,
-      coverage: selectedCoverage,
-      coveragePreference,
-      pressure: selectedPressure,
-      pressurePreference,
-      airSelection: { ...airSelection },
-      airCounters: { ...airCounters },
-      lastAirResult,
-      play: selectedPlay,
-      phase,
-      score,
-      down,
-      yard,
-      togo,
-      playClock,
-      ballCarrier: ballCarrier?.key,
-      target: intended?.key,
-      passThrown,
-      manualReceiver,
-      active: active?.key,
-      passProtection: players
+      paused: matchState.paused,
+      manualDrive: matchState.manualDrive,
+      controlMode: matchState.controlMode,
+      selectedDefenderKey: matchState.selectedDefenderKey,
+      selectedLinemanKey: matchState.selectedLinemanKey,
+      moveCooldown: matchState.moveCooldown,
+      queuedCarrierMove: matchState.queuedCarrierMove
+        ? { ...matchState.queuedCarrierMove }
+        : null,
+      rightStickLatched: matchState.rightStickLatched,
+      rightStickDirection: matchState.rightStickDirection,
+      burstCool: matchState.burstCool,
+      evadeCool: matchState.evadeCool,
+      formation: matchState.selectedFormation,
+      front: matchState.selectedFront,
+      coverage: matchState.selectedCoverage,
+      coveragePreference: matchState.coveragePreference,
+      pressure: matchState.selectedPressure,
+      pressurePreference: matchState.pressurePreference,
+      airSelection: { ...matchState.airSelection },
+      airCounters: { ...matchState.airCounters },
+      lastAirResult: matchState.lastAirResult,
+      play: matchState.selectedPlay,
+      phase: matchState.phase,
+      score: matchState.score,
+      down: matchState.down,
+      yard: matchState.yard,
+      togo: matchState.togo,
+      playClock: matchState.playClock,
+      ballCarrier: matchState.ballCarrier?.key,
+      target: matchState.intended?.key,
+      passThrown: matchState.passThrown,
+      manualReceiver: matchState.manualReceiver,
+      active: matchState.active?.key,
+      passProtection: matchState.players
         .filter((p) => ["LT", "LG", "C", "RG", "RT", "RB"].includes(p.key))
         .map((p) => ({
           key: p.key,
@@ -10287,51 +10823,56 @@ export function createGame({ attach, onEvent } = {}) {
           intent: p.intent,
           target: p.intentTarget,
         })),
-      cpuQB: { ...cpuQB, choice: cpuQB.choice?.key || null },
+      cpuQB: {
+        ...matchState.cpuQB,
+        choice: matchState.cpuQB.choice?.key || null,
+      },
       viewMode: getVisualMode(),
       flightMarkers: flightMarkers(),
-      ball: ball
+      ball: matchState.ball
         ? {
-            x: ball.x,
-            y: ball.y,
-            z: ball.z,
-            flight: ball.flight,
-            aimX: ball.aimX,
-            aimY: ball.aimY,
-            quality: ball.quality,
-            accuracyError: ball.accuracyError,
-            style: ball.style,
-            loft: ball.loft,
+            x: matchState.ball.x,
+            y: matchState.ball.y,
+            z: matchState.ball.z,
+            flight: matchState.ball.flight,
+            aimX: matchState.ball.aimX,
+            aimY: matchState.ball.aimY,
+            quality: matchState.ball.quality,
+            accuracyError: matchState.ball.accuracyError,
+            style: matchState.ball.style,
+            loft: matchState.ball.loft,
           }
         : null,
-      pendingPass: pendingPass ? { ...pendingPass } : null,
-      fatigueBank: { ...fatigueBank },
-      pile: pileState
+      pendingPass: matchState.pendingPass
+        ? { ...matchState.pendingPass }
+        : null,
+      fatigueBank: { ...matchState.fatigueBank },
+      pile: matchState.pileState
         ? {
-            ...pileState,
-            pushers: [...pileState.pushers],
-            wrappers: [...pileState.wrappers],
+            ...matchState.pileState,
+            pushers: [...matchState.pileState.pushers],
+            wrappers: [...matchState.pileState.wrappers],
           }
         : null,
       contacts: {
-        pileStarts,
-        pilePushYards,
-        chainHits,
-        windedHits,
-        standUps,
-        hitStickCount,
-        impactBlockCount,
-        powerMoveCount,
-        tackles: [...tackleLinks.values()].map((t) => ({
+        pileStarts: matchState.pileStarts,
+        pilePushYards: matchState.pilePushYards,
+        chainHits: matchState.chainHits,
+        windedHits: matchState.windedHits,
+        standUps: matchState.standUps,
+        hitStickCount: matchState.hitStickCount,
+        impactBlockCount: matchState.impactBlockCount,
+        powerMoveCount: matchState.powerMoveCount,
+        tackles: [...matchState.tackleLinks.values()].map((t) => ({
           ...t,
           attachment: t.attachment ? { ...t.attachment } : null,
         })),
-        blocks: [...blockLinks.values()].map((t) => ({ ...t })),
-        tackleCount,
-        brokenTackleCount,
-        blockShedCount,
+        blocks: [...matchState.blockLinks.values()].map((t) => ({ ...t })),
+        tackleCount: matchState.tackleCount,
+        brokenTackleCount: matchState.brokenTackleCount,
+        blockShedCount: matchState.blockShedCount,
       },
-      players: players.map((p) => ({
+      players: matchState.players.map((p) => ({
         key: p.key,
         team: p.team,
         pos: p.pos,
@@ -10447,8 +10988,8 @@ export function createGame({ attach, onEvent } = {}) {
         squareImpact: p.squareImpact ? { ...p.squareImpact } : null,
         contactCount: p.contactCount,
       })),
-      lastContact,
-      logs: [...logs],
+      lastContact: matchState.lastContact,
+      logs: [...matchState.logs],
     }),
     select: choosePlay,
     snap,
@@ -10492,8 +11033,8 @@ export function createGame({ attach, onEvent } = {}) {
       progress = 0.7,
       receiverKey = null,
     ) => {
-      if (phase !== "live") return false;
-      ball = {
+      if (matchState.phase !== "live") return false;
+      matchState.ball = {
         x,
         y,
         z,
@@ -10510,16 +11051,17 @@ export function createGame({ attach, onEvent } = {}) {
         attempts: [],
         deflected: false,
       };
-      intended = receiverKey ? P(receiverKey) : null;
-      passThrown = true;
+      matchState.intended = receiverKey ? P(receiverKey) : null;
+      matchState.passThrown = true;
       hud();
       return true;
     },
     step: (n) => {
-      for (let i = 0; i < n && phase === "live"; i++) update(1 / 60);
+      for (let i = 0; i < n && matchState.phase === "live"; i++)
+        update(TICK_SECONDS);
     },
     getPhysics: (key) => {
-      const p = custom[key];
+      const p = matchState.custom[key];
       return p
         ? {
             massKg: mass(p),
@@ -10530,7 +11072,7 @@ export function createGame({ attach, onEvent } = {}) {
           }
         : null;
     },
-    custom,
+    custom: matchState.custom,
     debugSeed: seed,
     debugPursuitAim: (key, carrier = "RB") => {
       const d = P(key),
@@ -10563,7 +11105,9 @@ export function createGame({ attach, onEvent } = {}) {
       const o = P(blocker),
         d = P(defender),
         a = P(carrier);
-      return o && d && a ? InsideZoneIQ.threat(o, d, a, playStart) : null;
+      return o && d && a
+        ? InsideZoneIQ.threat(o, d, a, matchState.playStart)
+        : null;
     },
     debugBlockAim: (blocker, defender, carrier = "RB") => {
       const o = P(blocker),
@@ -10577,20 +11121,20 @@ export function createGame({ attach, onEvent } = {}) {
       return p ? quarterbackWindow(P("QB"), p) : null;
     },
     debugForceCarrier: (key) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       const p = P(key);
       if (!p || p.team !== 0) return false;
-      tackleLinks.clear();
-      pileState = null;
-      ballCarrier = p;
-      active = p;
-      passThrown = true;
+      matchState.tackleLinks.clear();
+      matchState.pileState = null;
+      matchState.ballCarrier = p;
+      matchState.active = p;
+      matchState.passThrown = true;
       return true;
     },
     debugMissTackle: (key) => {
-      if (phase !== "live" || !ballCarrier) return false;
+      if (matchState.phase !== "live" || !matchState.ballCarrier) return false;
       const d = P(key),
-        a = ballCarrier;
+        a = matchState.ballCarrier;
       if (!d || d.team !== 1) return false;
       d.x = a.x + radius(a) + radius(d) + 0.05;
       d.y = a.y;
@@ -10665,27 +11209,27 @@ export function createGame({ attach, onEvent } = {}) {
       return v && a ? groundContact(v, a, impulse, speed, nx, ny) : false;
     },
     debugSetContactEnabled: (enabled) => {
-      contactEnabled = !!enabled;
-      if (!contactEnabled) tackleLinks.clear();
+      matchState.contactEnabled = !!enabled;
+      if (!matchState.contactEnabled) matchState.tackleLinks.clear();
     },
     debugResolveTackle: (n = 1) => {
-      if (phase !== "live" || !ballCarrier) return false;
-      for (let i = 0; i < n && phase === "live"; i++)
-        resolveTackles(ballCarrier, 1 / 60);
+      if (matchState.phase !== "live" || !matchState.ballCarrier) return false;
+      for (let i = 0; i < n && matchState.phase === "live"; i++)
+        resolveTackles(matchState.ballCarrier, 1 / 60);
       return true;
     },
     debugBlockPair: (offense, defense) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       const o = P(offense),
         d = P(defense);
       if (!o || !d || o.team !== 0 || d.team !== 1) return false;
       blockBattle(o, d, 1 / 60);
-      return blockLinks.has(offense);
+      return matchState.blockLinks.has(offense);
     },
     debugAnatomy: (key) => {
       const p = P(key);
       return p
-        ? AnatomyHitboxes.sample(p, { presnap: phase === "presnap" })
+        ? AnatomyHitboxes.sample(p, { presnap: matchState.phase === "presnap" })
         : null;
     },
     debugAnatomyPair: (one, two) => {
@@ -10707,11 +11251,11 @@ export function createGame({ attach, onEvent } = {}) {
       defender = "MLB",
       approach = "front",
     ) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       const a = P(runner),
         d = P(defender);
       if (!a || !d || a.team !== 0 || d.team !== 1) return false;
-      for (const p of players) {
+      for (const p of matchState.players) {
         if (p !== a && p !== d) {
           p.x = p.team === 0 ? 18 : 108;
           p.y = (p.key.charCodeAt(0) % 42) + 5;
@@ -10719,11 +11263,11 @@ export function createGame({ attach, onEvent } = {}) {
           p.vy = 0;
         }
       }
-      ballCarrier = a;
-      active = a;
-      passThrown = true;
-      tackleLinks.clear();
-      pileState = null;
+      matchState.ballCarrier = a;
+      matchState.active = a;
+      matchState.passThrown = true;
+      matchState.tackleLinks.clear();
+      matchState.pileState = null;
       a.x = 75;
       a.y = 26;
       a.vx = 1.4;
@@ -10751,8 +11295,8 @@ export function createGame({ attach, onEvent } = {}) {
       d.lowDiveImpactAt = -999;
       d.action = { kind: "tackle-dive", time: 0.43, age: 0.1, used: false };
       ChaosContactEvidence.reset();
-      lowDiveContacts = 0;
-      lastLowDiveImpact = null;
+      matchState.lowDiveContacts = 0;
+      matchState.lastLowDiveImpact = null;
       return true;
     },
     debugDiveCollision: (
@@ -10769,24 +11313,24 @@ export function createGame({ attach, onEvent } = {}) {
       return ChaosDiveCollision.evaluate(oldA, a, oldD, d);
     },
     debugLowContact: () => ({
-      footContacts,
-      lastFootContact,
-      carrierAir: ballCarrier?.airState || null,
+      footContacts: matchState.footContacts,
+      lastFootContact: matchState.lastFootContact,
+      carrierAir: matchState.ballCarrier?.airState || null,
     }),
     debugFootScenario: (runner = "RB", defender = "MLB", kind = "dive") => {
       const r = P(runner),
         d = P(defender);
       if (!r || !d) return false;
-      for (const p of players)
+      for (const p of matchState.players)
         if (p !== r && p !== d) {
           p.x = p.team === 0 ? 18 : 106;
           p.y = 2 + (p.key.charCodeAt(0) % 40);
         }
-      ballCarrier = r;
-      active = r;
-      passThrown = true;
-      specialState = null;
-      tackleLinks.clear();
+      matchState.ballCarrier = r;
+      matchState.active = r;
+      matchState.passThrown = true;
+      matchState.specialState = null;
+      matchState.tackleLinks.clear();
       r.x = 70;
       r.y = 26;
       r.vx = 5;
@@ -10815,8 +11359,8 @@ export function createGame({ attach, onEvent } = {}) {
     },
     debugForceGripEscape: (key = "MLB", recoverImmediately = false) => {
       const d = P(key),
-        a = ballCarrier;
-      if (!d || !a || !tackleLinks.has(key)) return false;
+        a = matchState.ballCarrier;
+      if (!d || !a || !matchState.tackleLinks.has(key)) return false;
       releaseTackle(d, a, "escape", { effort: 0.5, kind: "break tackle" });
       if (recoverImmediately) {
         d.ground = null;
@@ -10827,7 +11371,7 @@ export function createGame({ attach, onEvent } = {}) {
       return true;
     },
     debugEscapeReactions: () =>
-      players
+      matchState.players
         .filter((p) => p.escapeReaction)
         .map((p) => ({
           key: p.key,
@@ -10836,7 +11380,7 @@ export function createGame({ attach, onEvent } = {}) {
           intensity: p.escapeReaction.intensity,
         })),
     debugEscapeContests: () =>
-      [...tackleLinks.values()].map((t) => ({
+      [...matchState.tackleLinks.values()].map((t) => ({
         defender: t.defender,
         style: t.style,
         grip: t.grip,
@@ -10846,26 +11390,26 @@ export function createGame({ attach, onEvent } = {}) {
       })),
     debugContactEvidence: () => ({
       events: ChaosContactEvidence.history(),
-      lastAnatomyTackle,
-      lowDiveContacts,
-      lastLowDiveImpact,
-      footContacts,
-      lastFootContact,
+      lastAnatomyTackle: matchState.lastAnatomyTackle,
+      lowDiveContacts: matchState.lowDiveContacts,
+      lastLowDiveImpact: matchState.lastLowDiveImpact,
+      footContacts: matchState.footContacts,
+      lastFootContact: matchState.lastFootContact,
     }),
     debugContactCategory: (carrier, defender) => {
       const a = P(carrier),
         d = P(defender);
       return a && d
-        ? ChaosContactOutcomes.evaluate(a, d, tackleLinks.get(d.key))
+        ? ChaosContactOutcomes.evaluate(a, d, matchState.tackleLinks.get(d.key))
         : null;
     },
     debugTackleWatch: (enabled = true) => {
-      tackleDiagnostics = enabled ? [] : null;
-      carrierCollisionDiagnostics = enabled ? [] : null;
+      matchState.tackleDiagnostics = enabled ? [] : null;
+      matchState.carrierCollisionDiagnostics = enabled ? [] : null;
     },
     debugCarrierCollisionImpulses: () =>
-      carrierCollisionDiagnostics?.slice() || [],
-    debugTackleEligibility: () => tackleDiagnostics?.slice() || [],
+      matchState.carrierCollisionDiagnostics?.slice() || [],
+    debugTackleEligibility: () => matchState.tackleDiagnostics?.slice() || [],
     debugContactWatch: (all = false) => {
       ChaosContactEvidence.setEnabled(true);
       ChaosContactEvidence.setFullScan(all);
@@ -10873,11 +11417,11 @@ export function createGame({ attach, onEvent } = {}) {
     },
     debugContactReset: () => {
       ChaosContactEvidence.reset();
-      lastAnatomyTackle = null;
-      lowDiveContacts = 0;
-      lastLowDiveImpact = null;
-      footContacts = 0;
-      lastFootContact = null;
+      matchState.lastAnatomyTackle = null;
+      matchState.lowDiveContacts = 0;
+      matchState.lastLowDiveImpact = null;
+      matchState.footContacts = 0;
+      matchState.lastFootContact = null;
       return true;
     },
     debugRecognize: (key) => {
@@ -10886,7 +11430,13 @@ export function createGame({ attach, onEvent } = {}) {
     },
     debugSecureInterception: (key, style = "ball") => {
       const d = P(key);
-      if (phase !== "live" || !ball?.flying || !d || d.team !== 1) return false;
+      if (
+        matchState.phase !== "live" ||
+        !matchState.ball?.flying ||
+        !d ||
+        d.team !== 1
+      )
+        return false;
       if (style === "catch") awardAirCatch(d, "possession", 1);
       else awardAirInterception(d);
       return true;
@@ -10913,28 +11463,29 @@ export function createGame({ attach, onEvent } = {}) {
       return true;
     },
     debugContactTackle: (carrier = "RB", keys = ["MLB"], n = 60) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       const a = P(carrier);
       if (!a) return false;
-      ballCarrier = a;
-      active = a;
-      tackleLinks.clear();
-      pileState = null;
-      for (let i = 0; i < n && phase === "live"; i++) resolveTackles(a, 1 / 60);
+      matchState.ballCarrier = a;
+      matchState.active = a;
+      matchState.tackleLinks.clear();
+      matchState.pileState = null;
+      for (let i = 0; i < n && matchState.phase === "live"; i++)
+        resolveTackles(a, 1 / 60);
       return true;
     },
     debugStartPile: (carrier = "RB", tacklers = ["MLB", "CB1"]) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       const a = P(carrier);
       if (!a) return false;
-      ballCarrier = a;
-      active = a;
-      passThrown = true;
-      tackleLinks.clear();
+      matchState.ballCarrier = a;
+      matchState.active = a;
+      matchState.passThrown = true;
+      matchState.tackleLinks.clear();
       for (const key of tacklers) {
         const d = P(key);
         if (!d) return false;
-        tackleLinks.set(key, {
+        matchState.tackleLinks.set(key, {
           defender: key,
           age: 0.28,
           grip: 0.5,
@@ -10942,7 +11493,7 @@ export function createGame({ attach, onEvent } = {}) {
           advantage: 8,
         });
       }
-      pileState = {
+      matchState.pileState = {
         active: true,
         carrier: a.key,
         startX: a.x,
@@ -10954,45 +11505,59 @@ export function createGame({ attach, onEvent } = {}) {
         pushers: [],
         wrappers: tacklers,
       };
-      pileStarts++;
+      matchState.pileStarts++;
       return true;
     },
     debugPileStep: (n = 1) => {
-      if (phase !== "live" || !pileState) return false;
-      for (let i = 0; i < n && phase === "live"; i++) {
-        for (const o of off)
-          if (o !== ballCarrier) {
+      if (matchState.phase !== "live" || !matchState.pileState) return false;
+      for (let i = 0; i < n && matchState.phase === "live"; i++) {
+        for (const o of matchState.off)
+          if (o !== matchState.ballCarrier) {
             o.intent = "";
             if (
               ["LT", "LG", "C", "RG", "RT", "TE", "TE2", "FB"].includes(o.key)
             )
-              pileSupport(o, ballCarrier, 1 / 60);
+              pileSupport(o, matchState.ballCarrier, 1 / 60);
           }
         resolvePileDrive(1 / 60);
         applyMotion(1 / 60);
-        resolveTackles(ballCarrier, 1 / 60);
+        resolveTackles(matchState.ballCarrier, 1 / 60);
       }
       return true;
     },
     debugResolveBlock: (n = 1) => {
-      if (phase !== "live") return false;
+      if (matchState.phase !== "live") return false;
       for (let i = 0; i < n; i++) resolveBlocks(1 / 60);
       return true;
     },
     setScheme: (formation, front, coverage, pressure) => {
-      if (formation) selectedFormation = formation;
-      if (front) selectedFront = front;
-      if (coverage) coveragePreference = coverage;
-      if (pressure) pressurePreference = pressure;
+      if (formation) matchState.selectedFormation = formation;
+      if (front) matchState.selectedFront = front;
+      if (coverage) matchState.coveragePreference = coverage;
+      if (pressure) matchState.pressurePreference = pressure;
       for (const [id, v] of [
-        ["formation", selectedFormation],
-        ["front", selectedFront],
-        ["coverage", coveragePreference],
-        ["pressure", pressurePreference],
+        ["formation", matchState.selectedFormation],
+        ["front", matchState.selectedFront],
+        ["coverage", matchState.coveragePreference],
+        ["pressure", matchState.pressurePreference],
       ])
         emitPresentation({ type: "selectionChanged", key: id, value: v });
       setup();
     },
   };
   return debug;
+}
+
+// Existing browser and debug adapters keep their established timing and controls.
+export function step(game, inputCommands = []) {
+  return { state: game, events: game.advanceTick(inputCommands) };
+}
+
+export function getSnapshot(game) {
+  return game.captureSnapshot();
+}
+
+export function restoreSnapshot(game, snapshot) {
+  game.restoreSnapshot(snapshot);
+  return game;
 }

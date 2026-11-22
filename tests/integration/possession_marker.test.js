@@ -58,7 +58,7 @@ vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/,
  };
  window.startKickoff = () => setupKickoff(1);
  window.startDefensiveSeries = () => {
-  gameStarted = true;
+  matchState.gameStarted = true;
   chooseCPUPlay();
   setup();
  };

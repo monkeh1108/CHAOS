@@ -10,16 +10,12 @@ const replayMatch = vm.runInThisContext("(function () {\n" + logic + "\nreturn r
 
 function capture(scenario) {
   const events = [];
-  const originalRandom = Math.random;
-  let game;
-  try {
-    Math.random = () => 431 / 4294967296;
-    game = createGame({ onEvent: (event) => events.push(event.type) });
-    game.debugFinishCoinToss("heads", "receive");
-    if (scenario === "run" || scenario === "pass") game.reset();
-  } finally {
-    Math.random = originalRandom;
-  }
+  const game = createGame({
+    random: () => 431 / 4294967296,
+    onEvent: (event) => events.push(event.type),
+  });
+  game.debugFinishCoinToss("heads", "receive");
+  if (scenario === "run" || scenario === "pass") game.reset();
   game.debugSeed(431);
   const snapshots = JSON.parse(JSON.stringify(replayMatch(game, scenario)));
   return { snapshots, events };
