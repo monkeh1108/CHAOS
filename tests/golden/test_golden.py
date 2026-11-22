@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 
 HERE = Path(__file__).resolve().parent
@@ -37,6 +38,10 @@ window.requestAnimationFrame = () => 0;
         profile = Path(directory) / "profile"
         flags = ["--headless=new", "--disable-gpu", "--no-first-run",
                  "--virtual-time-budget=1500", "--window-size=1120,800"]
+        # The disposable Linux Actions worker blocks Chromium's user namespaces.
+        # Match the Playwright QA launch there, retaining Chromium defaults locally.
+        if sys.platform.startswith("linux") and os.environ.get("GITHUB_ACTIONS") == "true":
+            flags.append("--no-sandbox")
         stdout = Path(directory) / "stdout"
         stderr = Path(directory) / "stderr"
         if os.name == "nt":
