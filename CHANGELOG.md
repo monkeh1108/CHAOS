@@ -1,3 +1,7 @@
+# CHAOS changelog
+
+Additional early release and QA notes are in the [release notes archive](docs/qa-history/legacy-release-notes.md).
+
 ## v0.36.4w — Rear-contact tackle eligibility and safety run diagnosis
 - Clear residual tackle suppression on actual runner contact only after any active live blocking and shed recovery end; avoid close-range dive spam against nearly stopped carriers.
 - Deep safeties process confirmed handoff after rating-based read interval without needing to stare directly at the ball carrier; no pre-snap run foreknowledge.
