@@ -1,7 +1,9 @@
-'use strict';
+import { AnatomyHitboxes } from "../physics/anatomy_hitboxes.js";
+import { ChaosContactOutcomes } from "../physics/contact_outcomes.js";
+
 // Isolated, deterministic collision replay scene for CHAOS. No imported assets,
 // no impact on scoring, live players, or gameplay RNG.
-(()=>{
+export function mountContactLab(){
  const lab=document.createElement('section');lab.className='panel';lab.id='chaosContactLab';
  lab.style.cssText='margin:18px 0;padding:16px;display:block';
  lab.innerHTML=`<h2 style="margin:0 0 5px">CHAOS · Anatomical Contact Lab <span style="font-size:12px;opacity:.7">v0.36.4n</span></h2>
@@ -117,4 +119,4 @@
     const link=document.createElement('a');link.href=url;link.download='CHAOS_collision_lab.json';link.click();URL.revokeObjectURL(url);
  };
  draw();
-})();
+}

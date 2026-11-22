@@ -1,7 +1,6 @@
 // v0.35.2: observed play history; only repeated, *completed* run-escape
 // patterns can inform live pursuit. No adaptive play-calling yet.
 // Records only revealed actions after the snap; never exposes a selected future play.
-const DefensiveMemory=(()=>{
  const makeTeam=()=>({plays:[],counts:{run:0,pass:0,deep:0,intermediate:0,short:0,scramble:0},targets:{}});
  let teams=[makeTeam(),makeTeam()];
  const classify=(yards)=>yards>=20?'deep':yards>=10?'intermediate':'short';
@@ -32,6 +31,4 @@ const DefensiveMemory=(()=>{
    estimatedRunShare:tendency('run'),estimatedPassShare:tendency('pass'),
    history:t.plays.map(p=>({...p}))};
  }
- return {reset,record,report};
-})();
-if(typeof module!=='undefined'&&module.exports)module.exports=DefensiveMemory;
+export const DefensiveMemory = {reset,record,report};

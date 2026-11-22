@@ -1,8 +1,6 @@
-'use strict';
 // v0.36.4t: close-range reaction memory. Chasers follow observed movement,
 // not an instantaneous translation of every carrier juke. No velocity or
 // position is imposed on either athlete.
-const ChaosPursuitReaction=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  function aim(defender,carrier,base,clock){
   if(!defender||!carrier||!base)return base;
@@ -24,6 +22,4 @@ const ChaosPursuitReaction=(()=>{
   return {...base,x:base.x*(1-blend)+x*blend,y:base.y*(1-blend)+y*blend,
    mode:base.mode==='tackle'?'close-read':base.mode,readAge:+age.toFixed(3)};
  }
- return Object.freeze({aim});
-})();
-if(typeof module!=='undefined'&&module.exports)module.exports=ChaosPursuitReaction;
+export const ChaosPursuitReaction = Object.freeze({aim});

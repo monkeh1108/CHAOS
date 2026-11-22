@@ -1,7 +1,10 @@
-const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const root=path.join(__dirname,'../../src');
-function use(file,symbol){return new Function(fs.readFileSync(path.join(root,file),'utf8')+`\nreturn ${symbol};`)()}
-const d=use('input/defensive_controls.js','DefensiveControls'),qb=use('ai/cpu_qb_policy.js','CpuQBPolicy'),r=use('ai/rush_awareness.js','RushAwareness'),p=use('ui/playbook_navigation.js','PlaybookNavigation');
+'use strict';
+const assert = require('node:assert/strict');
+const { DefensiveControls: d } = require('../../src/input/defensive_controls.js');
+const { CpuQBPolicy: qb } = require('../../src/ai/cpu_qb_policy.js');
+const { RushAwareness: r } = require('../../src/ai/rush_awareness.js');
+const { PlaybookNavigation: p } = require('../../src/ui/playbook_navigation.js');
+
 assert.equal(d.choose('A',1.8,1.5),'conservative');
 assert.equal(d.choose('X',1.0,1.4),'hit-stick');
 assert.equal(d.choose('X',3.0,1.4),'tackle-dive');

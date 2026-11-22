@@ -1,7 +1,7 @@
-'use strict';
+import { AnatomyHitboxes } from "../physics/anatomy_hitboxes.js";
+
 // CHAOS v0.36.4e: original, dependency-free contact evidence system.
 // Observe true body-region intersections; NEVER award tackles or change velocity.
-const ChaosContactEvidence=(()=>{
  const MAX=160;
  let enabled=true, fullScan=false, events=[], active=new Map(), last=[], tick=0;
  const poseCopy=p=>({key:p.key,pos:p.pos,team:p.team,h:p.h,w:p.w,x:p.x,y:p.y,
@@ -48,8 +48,7 @@ const ChaosContactEvidence=(()=>{
    last=pairs;return pairs;
  }
  function reset(){events=[];active.clear();last=[];tick=0;}
- return Object.freeze({scan,poseCopy,reset,history:()=>events.slice(),last:()=>last.slice(),
+export const ChaosContactEvidence = Object.freeze({scan,poseCopy,reset,history:()=>events.slice(),last:()=>last.slice(),
    setEnabled:v=>{enabled=!!v;if(!enabled)active.clear();},isEnabled:()=>enabled,
    setFullScan:v=>{fullScan=!!v;},isFullScan:()=>fullScan,
    distanceSegmentSq});
-})();

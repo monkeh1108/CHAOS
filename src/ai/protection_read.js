@@ -1,6 +1,5 @@
 // Visible pre-snap protection alert (independent of secret defensive play call).
 // The QB/center can only infer a rush from alignment and ratings, not d.rush.
-const ProtectionRead=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  function evaluate(def,los,qb,center,roll){
   if(!qb)return null;
@@ -22,5 +21,4 @@ const ProtectionRead=(()=>{
   const dx=qb.x-d.x,dy=qb.y-d.y,dist=Math.hypot(dx,dy);
   return dist<8.5 && d.x<los+5 && (d.vx*dx+d.vy*dy)>Math.max(.4,dist*.35);
  }
- return {evaluate,committing};
-})();
+export const ProtectionRead = {evaluate,committing};

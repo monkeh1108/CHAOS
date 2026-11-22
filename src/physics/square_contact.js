@@ -1,8 +1,6 @@
-'use strict';
 // CHAOS head-on tackle policy. No animation chooses a winner: this classifier
 // reads the *incoming* relative velocities and contact normal before the
 // impulse solver changes them. It does not use arbitrary animation chances.
-const ChaosSquareContact=(()=>{
  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,Number.isFinite(v)?v:0));
  function classify(a,b,nx,ny){
   const aNormal=(a.vx||0)*nx+(a.vy||0)*ny;
@@ -20,5 +18,4 @@ const ChaosSquareContact=(()=>{
   const balanceLoss=clamp((.92-runnerBalance)/.45,0,1);
   return clamp(square*(.13+.15*gripControl+.10*balanceLoss),0,.34);
  }
- return Object.freeze({classify,settleAge});
-})();
+export const ChaosSquareContact = Object.freeze({classify,settleAge});

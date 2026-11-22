@@ -1,6 +1,7 @@
 'use strict';
-const assert=require('node:assert/strict');
-const Policy=require('../../src/ai/run_pursuit_policy.js');
+const assert = require('node:assert/strict');
+const { RunPursuitPolicy: Policy } = require('../../src/ai/run_pursuit_policy.js');
+
 const base=(role)=>({x:29,y:9,lead:.2,mode:'close',role,sep:9});
 const carrier={x:32,y:9,vx:-2,vy:-4};
 const left={x:35,y:13,PUR:89,PRC:88,AWR:84};

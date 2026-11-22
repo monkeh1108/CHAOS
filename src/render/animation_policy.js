@@ -1,8 +1,6 @@
-'use strict';
 // Presentation-only procedural animation decisions. This module may READ
 // simulation state but may not change movement, physics, actions, or outcomes.
 // Future higher-quality rigs can consume these same named animation states.
-const AnimationPolicy=(()=>{
  const limit=(value,min,max)=>Math.max(min,Math.min(max,Number.isFinite(value)?value:0));
  const actions=new Set(['juke','spin','hesi','truck','stiff','hurdle','dive','tackle-dive',
   'hit-stick','cut-stick','conservative','impact-block','kick','giveup']);
@@ -77,5 +75,4 @@ const AnimationPolicy=(()=>{
    impactAccent:action==='hit-stick'||action==='impact-block'?.18*burst:0
   };
  }
- return Object.freeze({sample,states:Object.freeze(['idle','run','sprint','engaged','stand-up','juke','spin','hesi','truck','stiff','hurdle','dive','tackle-dive','hit-stick','cut-stick','conservative','impact-block','kick','giveup','knockdown','grounded','get-up','air-aggressive','air-ball','air-swat','air-possession','air-receiver','air-rac','block-stonewall','block-drive','block-seal','block-double-team','block-losing','stance-three-point','stance-quarterback','stance-receiver','stance-coverage-ready','stance-skill-ready','stance-ready'])});
-})();
+export const AnimationPolicy = Object.freeze({sample,states:Object.freeze(['idle','run','sprint','engaged','stand-up','juke','spin','hesi','truck','stiff','hurdle','dive','tackle-dive','hit-stick','cut-stick','conservative','impact-block','kick','giveup','knockdown','grounded','get-up','air-aggressive','air-ball','air-swat','air-possession','air-receiver','air-rac','block-stonewall','block-drive','block-seal','block-double-team','block-losing','stance-three-point','stance-quarterback','stance-receiver','stance-coverage-ready','stance-skill-ready','stance-ready'])});

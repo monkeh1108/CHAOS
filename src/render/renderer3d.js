@@ -1,7 +1,10 @@
-'use strict';
+import { ChaosDiveReach } from "../physics/dive_reach.js";
+import { ChaosLowContact } from "../physics/low_contact.js";
+import { AnimationPolicy } from "./animation_policy.js";
+
 // Original lightweight WebGL renderer. No network, textures, assets, or
 // third-party packages. It only reads simulation state; never resolves contact.
-function createGridironRenderer(canvas){
+export function createGridironRenderer(canvas){
  const gl=canvas.getContext('webgl',{alpha:false,antialias:true,depth:true,preserveDrawingBuffer:false});
  if(!gl)return null;
  const vs=`attribute vec3 aPos;attribute vec3 aNormal;uniform mat4 uMVP;uniform mat4 uModel;varying float vShade;void main(){vec3 n=normalize(mat3(uModel)*aNormal);vShade=0.59+0.41*max(0.0,dot(n,normalize(vec3(-0.45,1.0,0.35))));gl_Position=uMVP*vec4(aPos,1.0);}`;

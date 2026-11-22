@@ -1,8 +1,7 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ctx=vm.createContext({});
-vm.runInContext(fs.readFileSync(__dirname+'/../../src/physics/grip_attachment.js','utf8'),ctx);
-const policy=vm.runInContext('ChaosGripAttachment',ctx);
+const assert = require('node:assert/strict');
+const { ChaosGripAttachment: policy } = require('../../src/physics/grip_attachment.js');
+
 function make(grip,at=1.14){
  const runner={x:at,y:0,vx:5,vy:0,w:235,TRK:92,STR:89};
  const defender={x:0,y:0,vx:1,vy:0,w:190,TAK:78,STR:74};

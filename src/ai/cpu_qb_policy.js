@@ -1,6 +1,6 @@
 // V33: pure timing policy. Does not know about AI movement, coverage entities,
 // or gamepad input. An elite DEC changes decisiveness, not instant telepathy.
-const CpuQBPolicy=Object.freeze({
+export const CpuQBPolicy=Object.freeze({
   minimumSettle(play, dec, vision){
     const depth={verticals:2.35,sluggo:2.35,dagger:2.10,flood:1.80,smash:1.65,mesh:1.35,slants:1.20,stick:1.17};
     const base=depth[play]??1.55;

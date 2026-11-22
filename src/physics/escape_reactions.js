@@ -1,7 +1,6 @@
 "use strict";
 // CHAOS v0.36.4p: physics-driven grip release and presentation evidence.
 // These outputs describe the physical contest, not animation-triggered wins.
-const ChaosEscapeReactions=(()=>{
  const clamp=(v,min,max)=>Math.max(min,Math.min(max,Number.isFinite(v)?v:min));
  function signSide(runner,defender){
   const x=(runner.x||0)-(defender.x||0),y=(runner.y||0)-(defender.y||0);
@@ -48,5 +47,4 @@ const ChaosEscapeReactions=(()=>{
    duration:kind==='slip'?.24:kind==='dive-follow-through'?.42:.40,
    recovery:kind==='slip'?.16:kind==='twist'?.29:.34};
  }
- return Object.freeze({strain,release});
-})();
+export const ChaosEscapeReactions = Object.freeze({strain,release});

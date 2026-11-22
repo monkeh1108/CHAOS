@@ -1,8 +1,6 @@
-'use strict';
 // CHAOS v0.36.4o — continuous, physics-informed escape contest.
 // Doesn't teleport characters, award an animation, or roll a dice.
 // GRIP is not introduced as a redundant new rating: TAK/AWR express hold technique.
-const ChaosTackleEscape=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,Number.isFinite(v)?v:a));
  function drive(runner,defender,link){
   const forwardX=Math.cos(runner.face||0),forwardY=Math.sin(runner.face||0);
@@ -49,5 +47,4 @@ const ChaosTackleEscape=(()=>{
   const broken=age>.15&&link.escapeProgress>=threshold;
   return {...contest,broken,progress:link.escapeProgress,kind:lightHold?'break tackle':'wrap break'};
  }
- return Object.freeze({drive,step});
-})();
+export const ChaosTackleEscape = Object.freeze({drive,step});

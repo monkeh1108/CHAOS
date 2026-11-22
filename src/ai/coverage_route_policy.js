@@ -1,6 +1,6 @@
 // v0.34.9: isolated read-only decisions for passing lanes and crossing routes.
 // This module does not change blocking, tackling, stamina or special teams.
-const CoverageRoutePolicy={
+export const CoverageRoutePolicy={
  isVerticalThreat(p,los){
   // Only count a receiver moving downfield with meaningful separation from LOS.
   const neededDepth=Math.min(8,Math.max(1.5,(110-los)*.65));
@@ -58,4 +58,3 @@ const CoverageRoutePolicy={
   return {x:Math.max(-.6,Math.min(.6,x)),y:Math.max(-1.7,Math.min(1.7,y))};
  }
 };
-if(typeof module!=='undefined'&&module.exports)module.exports=CoverageRoutePolicy;

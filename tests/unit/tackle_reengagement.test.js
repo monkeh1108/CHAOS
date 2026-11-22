@@ -1,8 +1,6 @@
 'use strict';
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const context=vm.createContext({});
-vm.runInContext(fs.readFileSync(__dirname+'/../../src/physics/tackle_reengagement.js','utf8')+';globalThis.RE=ChaosTackleReengagement;',context);
-const R=context.RE;
+const assert = require('node:assert/strict');
+const { ChaosTackleReengagement: R } = require('../../src/physics/tackle_reengagement.js');
 
 {
   const runner={key:'RB',x:10,y:10};

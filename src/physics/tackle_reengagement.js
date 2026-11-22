@@ -1,8 +1,6 @@
-'use strict';
 // v0.36.4s — physical disengagement after a genuine broken grip.
 // Not an artificial "can't tackle twice" rule: the same defender can reengage
 // once he has ACTUALLY let go, regained a pursuit stance and closed the gap.
-const ChaosTackleReengagement=(()=>{
  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,Number.isFinite(v)?v:lo));
  function release(defender,runner,bodyGap,clock){
   const separation=Math.hypot((runner.x||0)-(defender.x||0),(runner.y||0)-(defender.y||0));
@@ -38,5 +36,4 @@ const ChaosTackleReengagement=(()=>{
   }
   return false;
  }
- return Object.freeze({release,observe});
-})();
+export const ChaosTackleReengagement = Object.freeze({release,observe});

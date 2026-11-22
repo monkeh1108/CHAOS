@@ -1,6 +1,6 @@
 // V33: pure quarterback-movement anticipation for the existing pass-rush AI.
 // Edge contain is retained until a genuine lateral rollout is recognized.
-const RushAwareness=Object.freeze({
+export const RushAwareness=Object.freeze({
   assess(qb, los, elapsed){
     const lateral=qb.y-26.65;
     const moving=Math.abs(qb.vy||0)>1.25;

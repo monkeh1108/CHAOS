@@ -1,6 +1,5 @@
 "use strict";
 // CHAOS v0.36.4r — intent/decision policy only. Nothing here creates contact.
-const ChaosTackleIntelligence=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  function direction(defender,stick){
   if(stick&&stick.mag>.14){const n=Math.max(.001,Math.hypot(stick.x,stick.y));return {x:stick.x/n,y:stick.y/n};}
@@ -29,5 +28,4 @@ const ChaosTackleIntelligence=(()=>{
   const strength=clamp(Math.max(0,closing)*(.21+.24*power)/(1+.32*resistance),0,2.6);
   return {strength,power,resistance};
  }
- return Object.freeze({direction,selection,impact});
-})();
+export const ChaosTackleIntelligence = Object.freeze({direction,selection,impact});

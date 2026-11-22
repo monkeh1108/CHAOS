@@ -1,8 +1,6 @@
-'use strict';
 // CHAOS v0.36.4q: physical foot-level obstacles, trips and airborne clearance.
 // A jump only changes the runner's vertical foot clearance; it NEVER awards a
 // tackle break, freezes a defender, or grants a period of invulnerability.
-const ChaosLowContact=(()=>{
  const clamp=(n,l,h)=>Math.max(l,Math.min(h,Number.isFinite(n)?n:l));
  const hyp=(x,y)=>Math.hypot(x,y);
  const isLowThreat=p=>!!p&&(!!p.ground||p.action?.time>0&&['tackle-dive','cut-stick'].includes(p.action.kind));
@@ -86,5 +84,4 @@ const ChaosLowContact=(()=>{
  // Higher airborne hits make balance losses more likely. This modifier is for
  // *genuine body contact* and does not fabricate a collision or decide a catch.
  function bodyVulnerability(p){return height(p)>.10?1+clamp(height(p)*.80,0,.64):1;}
- return Object.freeze({height,initiate,advance,evaluate,clearance,shouldAutoHop,isLowThreat,bodyVulnerability});
-})();
+export const ChaosLowContact = Object.freeze({height,initiate,advance,evaluate,clearance,shouldAutoHop,isLowThreat,bodyVulnerability});

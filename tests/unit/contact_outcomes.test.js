@@ -1,8 +1,8 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ctx=vm.createContext({});
-for(const name of ['render/animation_policy','physics/anatomy_hitboxes','physics/contact_outcomes'])vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name+'.js','utf8'),ctx);
-const A=vm.runInContext('AnatomyHitboxes',ctx),C=vm.runInContext('ChaosContactOutcomes',ctx);
+const assert = require('node:assert/strict');
+const { AnatomyHitboxes: A } = require('../../src/physics/anatomy_hitboxes.js');
+const { ChaosContactOutcomes: C } = require('../../src/physics/contact_outcomes.js');
+
 const contact=(a,b,penetration)=>({a,b,aSide:0,bSide:0,penetration});
 const options={relativeSpeed:5,approachAngle:35};
 assert.equal(C.classify([]).kind,'miss');

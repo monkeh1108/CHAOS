@@ -1,9 +1,7 @@
 /* Gridiron Lab special-teams decision helpers.
    Pure, independently testable rules; no DOM, physics mutation, or player-control
    side effects. Engine integration is deliberately limited to special plays. */
-(function (root) {
- 'use strict';
- const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
+  const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
  const lanes=Object.freeze({left:13.5,middle:26.65,right:39.8});
  function returnLaneY(call){return lanes[call]??lanes.middle;}
 
@@ -50,7 +48,4 @@
  function shedBypassY(aimY,side,fieldHeight=53.333){
   return clamp(aimY+(side<0?-1:1)*2.4,1,fieldHeight-1);
  }
- const api=Object.freeze({returnLaneY,kickerLanding,chooseReturnThreat,shedBypassY});
- root.GridironSpecialTeams=api;
- if(typeof module!=='undefined'&&module.exports)module.exports=api;
-})(typeof globalThis!=='undefined'?globalThis:this);
+ export const specialTeams=Object.freeze({returnLaneY,kickerLanding,chooseReturnThreat,shedBypassY});

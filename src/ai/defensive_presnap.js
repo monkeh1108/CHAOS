@@ -1,6 +1,4 @@
-
 // Pure pre-snap positioning rules. These never expose the CPU's play call.
-const DefensivePresnap=(()=>{
  const WIDTH=53.333;
  const GOAL_LINE=110;
  // A pre-snap defender may be inside the end zone, but no deeper than
@@ -72,5 +70,4 @@ const DefensivePresnap=(()=>{
   if(d.assignment?.kind==='zone')return 'ZONE · '+d.assignment.tag.replaceAll('-',' ').toUpperCase();
   return 'RUN FIT · '+(d.fit?.role||'HOLD').replaceAll('-',' ').toUpperCase();
  }
- return {move,zoneAnchor,gapTarget,description,compressedDepth,compressFormation,MAX_ENDZONE_DEPTH};
-})();
+export const DefensivePresnap = {move,zoneAnchor,gapTarget,description,compressedDepth,compressFormation,MAX_ENDZONE_DEPTH};

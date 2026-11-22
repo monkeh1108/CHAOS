@@ -1,8 +1,8 @@
-'use strict';
+import { AnatomyHitboxes } from "./anatomy_hitboxes.js";
+
 // CHAOS: original, deterministic anatomical contact interpretation.
 // Input: detected regions and actual physics/engagement state. No random draws.
 // This distinguishes touched vs tackled, and never creates a tackle by itself.
-const ChaosContactOutcomes=(()=>{
  const clamp=(x,a,b)=>Math.max(a,Math.min(b,Number.isFinite(x)?x:a));
  const core=new Set(['torso','pelvis','thigh']);
  const arms=new Set(['upperArm','forearm','hand']);
@@ -47,5 +47,4 @@ const ChaosContactOutcomes=(()=>{
    relativeSpeed:Math.hypot((defender.vx||0)-(runner.vx||0),(defender.vy||0)-(runner.vy||0)),
    grip:link?.grip||0,engagementAge:link?.age||0,style:link?.style||defender.action?.kind||'none'});
  }
- return Object.freeze({classify,evaluate,angle});
-})();
+export const ChaosContactOutcomes = Object.freeze({classify,evaluate,angle});

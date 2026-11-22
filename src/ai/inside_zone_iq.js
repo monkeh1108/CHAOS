@@ -1,7 +1,5 @@
-'use strict';
 // Inside Zone coordination. Pure football decisions; physics and graphics stay
 // in engine.js. All angles are player-relative, not an omniscient field scan.
-const InsideZoneIQ=(()=>{
  const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
  const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
  const rating=(p,key,fallback=70)=>Number.isFinite(p?.[key])?p[key]:fallback;
@@ -71,5 +69,4 @@ const InsideZoneIQ=(()=>{
   const offset=defender.y<=near.y?-lateral:lateral;
   return {x:defender.x+.70,y:clamp(defender.y+offset,.5,52.8),kind:'blocker-read',blocker:near.key};
  }
- return Object.freeze({visible,assignments,readDelay,runnerProjection,threat,response});
-})();
+export const InsideZoneIQ = Object.freeze({visible,assignments,readDelay,runnerProjection,threat,response});

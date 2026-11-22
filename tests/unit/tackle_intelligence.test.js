@@ -1,7 +1,7 @@
 'use strict';
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const c=vm.createContext({});vm.runInContext(fs.readFileSync(__dirname+'/../../src/ai/tackle_intelligence.js','utf8'),c);
-const T=vm.runInContext('ChaosTackleIntelligence',c);
+const assert = require('node:assert/strict');
+const { ChaosTackleIntelligence: T } = require('../../src/ai/tackle_intelligence.js');
+
 const d={HIT:85,TAK:82,STR:78,AGI:80,PMV:72,face:0,vx:5,vy:0};const r={};
 assert.deepStrictEqual(JSON.stringify(T.direction(d,{x:0,y:1,mag:1})),JSON.stringify({x:0,y:1}));
 assert.equal(T.direction(d,{x:0,y:0,mag:0}).x,1);

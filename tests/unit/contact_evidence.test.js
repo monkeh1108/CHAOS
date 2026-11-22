@@ -1,8 +1,8 @@
 'use strict';
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const ctx=vm.createContext({});
-for(const name of ['render/animation_policy','physics/anatomy_hitboxes','debug/contact_evidence'])vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name+'.js','utf8'),ctx);
-const A=vm.runInContext('AnatomyHitboxes',ctx),E=vm.runInContext('ChaosContactEvidence',ctx);
+const assert = require('node:assert/strict');
+const { AnatomyHitboxes: A } = require('../../src/physics/anatomy_hitboxes.js');
+const { ChaosContactEvidence: E } = require('../../src/debug/contact_evidence.js');
+
 const player=(key,team,x,y,h,w,face=0)=>({key,team,x,y,h,w,face,vx:0,vy:0,action:null,ground:null,pos:'RB',travel:0});
 const rb=player('RB',0,0,0,71,211),cb=player('CB1',1,-4,0,72,190);
 const rb1={...rb,x:0},cb1={...cb,x:4};

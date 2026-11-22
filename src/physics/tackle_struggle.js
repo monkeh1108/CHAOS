@@ -1,8 +1,5 @@
-
-'use strict';
 // CHAOS: deterministic tackle struggle policy, driven by existing ratings,
 // balance, momentum, technique, and contact quality. Not a new break-tackle roll.
-const ChaosTackleStruggle=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  function state(runner,contacts,velocity){
   if(!contacts.length)return {drive:0,brakeMultiplier:1,finishDelay:0};
@@ -20,5 +17,4 @@ const ChaosTackleStruggle=(()=>{
   const finishDelay=!clean&&contacts.length===1?drive*.52:0;
   return {drive,brakeMultiplier,finishDelay,clean,avgQuality};
  }
- return Object.freeze({state});
-})();
+export const ChaosTackleStruggle = Object.freeze({state});

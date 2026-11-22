@@ -2,7 +2,6 @@
 // PUR (pursuit) and PRC (play recognition) *both* govern angle quality.
 // Stable, per-snap misreads make lower-rated defenders imperfect without
 // re-rolling a random angle every animation frame or peeking at play calls.
-const RunPursuitPolicy=(()=>{
  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
  const rating=(v)=>Number.isFinite(v)?clamp(v,1,99):70;
  function quality(defender){
@@ -93,6 +92,4 @@ const RunPursuitPolicy=(()=>{
    lateralThreat:outsideThreat,lead:base.lead,angleQuality:+q.toFixed(3),
    learnedRead:opportunity,observedFamiliarity:+familiarity.toFixed(3)};
  }
- return {plan,quality,experience};
-})();
-if(typeof module!=='undefined'&&module.exports)module.exports=RunPursuitPolicy;
+export const RunPursuitPolicy = {plan,quality,experience};

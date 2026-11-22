@@ -1,7 +1,5 @@
-'use strict';
 // Deterministic blocking decisions, separate from steering, rendering and game rules.
 // This module can be ported independently to another engine.
-const BlockingPolicy=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  const stat=(p,key,fallback=70)=>Number.isFinite(p?.[key])?p[key]:fallback;
  const mass=p=>Number.isFinite(p?.w)?p.w:220;
@@ -31,5 +29,4 @@ const BlockingPolicy=(()=>{
   const state=helpers>0&&advantage>5?'double-team':advantage>9&&age>.22?'drive':advantage>0&&laneDot<.2?'seal':advantage< -12&&age>.25?'losing':'stonewall';
   return {state,nx,ny,distance,strength,advantage,hold,breakBonus:advantage< -10?clamp((-advantage-10)*.008,0,.23):0};
  }
- return Object.freeze({match,decideDefender,contact});
-})();
+export const BlockingPolicy = Object.freeze({match,decideDefender,contact});

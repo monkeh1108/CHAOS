@@ -1,9 +1,7 @@
-'use strict';
 // A player's right to *choose* a pass-defense action is not the right to touch
 // the football. Ball flight, collision, leap height and ratings determine the
 // eventual attempt. This policy only finds plausible participants while the
 // ball is traveling, including CBs tracking receivers still far downfield.
-const AirContestPolicy=(()=>{
  const distance=(a,b)=>Math.hypot((a?.x??0)-(b?.x??0),(a?.y??0)-(b?.y??0));
  const clamp=(value,lo,hi)=>Math.max(lo,Math.min(hi,value));
  function evaluate(player,receiver,flight,football,topSpeed,reach){
@@ -40,5 +38,4 @@ const AirContestPolicy=(()=>{
    distance:+gap.toFixed(2),remaining:+remaining.toFixed(2),travelBudget:+travel.toFixed(2),
    trackingBudget:+earlyTrackingBudget.toFixed(2),ballDistance:+ballGap.toFixed(2),read};
  }
- return Object.freeze({evaluate});
-})();
+export const AirContestPolicy = Object.freeze({evaluate});

@@ -1,7 +1,5 @@
-'use strict';
 // CHAOS original procedural diving reach shared by visuals and anatomy.
 // Locomotion physics and tackle outcomes remain authoritative elsewhere.
-const ChaosDiveReach=(()=>{
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,Number.isFinite(v)?v:a));
  const ease=t=>{t=clamp(t,0,1);return t*t*(3-2*t);};
  function pose(p){
@@ -59,5 +57,4 @@ const ChaosDiveReach=(()=>{
   const hand=[wrist[0]+.13*Math.sin(direction),wrist[1]-side*.02*a.wrap,wrist[2]-.13*Math.cos(direction)];
   return {shoulder,elbow,wrist,hand,pose:a};
  }
- return Object.freeze({pose,standingPose,armPoints});
-})();
+export const ChaosDiveReach = Object.freeze({pose,standingPose,armPoints});

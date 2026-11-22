@@ -1,6 +1,7 @@
 'use strict';
-const assert=require('node:assert/strict');
-const policy=require('../../src/render/contact_feedback_policy');
+const assert = require('node:assert/strict');
+const { ChaosContactFeedback: policy } = require('../../src/render/contact_feedback_policy.js');
+
 assert.equal(policy.label({severity:.55,balance:.7,truckWon:true,tripped:false}),null);
 assert.equal(policy.label({severity:.35,balance:.95,truckWon:false,tripped:false}),null);
 assert.equal(policy.label({severity:.58,balance:.69,truckWon:false,tripped:false}),'STUMBLE');

@@ -1,0 +1,24 @@
+{
+  "name": "chaos-football",
+  "private": true,
+  "scripts": {
+    "build": "node tools/build_standalone.mjs",
+    "build:check": "node tools/build_standalone.mjs --check",
+    "test": "npm run test:node && npm run test:golden",
+    "test:node": "node --test \"tests/unit/*.test.js\" \"tests/integration/*.test.js\"",
+    "test:golden": "python tests/golden/test_golden.py",
+    "test:browser": "python -m pytest tests/browser",
+    "lint": "eslint src",
+    "format": "prettier --write \"src/**/*.js\" \"tools/**/*.mjs\" eslint.config.mjs"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "globals": "17.14.0",
+    "prettier": "3.10.1"
+  }
+}

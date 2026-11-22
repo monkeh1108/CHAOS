@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
@@ -79,15 +80,27 @@ def canonical(data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--browser", required=True, help="Path to Chromium, Chrome, or Edge")
+    parser.add_argument("--browser", default=os.environ.get("CHAOS_CHROMIUM"),
+                        help="Path to Chromium, Chrome, or Edge (or set CHAOS_CHROMIUM)")
     parser.add_argument("--html", type=Path, default=ROOT / "index.html")
     parser.add_argument("--record", action="store_true", help="Explicitly write the reference snapshots")
     args = parser.parse_args()
+    browser = args.browser
+    if not browser:
+        browser = next((path for name in ("chromium", "chromium-browser", "google-chrome", "msedge")
+                        if (path := shutil.which(name))), None)
+    if not browser and os.name == "nt":
+        edge = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"))
+        edge = edge / "Microsoft/Edge/Application/msedge.exe"
+        if edge.is_file():
+            browser = str(edge)
+    if not browser:
+        parser.error("Install a Chromium-family browser or provide --browser or CHAOS_CHROMIUM.")
     html = args.html.read_text(encoding="utf-8")
     actual = {}
     for scenario in SCENARIOS:
-        first = canonical(capture(args.browser, html, scenario))
-        second = canonical(capture(args.browser, html, scenario))
+        first = canonical(capture(browser, html, scenario))
+        second = canonical(capture(browser, html, scenario))
         if first != second:
             raise AssertionError(f"{scenario}: two fresh browser runs produced different snapshots")
         actual[scenario] = first

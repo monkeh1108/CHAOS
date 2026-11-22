@@ -10,6 +10,6 @@ Pass an LF-only temporary copy of the same HTML as the first CLI argument to
 get past the assertion. The existing files retain their original behavior.
 
 
-After Phase 1, the same scripts are named `rear_pile_contact.test.js`,
+Phase 2 normalizes line endings in the three test readers. The Phase 1 script names are `rear_pile_contact.test.js`,
 `possession_marker.test.js` and `receiver_icons.test.js` in
 `tests/integration/`.

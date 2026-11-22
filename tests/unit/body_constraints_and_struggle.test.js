@@ -1,9 +1,8 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ctx=vm.createContext({});
-for(const name of ['physics/body_constraint.js','physics/tackle_struggle.js'])vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name,'utf8'),ctx);
-const body=vm.runInContext('ChaosBodyConstraint',ctx);
-const fight=vm.runInContext('ChaosTackleStruggle',ctx);
+const assert = require('node:assert/strict');
+const { ChaosBodyConstraint: body } = require('../../src/physics/body_constraint.js');
+const { ChaosTackleStruggle: fight } = require('../../src/physics/tackle_struggle.js');
+
 assert.equal(body.correction({}, {}, 0, true),0);
 assert(body.correction({}, {}, .4,true)>body.correction({}, {}, .4,false));
 assert(body.correction({}, {}, 4,true)<=.19);
