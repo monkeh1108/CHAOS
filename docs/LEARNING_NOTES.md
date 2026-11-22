@@ -59,3 +59,18 @@ and find the first sampled tick where someone has the ball.
 Try tracing `escapeHold.secureDifficulty` from `src/core/tuning/tackle.js`
 into `src/physics/tackle_escape.js`. Find the condition that makes a wrap
 secure and the expression that uses the difficulty.
+
+## Checkpoint 6
+
+- The **simulation** applies the football rules and moves the players and ball.
+  **Presentation** draws the field and updates the on-screen controls.
+- An **event** is a small message about something that happened. When the
+  engine selects a play, it emits a `playSelectionChanged` event with the
+  play's name. The browser uses that name to highlight the button. A future
+  game server can run the same play without opening a window.
+- **Headless** means running without a browser or screen. The Node test
+  runs a full lineup through a run, pass, and kickoff twice and compares
+  the resulting snapshots.
+
+Find `playSelectionChanged` in `src/engine.js` and `src/ui/game_hud.js`. Follow
+the play name from the engine to the button the browser highlights.

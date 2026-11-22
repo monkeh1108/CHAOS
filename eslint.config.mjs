@@ -22,7 +22,17 @@ export default [
   },
   {
     files: ["src/engine.js"],
-    rules: { "no-useless-assignment": "warn", "no-dupe-keys": "warn" },
+    rules: {
+      "no-useless-assignment": "warn",
+      "no-dupe-keys": "warn",
+      "no-restricted-globals": [
+        "error",
+        "window",
+        "document",
+        "navigator",
+        "requestAnimationFrame",
+      ],
+    },
   },
   {
     files: ["src/{core,sim,physics,ai}/**/*.js"],

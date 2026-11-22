@@ -59,10 +59,10 @@ Use `npm run format` to format the JavaScript source after making edits.
 
 | Path | What lives there |
 | --- | --- |
-| `src/engine.js` | Current match loop, play execution, and browser wiring. |
+| `src/engine.js` | Match rules and play execution, runnable in Node. |
 | `src/core/` | Shared simulation math and named tuning values. |
 | `src/sim/`, `src/ai/`, `src/physics/` | Special teams, play decisions, and collision and tackle modules. |
-| `src/input/`, `src/ui/`, `src/render/` | Controller rules, playbook navigation, and field and player presentation. |
+| `src/input/`, `src/ui/`, `src/render/` | Controller rules, browser session and HUD, playbook, and field renderer. |
 | `src/debug/`, `src/net/` | Contact diagnostics and the future online-play boundary. |
 | `tests/unit/`, `tests/integration/`, `tests/browser/`, `tests/golden/` | Policy checks, standalone integration checks, browser checks, and reference replays. |
 | `tools/`, `docs/` | Local diagnostics, project notes, and archived QA reports. |

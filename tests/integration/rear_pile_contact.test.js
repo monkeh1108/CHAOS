@@ -39,7 +39,7 @@ const script = html.replace(/\r\n/g, '\n').split('<script>')[1].split('</script>
 const withoutLab = script.replace(/\bmountContactLab\(\);/, '');
 assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 // Set fixture inputs and inspect closure state without changing production debug controls.
-vm.runInContext(withoutLab.replace(/window\.GRIDIRON_DEBUG\s*=\s*\{/, `
+vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
  window.fixture = {
   neutral() {controlMode='offense';manualDrive=true;suppressManualUntilNeutral=false;},
   input(value) {keys.arrowright=value;},
@@ -50,7 +50,7 @@ vm.runInContext(withoutLab.replace(/window\.GRIDIRON_DEBUG\s*=\s*\{/, `
    P(key).diveRecovery=1.2;
   }
  };
- window.GRIDIRON_DEBUG={`), sandbox);
+ const debug = {`), sandbox);
 const g = sandbox.GRIDIRON_DEBUG;
 const f = sandbox.fixture;
 if (process.env.CHAOS_TRACE) g.debugTackleWatch?.();
