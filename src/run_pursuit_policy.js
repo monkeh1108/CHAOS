@@ -64,7 +64,7 @@ const RunPursuitPolicy=(()=>{
    // Force defender protects the OUTSIDE shoulder, not the runner's
    // current spot. Poor angles can drift too wide or cut too far inside.
    const cushion=clamp(.65+q*1.55+outwardSpeed*.24,.7,3.6);
-   y=clamp(carrier.y+side*cushion+lateralError,.65,fieldWidth-.65);
+   y=clamp(side*Math.max(side*base.y,side*carrier.y+cushion)+lateralError,.65,fieldWidth-.65);
    const ahead=clamp(1.15+outwardSpeed*(.17+.20*q)+
     (retreatRead?Math.min(1.5,retreat*.30):0),1.15,4.8);
    x=Math.max(base.x,carrier.x+ahead+depthError);
