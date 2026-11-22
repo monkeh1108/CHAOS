@@ -1,3 +1,9 @@
+import { runningSpeed } from "./core/tuning/movement.js";
+import {
+  DEFAULT_HANDOFF_SECONDS,
+  I_FORM_HANDOFF_SECONDS,
+  PASS_AUTO_RELEASE_SECONDS,
+} from "./core/tuning/timing.js";
 import {
   angleFromCosine,
   clamp,
@@ -2587,8 +2593,20 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     // A rested player retains their rated ceiling. Below 35% energy,
     // running speed gradually declines; exhausted athletes are slower without
     // receiving an artificial catch-up boost or violating their SPD hard cap.
-    const fatigue = clamp((0.35 - energy) / 0.35, 0, 1);
-    return (6.6 + (p.SPD - 55) * 0.089) * (1 - 0.26 * Math.pow(fatigue, 1.35));
+    const fatigue = clamp(
+      (runningSpeed.fatigueStaminaThreshold - energy) /
+        runningSpeed.fatigueStaminaThreshold,
+      0,
+      1,
+    );
+    return (
+      (runningSpeed.baseYardsPerSecond +
+        (p.SPD - runningSpeed.baseRating) *
+          runningSpeed.yardsPerSecondPerRating) *
+      (1 -
+        runningSpeed.maximumFatiguePenalty *
+          Math.pow(fatigue, runningSpeed.fatigueExponent))
+    );
   }
   function acceleration(p) {
     return (3.1 + (p.ACC - 55) * 0.055) * Math.pow(100 / mass(p), 0.17);
@@ -9426,8 +9444,11 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
           p.action = null;
         }
       }
-    if (pendingPass && playClock - pendingPass.start >= 0.62) {
-      releasePass(0.62);
+    if (
+      pendingPass &&
+      playClock - pendingPass.start >= PASS_AUTO_RELEASE_SECONDS
+    ) {
+      releasePass(PASS_AUTO_RELEASE_SECONDS);
     }
     const rb = P("RB"),
       qb = P("QB");
@@ -9532,7 +9553,10 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     if (
       running &&
       !ballCarrier &&
-      playClock > (selectedFormation === "iform" ? 0.33 : 0.51)
+      playClock >
+        (selectedFormation === "iform"
+          ? I_FORM_HANDOFF_SECONDS
+          : DEFAULT_HANDOFF_SECONDS)
     ) {
       tackleLinks.clear();
       pileState = null;

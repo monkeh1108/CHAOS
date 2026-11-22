@@ -113,6 +113,21 @@
 </div>
 <script>
 (() => {
+  // src/core/tuning/movement.js
+  var runningSpeed = Object.freeze({
+    baseYardsPerSecond: 6.6,
+    baseRating: 55,
+    yardsPerSecondPerRating: 0.089,
+    fatigueStaminaThreshold: 0.35,
+    maximumFatiguePenalty: 0.26,
+    fatigueExponent: 1.35
+  });
+
+  // src/core/tuning/timing.js
+  var PASS_AUTO_RELEASE_SECONDS = 0.62;
+  var I_FORM_HANDOFF_SECONDS = 0.33;
+  var DEFAULT_HANDOFF_SECONDS = 0.51;
+
   // src/core/math.js
   function clamp(value, low, high) {
     return Math.max(low, Math.min(high, value));
@@ -1843,18 +1858,60 @@
   }
   var ChaosGripAttachment = Object.freeze({ step, contactQuality });
 
+  // src/core/tuning/tackle.js
+  var escapeLegDrive = Object.freeze({
+    strengthWeight: 0.51,
+    truckingWeight: 0.31,
+    accelerationWeight: 0.18,
+    ratingFloor: 44,
+    ratingSpan: 55
+  });
+  var escapeHold = Object.freeze({
+    secureGrip: 0.78,
+    secureQuality: 0.76,
+    secureDifficulty: 1.48,
+    wrapDifficulty: 1.12,
+    diveDifficulty: 0.94,
+    brushDifficulty: 0.78
+  });
+  var escapeProgress = Object.freeze({
+    minimumGrip: 0.24,
+    lightHoldGrip: 0.75,
+    lightThreshold: 0.19,
+    wrapThreshold: 0.62,
+    minimumAgeSeconds: 0.15
+  });
+  var squareContact = Object.freeze({
+    opposingSpeed: 0.75,
+    fullForceSpeed: 3.4,
+    minimumAccuracy: 0.63,
+    accuracySpan: 0.31,
+    minimumSettleSquare: 0.43,
+    minimumSettleGrip: 0.66,
+    minimumSettleQuality: 0.55,
+    maximumSettleSeconds: 0.34
+  });
+
   // src/physics/square_contact.js
   function classify3(a, b, nx, ny) {
     const aNormal = (a.vx || 0) * nx + (a.vy || 0) * ny;
     const bNormal = -(b.vx || 0) * nx - (b.vy || 0) * ny;
     const aSpeed = Math.hypot(a.vx || 0, a.vy || 0), bSpeed = Math.hypot(b.vx || 0, b.vy || 0);
-    const oppose = aNormal > 0.75 && bNormal > 0.75;
+    const oppose = aNormal > squareContact.opposingSpeed && bNormal > squareContact.opposingSpeed;
     const accuracy = Math.min(
       aNormal / Math.max(0.4, aSpeed),
       bNormal / Math.max(0.4, bSpeed)
     );
-    const force = clampFinite(Math.min(aNormal, bNormal) / 3.4, 0, 1);
-    const square = oppose ? clampFinite((accuracy - 0.63) / 0.31, 0, 1) * force : 0;
+    const force = clampFinite(
+      Math.min(aNormal, bNormal) / squareContact.fullForceSpeed,
+      0,
+      1
+    );
+    const square = oppose ? clampFinite(
+      (accuracy - squareContact.minimumAccuracy) / squareContact.accuracySpan,
+      0,
+      1
+    ) * force : 0;
     return {
       square,
       opposing: oppose,
@@ -1865,14 +1922,18 @@
     };
   }
   function settleAge(square, grip, quality2, runnerBalance, runnerAction) {
-    if (square < 0.43 || grip < 0.66 || quality2 < 0.55 || runnerAction === "truck" || runnerAction === "stiff")
+    if (square < squareContact.minimumSettleSquare || grip < squareContact.minimumSettleGrip || quality2 < squareContact.minimumSettleQuality || runnerAction === "truck" || runnerAction === "stiff")
       return 0;
-    const gripControl = clampFinite((grip - 0.66) / 0.35, 0, 1);
+    const gripControl = clampFinite(
+      (grip - squareContact.minimumSettleGrip) / 0.35,
+      0,
+      1
+    );
     const balanceLoss = clampFinite((0.92 - runnerBalance) / 0.45, 0, 1);
     return clampFinite(
       square * (0.13 + 0.15 * gripControl + 0.1 * balanceLoss),
       0,
-      0.34
+      squareContact.maximumSettleSeconds
     );
   }
   var ChaosSquareContact = Object.freeze({ classify: classify3, settleAge });
@@ -1886,7 +1947,7 @@
     );
     const stamina = clampFinite(runner.stam ?? 1, 0, 1), balance = clampFinite(runner.balance ?? 1, 0, 1);
     const legPower = clampFinite(
-      ((runner.STR || 55) * 0.51 + (runner.TRK || 55) * 0.31 + (runner.ACC || 55) * 0.18 - 44) / 55,
+      ((runner.STR || 55) * escapeLegDrive.strengthWeight + (runner.TRK || 55) * escapeLegDrive.truckingWeight + (runner.ACC || 55) * escapeLegDrive.accelerationWeight - escapeLegDrive.ratingFloor) / escapeLegDrive.ratingSpan,
       0,
       1
     );
@@ -1899,7 +1960,7 @@
       1
     );
     const grip = clampFinite(link.grip || 0, 0, 1.6), quality2 = clampFinite(link.quality ?? 0.65, 0, 1.25);
-    const secure = link.style === "wrap" && grip >= 0.78 && quality2 >= 0.76;
+    const secure = link.style === "wrap" && grip >= escapeHold.secureGrip && quality2 >= escapeHold.secureQuality;
     const hold = clampFinite(
       (defender.TAK || 65) * 0.5 + (defender.STR || 65) * 0.3 + (defender.AWR || 65) * 0.2,
       0,
@@ -1910,7 +1971,7 @@
       0,
       1.5
     );
-    const difficulty = secure ? 1.48 : link.style === "wrap" ? 1.12 : link.style === "dive" ? 0.94 : 0.78;
+    const difficulty = secure ? escapeHold.secureDifficulty : link.style === "wrap" ? escapeHold.wrapDifficulty : link.style === "dive" ? escapeHold.diveDifficulty : escapeHold.brushDifficulty;
     const opposing = clampFinite(hold / 100 * defenderLeverage * difficulty, 0, 1.7);
     const runnerPower = effort * (0.64 + 0.36 * clampFinite((runner.w || 210) / 230, 0.6, 1.5));
     const dx = (runner.x || 0) - (defender.x || 0), dy = (runner.y || 0) - (defender.y || 0), len = Math.max(1e-3, Math.hypot(dx, dy));
@@ -1934,10 +1995,10 @@
   function step2(runner, defender, link, dt) {
     const contest = drive(runner, defender, link);
     const age = link.age || 0;
-    if ((link.grip || 0) < 0.24)
+    if ((link.grip || 0) < escapeProgress.minimumGrip)
       return { ...contest, broken: false, progress: 0, kind: "none" };
-    const lightHold = (link.grip || 0) < 0.75 || link.style !== "wrap";
-    const threshold = lightHold ? 0.19 : 0.62;
+    const lightHold = (link.grip || 0) < escapeProgress.lightHoldGrip || link.style !== "wrap";
+    const threshold = lightHold ? escapeProgress.lightThreshold : escapeProgress.wrapThreshold;
     const gain = Math.max(0, contest.margin - (lightHold ? -0.1 : 0.09));
     const recovery = Math.max(0, -contest.margin) * 0.5;
     link.escapeProgress = clampFinite(
@@ -1945,7 +2006,7 @@
       0,
       1.5
     );
-    const broken = age > 0.15 && link.escapeProgress >= threshold;
+    const broken = age > escapeProgress.minimumAgeSeconds && link.escapeProgress >= threshold;
     return {
       ...contest,
       broken,
@@ -4953,8 +5014,12 @@
     }
     function maxSpeed(p) {
       const energy = clamp(p.stam ?? 1, 0, 1);
-      const fatigue = clamp((0.35 - energy) / 0.35, 0, 1);
-      return (6.6 + (p.SPD - 55) * 0.089) * (1 - 0.26 * Math.pow(fatigue, 1.35));
+      const fatigue = clamp(
+        (runningSpeed.fatigueStaminaThreshold - energy) / runningSpeed.fatigueStaminaThreshold,
+        0,
+        1
+      );
+      return (runningSpeed.baseYardsPerSecond + (p.SPD - runningSpeed.baseRating) * runningSpeed.yardsPerSecondPerRating) * (1 - runningSpeed.maximumFatiguePenalty * Math.pow(fatigue, runningSpeed.fatigueExponent));
     }
     function acceleration(p) {
       return (3.1 + (p.ACC - 55) * 0.055) * Math.pow(100 / mass2(p), 0.17);
@@ -9759,8 +9824,8 @@
             p.action = null;
           }
         }
-      if (pendingPass && playClock - pendingPass.start >= 0.62) {
-        releasePass(0.62);
+      if (pendingPass && playClock - pendingPass.start >= PASS_AUTO_RELEASE_SECONDS) {
+        releasePass(PASS_AUTO_RELEASE_SECONDS);
       }
       const rb = P("RB"), qb = P("QB");
       const claims = /* @__PURE__ */ new Set();
@@ -9842,7 +9907,7 @@
       applyMotion(dt);
       if (phase !== "live") return;
       convertQuarterbackScramble();
-      if (running && !ballCarrier && playClock > (selectedFormation === "iform" ? 0.33 : 0.51)) {
+      if (running && !ballCarrier && playClock > (selectedFormation === "iform" ? I_FORM_HANDOFF_SECONDS : DEFAULT_HANDOFF_SECONDS)) {
         tackleLinks.clear();
         pileState = null;
         ballCarrier = rb;

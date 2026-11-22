@@ -45,3 +45,17 @@ and find the first sampled tick where someone has the ball.
   and lint output flag this existing duplicate.
 - **A formatter** standardizes layout. It makes it easier to review an
   unrelated rule or physics change later.
+
+## Checkpoint 5
+
+- **Don't repeat yourself (DRY)** means sharing a rule when multiple places
+  need the same behavior. The math module has one ordinary clamp and one
+  clamp for physics measurements that may be invalid. Keeping both behaviors
+  preserves existing handling of NaN and infinity.
+- A **named tuning value** explains what a number controls. In tackle escape,
+  `escapeHold.secureDifficulty` still equals `1.48`. The name connects
+  that number to resistance from a secured wrap.
+
+Try tracing `escapeHold.secureDifficulty` from `src/core/tuning/tackle.js`
+into `src/physics/tackle_escape.js`. Find the condition that makes a wrap
+secure and the expression that uses the difficulty.
