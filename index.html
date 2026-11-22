@@ -1673,7 +1673,7 @@ function createGridironRenderer(canvas){
   }
  }
  function airAndPossessionMarkers(sim){
-  const a=sim.carrier,selected=sim.active,b=sim.ball,rec=sim.intended;
+  const a=sim.markerCarrier,selected=sim.active,b=sim.ball,rec=sim.intended;
   markerDebug={catchPoint:null,ballShadow:null,carrier:a?.key||null,controlled:selected?.key||null,intended:b?.flying?rec?.key||null:null};
   if(a){groundRing(a.x,a.y,1.00,C.carrier,22,.20);}
   if(selected&&selected!==a){groundRing(selected.x,selected.y,.92,C.controlled,17,.15);}
@@ -1860,7 +1860,7 @@ function createGridironRenderer(canvas){
    const o=byKey.get(c.blocker),d=byKey.get(c.defender);
    if(o&&d){blockOpponent.set(o.key,d);blockOpponent.set(d.key,o)}
   }for(const c of sim.tackles){contacts.add(c.defender);if(sim.carrier)contacts.add(sim.carrier.key)}
-  for(const p of sim.players)player(p,sim.clock,sim.active,sim.carrier,contacts,sim.possession??0,presnap,blockOpponent);
+  for(const p of sim.players)player(p,sim.clock,sim.active,sim.markerCarrier||sim.carrier,contacts,sim.possession??0,presnap,blockOpponent);
   airAndPossessionMarkers(sim);
   if(sim.ball&&sim.ball.flying){sphere(I(),[sim.ball.x,Math.max(.20,sim.ball.z),sim.ball.y],[.31,.19,.20],C.ball)}
   // A valid WebGL context does not guarantee a visible image: broken geometry
@@ -6009,7 +6009,8 @@ function drawAssignments(v){
  ctx.restore();
 }
 function drawRoute(v){if(phase==='dead'||(gameStarted&&controlMode==='defense'))return;for(let p of off){if(!p.route||ballCarrier)continue;ctx.strokeStyle=p===intended?'#e8ff91':p.key==='TE'?'#ffbf80':'#d6f6f6';ctx.globalAlpha=.45;ctx.lineWidth=1.8;ctx.setLineDash([3,5]);ctx.beginPath();let [px,py]=xy(p.x,p.y,v);ctx.moveTo(px,py);for(let j=p.routeIdx;j<p.route.length;j++){[px,py]=xy(...p.route[j],v);ctx.lineTo(px,py)}ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1}}
-function playerShape(p,v){const home=(p.team===0?possession:1-possession)===0;const [x,y]=xy(p.x,p.y,v),s=v.px,r=Math.max(4,radius(p)*s);if(x<-30||x>fieldSize.w+30)return;
+function drawPossessionRing(x,y,r){ctx.save();ctx.strokeStyle='#ffdc76';ctx.lineWidth=3.3;ctx.beginPath();ctx.arc(x,y,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
+function playerShape(p,v,markerCarrier){const home=(p.team===0?possession:1-possession)===0;const [x,y]=xy(p.x,p.y,v),s=v.px,r=Math.max(4,radius(p)*s);if(x<-30||x>fieldSize.w+30)return;
  ctx.save();ctx.translate(x,y);
  if(p.ground){
   const g=p.ground;
@@ -6037,6 +6038,7 @@ function playerShape(p,v){const home=(p.team===0?possession:1-possession)===0;co
   // Grounded players stay visible but cannot block, pursue, or catch until up.
   ctx.save();ctx.fillStyle='#eaf7df';ctx.font=`700 ${Math.max(8,1.45*s)}px ui-sans-serif`;
   ctx.textAlign='center';ctx.fillText(g.stage==='winded'?'•••':g.stage==='rise'?'↑':'!',x,y-r-7);ctx.restore();
+  if(markerCarrier===p)drawPossessionRing(x,y,r);
   return;
  }
  const pileMotion=pileState?.active&&(p===ballCarrier||p.pushing||tackleLinks.has(p.key));
@@ -6065,7 +6067,7 @@ function playerShape(p,v){const home=(p.team===0?possession:1-possession)===0;co
  if(p===active&&phase==='live'){ctx.save();ctx.strokeStyle=burstTime>0?'#e9ff72':'#d5f7f6aa';ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+p.vx*v.px*.47,y+p.vy*v.px*.47);ctx.stroke();ctx.restore()}
  if(p===active){ctx.save();ctx.fillStyle='#fff';ctx.font=`800 ${Math.max(9,1.75*s)}px ui-sans-serif`;ctx.textAlign='center';ctx.fillText(p.name.split(' ').pop(),x,y-r-8);ctx.restore()}
  if(phase==='live'&&p.pulse>0){ctx.strokeStyle='#ffee9a';ctx.globalAlpha=p.pulse*2;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,r+7,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
- if(phase==='live'&&ballCarrier===p){ctx.save();ctx.strokeStyle='#ffdc76';ctx.lineWidth=3.3;ctx.beginPath();ctx.arc(x,y,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();ctx.fillStyle='#a56631';ctx.strokeStyle='#fff2cc';ctx.lineWidth=.8;ctx.beginPath();ctx.ellipse(x+r*.6,y-r*.6,r*.44,r*.27,Math.PI/4,0,Math.PI*2);ctx.fill();ctx.stroke()}
+ if(markerCarrier===p){drawPossessionRing(x,y,r);ctx.fillStyle='#a56631';ctx.strokeStyle='#fff2cc';ctx.lineWidth=.8;ctx.beginPath();ctx.ellipse(x+r*.6,y-r*.6,r*.44,r*.27,Math.PI/4,0,Math.PI*2);ctx.fill();ctx.stroke()}
 }
 function drawBall(v){if(!ball||!ball.flying)return;
  const spot=flightMarkers(),[sx,sy]=xy(spot.catchX,spot.catchY,v);
@@ -6130,11 +6132,17 @@ function drawPileOverlay(v){
   ctx.strokeStyle='#dfff79';ctx.globalAlpha=.48;ctx.lineWidth=2+entry.output;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(x,y);ctx.stroke();}
  ctx.restore();
 }
-function render(){if(!canvas.width||!canvas.height)return;const dpr=fieldSize.scale;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,fieldSize.w,fieldSize.h);ctx.save();if(shake>0)ctx.translate(Math.sin(totalClock*173)*shake*7,Math.cos(totalClock*157)*shake*6);let v=view();drawField(v);if(!specialState){drawAssignments(v);drawRoute(v);}drawContactLinks(v);drawPileOverlay(v);for(let p of players.filter(q=>q.team===1))playerShape(p,v);for(let p of players.filter(q=>q.team===0))playerShape(p,v);drawBall(v);placeReceiverPins(v);
+function render(){if(!canvas.width||!canvas.height)return;
+ // Scrimmage models the QB's pre-release and pre-handoff possession implicitly.
+ // Keep the visual holder separate from the carrier used by physics and camera.
+ const markerCarrier=phase==='live'&&!ball?.flying
+  ?ballCarrier||(!specialState&&controlMode==='defense'&&!passThrown&&!ball?P('QB'):null)
+  :null;
+ const dpr=fieldSize.scale;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,fieldSize.w,fieldSize.h);ctx.save();if(shake>0)ctx.translate(Math.sin(totalClock*173)*shake*7,Math.cos(totalClock*157)*shake*6);let v=view();drawField(v);if(!specialState){drawAssignments(v);drawRoute(v);}drawContactLinks(v);drawPileOverlay(v);for(let p of players.filter(q=>q.team===1))playerShape(p,v,markerCarrier);for(let p of players.filter(q=>q.team===0))playerShape(p,v,markerCarrier);drawBall(v);placeReceiverPins(v);
  if(phase==='presnap'&&!specialState){let [x,y]=xy(playStart,26.6,v);ctx.fillStyle='#f8f1bf';ctx.font='bold 12px ui-sans-serif';ctx.textAlign='center';ctx.fillText('LINE OF SCRIMMAGE',x,y-31)}
  if(flash>0){ctx.fillStyle='rgba(226,255,142,'+(.16*flash/2)+')';ctx.fillRect(0,0,fieldSize.w,fieldSize.h)}ctx.restore();
  if(visualMode==='3d'&&renderer3d){
-  try{renderer3d.draw({players,carrier:ballCarrier,active,intended,ball,blocks:[...blockLinks.values()],tackles:[...tackleLinks.values()],possession,clock:totalClock,special:!!specialState,los:specialState?.kind==='punt'?120-specialState.puntFrom:isFreeKick(specialState)?kickLineX(specialState):playStart,first,phase,play:selectedPlay,passThrown,playStart,defenseArt:phase==='presnap'&&!specialState&&controlMode==='defense'?def.map(d=>({key:d.key,x:d.x,y:d.y,selected:d.key===selectedDefenderKey,assignment:d.assignment?{...d.assignment}:null,rush:d.rush,spy:d.spy,blitz:d.blitz,gapTarget:DefensivePresnap.gapTarget(d,off,playStart)})):[],art:phase==='presnap'&&!specialState&&!(gameStarted&&controlMode==='defense')?off.filter(p=>p.route?.length).map(p=>({key:p.key,start:[p.x,p.y],points:p.route})):[]});placeReceiverPins(v)}
+  try{renderer3d.draw({players,carrier:ballCarrier,markerCarrier,active,intended,ball,blocks:[...blockLinks.values()],tackles:[...tackleLinks.values()],possession,clock:totalClock,special:!!specialState,los:specialState?.kind==='punt'?120-specialState.puntFrom:isFreeKick(specialState)?kickLineX(specialState):playStart,first,phase,play:selectedPlay,passThrown,playStart,defenseArt:phase==='presnap'&&!specialState&&controlMode==='defense'?def.map(d=>({key:d.key,x:d.x,y:d.y,selected:d.key===selectedDefenderKey,assignment:d.assignment?{...d.assignment}:null,rush:d.rush,spy:d.spy,blitz:d.blitz,gapTarget:DefensivePresnap.gapTarget(d,off,playStart)})):[],art:phase==='presnap'&&!specialState&&!(gameStarted&&controlMode==='defense')?off.filter(p=>p.route?.length).map(p=>({key:p.key,start:[p.x,p.y],points:p.route})):[]});placeReceiverPins(v)}
   catch(err){recoverFrom3DFailure(err)}
  }
  placeActionCues(v);
