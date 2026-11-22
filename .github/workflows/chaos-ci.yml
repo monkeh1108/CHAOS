@@ -22,6 +22,6 @@ jobs:
       - name: Focused existing regression tests
         run: |
           set -e
-          for test in qa_v0364s_reengagement.js qa_v0364r_intelligence.js qa_v0364q_low_contact.js qa_v0364t_policy.js qa_v0364t_feedback.js qa_v0364u_reengagement.js qa_v0364w_pursuit.js; do
-            if [ -f "$test" ]; then node "$test"; fi
+          for test in tests/unit/tackle_reengagement.test.js tests/unit/tackle_intelligence.test.js tests/unit/low_contact.test.js tests/unit/pursuit_reaction.test.js tests/unit/contact_feedback.test.js; do
+            node "$test"
           done

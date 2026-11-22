@@ -1,0 +1,22 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const context=vm.createContext({});
+for(const name of ['render/animation_policy','physics/anatomy_hitboxes']) vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name+'.js','utf8'),context);
+const A=vm.runInContext('AnatomyHitboxes',context);
+function p(h,w,x=0,y=0,face=0){return {key:'p',pos:'RB',h,w,x,y,face,vx:0,vy:0,travel:0,action:null,ground:null};}
+const small=A.sample(p(68,170)),big=A.sample(p(80,330));
+assert(big.dims.visualHeight>small.dims.visualHeight);
+assert(big.dims.build>small.dims.build);
+assert(big.regions.find(x=>x.region==='torso').r>small.regions.find(x=>x.region==='torso').r);
+assert(big.regions.length>=15);
+const front=A.sample(p(74,205,0,0,0)),turned=A.sample(p(74,205,0,0,Math.PI/2));
+const nose=a=>a.regions.find(r=>r.region==='foot'&&r.side===-1).b;
+assert(nose(front).x>nose(front).y);
+assert(nose(turned).y>nose(turned).x);
+const standing=A.sample(p(74,205)),fallen=A.sample({...p(74,205),ground:{stage:'down',time:1}});
+assert(Math.abs(standing.regions.find(x=>x.region==='helmet').a.x-fallen.regions.find(x=>x.region==='helmet').a.x)>.5);
+const near=A.contacts(A.sample(p(74,205,0,0)),A.sample(p(74,205,.3,0)));
+assert(near.length>0);
+assert.equal(A.contacts(A.sample(p(74,205,0,0)),A.sample(p(74,205,10,0))).length,0);
+const sweep=A.sweptContacts(p(74,205,-3,0),p(74,205,3,0),p(74,205,0,0),p(74,205,0,0),12);
+assert(sweep.length>0);
+console.log('PASS 7 anatomy geometry checks: body build, height, region count, facing, fall pose, overlap, swept crossing');
