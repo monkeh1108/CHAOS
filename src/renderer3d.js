@@ -102,7 +102,7 @@ function createGridironRenderer(canvas){
   }
  }
  function airAndPossessionMarkers(sim){
-  const a=sim.carrier,selected=sim.active,b=sim.ball,rec=sim.intended;
+  const a=sim.markerCarrier,selected=sim.active,b=sim.ball,rec=sim.intended;
   markerDebug={catchPoint:null,ballShadow:null,carrier:a?.key||null,controlled:selected?.key||null,intended:b?.flying?rec?.key||null:null};
   if(a){groundRing(a.x,a.y,1.00,C.carrier,22,.20);}
   if(selected&&selected!==a){groundRing(selected.x,selected.y,.92,C.controlled,17,.15);}
@@ -289,7 +289,7 @@ function createGridironRenderer(canvas){
    const o=byKey.get(c.blocker),d=byKey.get(c.defender);
    if(o&&d){blockOpponent.set(o.key,d);blockOpponent.set(d.key,o)}
   }for(const c of sim.tackles){contacts.add(c.defender);if(sim.carrier)contacts.add(sim.carrier.key)}
-  for(const p of sim.players)player(p,sim.clock,sim.active,sim.carrier,contacts,sim.possession??0,presnap,blockOpponent);
+  for(const p of sim.players)player(p,sim.clock,sim.active,sim.markerCarrier||sim.carrier,contacts,sim.possession??0,presnap,blockOpponent);
   airAndPossessionMarkers(sim);
   if(sim.ball&&sim.ball.flying){sphere(I(),[sim.ball.x,Math.max(.20,sim.ball.z),sim.ball.y],[.31,.19,.20],C.ball)}
   // A valid WebGL context does not guarantee a visible image: broken geometry
