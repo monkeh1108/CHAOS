@@ -3,7 +3,7 @@ def test_audibles(browser_session, standalone_html):
     with browser_session(headless=True, args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader']) as browser:
      for width in (1120,390):
       page=browser.new_page(viewport={'width':width,'height':820}); errors=[];page.on('pageerror',lambda err:errors.append(str(err)))
-      page.set_content(HTML,wait_until='load');page.evaluate('GRIDIRON_DEBUG.reset()');page.evaluate("GRIDIRON_DEBUG.select('inside')")
+      page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')");page.evaluate('GRIDIRON_DEBUG.reset()');page.evaluate("GRIDIRON_DEBUG.select('inside')")
       page.keyboard.press('x');assert page.evaluate('GRIDIRON_DEBUG.getAudibles().open')
       assert len(page.locator('#audibleOptions button').all())==4
       before=page.evaluate('GRIDIRON_DEBUG.getMatch().playSeconds');page.wait_for_timeout(250)
@@ -18,7 +18,7 @@ def test_audibles(browser_session, standalone_html):
       page.close()
      browser.close()
     with browser_session(headless=True, args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader']) as browser:
-     page=browser.new_page();page.set_content(HTML,wait_until='load')
+     page=browser.new_page();page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
      page.evaluate("GRIDIRON_DEBUG.reset();GRIDIRON_DEBUG.debugDefensePresnap();")
      original=page.evaluate('GRIDIRON_DEBUG.getState().play')
      page.evaluate("GRIDIRON_DEBUG.select('verticals')")

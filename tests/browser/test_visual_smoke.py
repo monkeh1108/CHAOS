@@ -7,7 +7,7 @@ def test_visual_smoke(browser_session, standalone_html, tmp_path):
      for width in (1120,390):
       page=browser.new_page(viewport={'width':width,'height':820})
       errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-      page.set_content(standalone_html,wait_until='load');page.wait_for_timeout(250)
+      page.set_content(standalone_html,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')");page.wait_for_timeout(250)
       mode=page.evaluate('GRIDIRON_DEBUG.getState().viewMode')
       assert mode=='3d',(width,mode)
       assert page.locator('.sheetPick.padFocus').count()==1
