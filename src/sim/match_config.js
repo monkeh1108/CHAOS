@@ -20,7 +20,25 @@ export const plays = [
   "smash",
 ];
 
-export const RUNS = new Set(["inside", "stretch", "power", "counter", "sweep"]);
+export const RUN_LANDMARKS = {
+  inside: { bend: [8, 26.65], finish: [16, 26.65] },
+  stretch: { bend: [6, 8], finish: [15, 8], block: { shift: -2.8, leadY: 19 } },
+  power: {
+    entry: [1, 22.3],
+    bend: [5, 19],
+    finish: [13, 16],
+    block: { shift: 0.75, leadY: 22, pull: "RG" },
+  },
+  counter: {
+    entry: [1, 33.2],
+    bend: [6, 38],
+    finish: [15, 39],
+    block: { shift: -0.75, leadY: 32.5, pull: "LG" },
+  },
+  sweep: { bend: [8, 43], finish: [16, 46], block: { shift: 3.2, leadY: 35, pull: "RG" } },
+};
+
+export const RUNS = new Set(Object.keys(RUN_LANDMARKS));
 
 export const PASS_ICONS = ["X", "Y", "A", "B"];
 

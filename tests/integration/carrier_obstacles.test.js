@@ -97,10 +97,8 @@ test("slow and fast approaches leave time to react with different outcomes", () 
     slowFrames.findIndex((p) => p.intentTarget === "LG") >
       fastFrames.findIndex((p) => p.intentTarget === "LG"),
   );
-  const slowImpact = slow.debugIndirectContact();
   const fastImpact = fast.debugIndirectContact();
-  assert.equal(slowImpact.outcome, "deflect");
-  assert.ok(slowImpact.impulse < fastImpact.impulse * 0.4);
+  assert.equal(slow.debugIndirectContact(), null);
   assert.ok(slowFrames.at(-1).x > 60.6);
   assert.equal(fastImpact.kind, "teammate-bump");
   // The first recognition tick changes the steering target, not the velocity directly.
@@ -132,31 +130,36 @@ test("a saved read resumes on the same tick after restoring a snapshot", () => {
   assert.deepEqual(sample(restored, 18), sample(game, 18));
 });
 
-for (const play of ["inside", "stretch"]) {
-  test(`an ordinary ${play} handoff sees the center and starts turning before contact`, () => {
+for (const [play, blocker] of [["inside", "C"], ["counter", "RT"]]) {
+  test(`a live ${play} runner changes heading before reaching the blocker`, () => {
     const game = createGame({}, 431);
     game.reset();
     game.debugSeed(431);
     game.select(play);
     game.snap();
-    let read;
-    let prior;
-    for (let tick = 0; tick < 100; tick++) {
+    let before;
+    const turn = [];
+    for (let tick = 0; tick < 90; tick++) {
       game.step(1);
       const state = game.getState();
       if (state.ballCarrier !== "RB") continue;
+      assert.equal(state.players.length, 22);
       const p = state.players.find(({ key }) => key === "RB");
-      const center = state.players.find(({ key }) => key === "C");
-      if (p.intentTarget === "C") {
-        assert.equal(state.players.length, 22);
-        assert.ok(center.x - p.x > 2, "the runner turned before reaching the blocker");
-        assert.ok(p.vy > prior.vy, "the runner started turning away from the center");
-        read = p;
-        break;
+      if (p.intentTarget === blocker) {
+        const teammate = state.players.find(({ key }) => key === blocker);
+        if (turn.length === 0)
+          assert.ok(Math.hypot(p.x - teammate.x, p.y - teammate.y) > 2);
+        turn.push(p);
+      } else if (turn.length === 0) {
+        before = p;
       }
-      prior = p;
     }
-    assert.ok(read, "the normal lineup produced an obstacle read");
+    assert.ok(turn.length >= 4);
+    // The runner changes his real velocity direction, not just his debug target.
+    const headingBefore = Math.atan2(before.vy, before.vx);
+    const last = turn[3];
+    const headingDuring = Math.atan2(last.vy, last.vx);
+    assert.ok(headingDuring > headingBefore + 0.02);
   });
 }
 
@@ -258,5 +261,27 @@ test("a receiver is an obstacle while screening for a teammate after the catch",
   for (let i = 0; i < 8; i++)
     turn = readCarrierObstacle(player, state, radius, 1 / 60, 53.3);
   assert.equal(turn.key, "WR2");
-  assert.ok(turn.slope < 0);
+  assert.ok(turn.y < 0);
+});
+
+test("a runner can sidestep while moving mainly across the field", () => {
+  const face = Math.atan2(6, 1);
+  const runner = {
+    key: "RB", x: 50, y: 25, vx: 1, vy: 6, face,
+    AWR: 99, AGI: 99, balance: 1,
+  };
+  const blocker = {
+    key: "RT", pos: "RT", x: 50.65, y: 28.9, vx: 0.15, vy: 0.9, face,
+  };
+  const state = {
+    off: [runner, blocker],
+    players: [runner, blocker],
+    blockLinks: new Map(),
+    tackleLinks: new Map(),
+  };
+  let turn;
+  for (let i = 0; i < 9; i++)
+    turn = readCarrierObstacle(runner, state, () => 0.4, 1 / 60, 53.3);
+  assert.equal(turn.key, "RT");
+  assert.ok(Math.abs(turn.x * Math.sin(face) - turn.y * Math.cos(face)) > 0.15);
 });

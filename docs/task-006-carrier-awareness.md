@@ -1,39 +1,40 @@
-# Task 006 carrier awareness
+# Task 006 carrier awareness and called run lanes
 
-An automatically controlled ball carrier can steer around a visible teammate
-he is catching from behind. The same read works on handoffs, catches,
-scrambles, and kick returns. Moving blockers can qualify, including a
-blocker holding an engagement or a receiver blocking downfield. A blocker
-moving backward into the runner or carrying enough defender impulse to
-transfer it to the runner is excluded. Inside Zone still uses Task 005 to
-resolve the actual impact when contact happens.
+An automatically controlled ball carrier can turn around a visible teammate
+he is catching from behind. The look-ahead follows his actual direction of
+travel, including runs across the field. Awareness and vision determine when
+he can react. Agility, balance, closing speed, and the available gap determine
+how far he can turn. The existing movement and contact systems apply
+acceleration, momentum, and impact. A late turn can still end in a bump.
 
-Awareness and any existing vision rating set the look-ahead and reaction delay.
-Agility and balance cap the turn. Closing speed determines how much time
-the runner has, and the intended side needs room. The normal movement step
-applies acceleration, traction, body mass, and the speed cap. A partial or
-late turn can still end in contact.
+The wider run calls use the same landmarks as the play art. Stretch uses
+reach blocks to the left. Power sends the right guard across to lead left.
+Counter sends the left guard across toward the right C-gap. Sweep takes a
+wider right track with a right-guard pull, rightward reach steps, and
+perimeter support. Inside Zone keeps its interior combination blocks.
+Receivers stay tied to their perimeter matchups and gain playside leverage
+on wide calls.
 
-Deliberate stick or keyboard movement takes control immediately. Releasing
-movement after taking control keeps the existing coast and brake behavior.
+Deliberate stick or keyboard movement takes control immediately. After
+releasing it, the carrier coasts or brakes.
 
-## Playtest checklist
+## Playtest
 
-1. Call Stretch from the default formation. Snap and leave movement neutral
-   through the handoff. Watch the runner start to turn away from the center.
-   Power and Counter can offer a similar read on a guard.
-2. Try Inside Zone with the same neutral input. In congestion, the runner may
-   start turning and still brush the blocker. When both sides close, normal
-   contact should decide what happens.
-3. Try a catch or a kick return with neutral movement and watch for the same
-   turn when the carrier catches up to a blocker from behind. Automatic
-   movement can apply the same read during a CPU scramble.
-4. Steer deliberately after the handoff and check that the carrier follows
-   your input. Release movement and check that he coasts or brakes as before.
-5. Watch an Inside Zone block where a defender drives the blocker backward.
-   The physical bump, stagger, or fall should still follow the contact.
+1. From the default formation, call Stretch and keep movement neutral
+   through the handoff. The back should head wide left and the line should
+   step left. Compare with Sweep, which takes the wider right path.
+2. Compare Power and Counter. Watch the opposite guards pull behind the
+   line and look for the intended left and right lanes.
+3. Try Counter several times with neutral movement. Watch for the back to
+   plant and bank as he angles around the right tackle. The timing depends
+   on how that block develops. Inside Zone can also produce a short turn
+   around the center. Space can close after the runner begins turning.
+4. Try deliberate steering and confirm the carrier follows your controls.
+   An Inside Zone blocker driven backward by a defender should still
+   transfer a physical impact when he hits the runner.
 
-The sidestep uses ordinary turning and footwork. Seeded 22-player replays
-exercise real pre-contact turns on runs. Controlled pass and kickoff
-encounters exercise the same decision for other carriers. Use the checklist
-to judge readability and frequency in your own games.
+The seeded 22-player tests verify lane separation, line flow, guard pulls,
+and a change in the runner's heading before contact. Controlled fixtures cover
+awareness, agility, true rear approach, open and closed gaps, lateral travel,
+manual steering, and other ball-carrier positions. Playtesting checks how
+readable and frequent the reactions are in ordinary games.

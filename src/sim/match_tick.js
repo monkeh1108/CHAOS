@@ -1,3 +1,4 @@
+import { RUN_LANDMARKS } from "./match_config.js";
 import {
   DEFAULT_HANDOFF_SECONDS,
   I_FORM_HANDOFF_SECONDS,
@@ -155,6 +156,16 @@ export function createMatchTick() {
           insideZoneBlockerAI(o, dt, claims, matchState.ballCarrier);
           continue;
         }
+        const plannedRun = RUN_LANDMARKS[matchState.selectedPlay]?.block;
+        if (
+          plannedRun &&
+          matchState.ballCarrier.x < matchState.playStart + 8 &&
+          matchState.playClock < 2.4 &&
+          ["LT", "LG", "C", "RG", "RT", "TE", "FB"].includes(o.pos)
+        ) {
+          blockerAI(o, dt, claims);
+          continue;
+        }
         if (o === qb) quarterbackSupport(o, matchState.ballCarrier, dt);
         else if (running && o.pos === "WR")
           receiverRunBlock(o, dt, claims, matchState.ballCarrier);
@@ -174,7 +185,7 @@ export function createMatchTick() {
           o.key === matchState.selectedLinemanKey
         )
           manualAthlete(o, dt, "user-block");
-        else blockerAI(o, dt);
+        else blockerAI(o, dt, matchState.selectedPlay === "inside" ? new Set() : claims);
         continue;
       }
       if (o === qb) {
@@ -202,7 +213,7 @@ export function createMatchTick() {
       }
       if (running && o.pos === "WR") receiverRunBlock(o, dt, claims);
       else if (running && (o.pos === "TE" || o.pos === "FB"))
-        rbLeadBlock(o, dt);
+        rbLeadBlock(o, dt, claims);
       else AIroute(o, dt);
     }
     for (const d of matchState.def) {

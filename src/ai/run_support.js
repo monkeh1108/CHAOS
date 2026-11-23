@@ -1,3 +1,4 @@
+import { RUN_LANDMARKS } from "../sim/match_config.js";
 import { clamp, distance2D as dist } from "../core/math.js";
 
 export function createRunSupport() {
@@ -126,8 +127,11 @@ export function createRunSupport() {
       o.intentTarget = target.key;
       const lead = clamp(0.12 + dist(o, target) / 35, 0.16, 0.37);
       const tx = target.x + target.vx * lead - 0.48;
+      const run = RUN_LANDMARKS[matchState.selectedPlay];
+      const playSide = run?.block && (run.bend[1] - 26.65) * (homeY - 26.65) > 0;
+      const leverage = playSide ? clamp((run.bend[1] - target.y) * 0.25, -0.6, 0.6) : 0;
       const lane = clamp(
-        target.y + target.vy * lead,
+        target.y + target.vy * lead + leverage,
         Math.max(0.8, homeY - laneWidth),
         Math.min(H - 0.8, homeY + laneWidth),
       );

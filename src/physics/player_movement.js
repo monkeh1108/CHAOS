@@ -76,6 +76,7 @@ export function createPlayerMovement() {
         "escort",
         "block",
         "lead-block",
+        "pull",
         "pile-support",
         "rush",
         "run",

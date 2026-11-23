@@ -44,28 +44,24 @@ function canSeeBlocker(runner, blocker, players, radius) {
   });
 }
 
-function laneIsOpen(runner, blocker, players, radius, time, targetY) {
-  const dx = blocker.x + blocker.vx * time - runner.x;
-  const dy = targetY - runner.y;
+function laneIsOpen(runner, blocker, players, radius, time, targetX, targetY) {
   return !players.some((other) => {
     if (other === runner || other === blocker) return false;
-    // Sample each body at the moment the runner would reach its depth.
-    const relativeX = dx - other.vx * time;
-    const fraction = clamp(
-      (other.x - runner.x) / Math.max(relativeX, 0.1),
-      0,
-      1,
-    );
-    const x = other.x + other.vx * time * fraction - runner.x - dx * fraction;
-    const y = other.y + other.vy * time * fraction - runner.y - dy * fraction;
-    return Math.hypot(x, y) < radius(runner) + radius(other) + PAD_MARGIN;
+    const x = other.x - runner.x;
+    const y = other.y - runner.y;
+    const dx = targetX - runner.x - other.vx * time;
+    const dy = targetY - runner.y - other.vy * time;
+    const fraction = clamp((x * dx + y * dy) / Math.max(dx * dx + dy * dy, 0.01), 0, 1);
+    return Math.hypot(x - dx * fraction, y - dy * fraction) <
+      radius(runner) + radius(other) + PAD_MARGIN;
   });
 }
 
-export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
+export function readCarrierObstacle(runner, state, radius, dt, fieldWidth, aim) {
+  const speed = Math.hypot(runner.vx, runner.vy);
   if (
     state.suppressManualUntilNeutral ||
-    runner.vx < 1.8 ||
+    speed < 1.8 ||
     runner.stun > 0 ||
     runner.action ||
     runner.ground ||
@@ -92,37 +88,40 @@ export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
       blocker.airState ||
       (blocker.indirectDrive &&
         Math.hypot(blocker.indirectDrive.x, blocker.indirectDrive.y) >=
-          MIN_DRIVE_IMPULSE) ||
-      blocker.vx < -0.45
+          MIN_DRIVE_IMPULSE)
     )
       continue;
 
     const clearance = radius(runner) + radius(blocker) + PAD_MARGIN;
     const dx = blocker.x - runner.x;
-    const closing = runner.vx - blocker.vx;
+    const dy = blocker.y - runner.y;
     const committed = previous?.key === blocker.key && previous.side;
-    const approachTime = (dx - clearance) / closing;
+    const forwardX = (committed ? previous.forwardX : null) ?? runner.vx / speed;
+    const forwardY = (committed ? previous.forwardY : null) ?? runner.vy / speed;
+    const distance = dx * forwardX + dy * forwardY;
+    const across = dy * forwardX - dx * forwardY;
+    const blockerForward = blocker.vx * forwardX + blocker.vy * forwardY;
+    const closing = runner.vx * forwardX + runner.vy * forwardY - blockerForward;
+    if (distance <= 0 || closing < 1.2 || blockerForward < -0.45) continue;
+    const approachTime = (distance - clearance) / closing;
     const time = Math.max(0, approachTime);
     if (
-      dx <= 0 ||
-      closing < 1.2 ||
       (!committed && approachTime < 0) ||
       time > lookAhead ||
       (threat && time >= threat.time)
     )
       continue;
-    const offset = blocker.y - runner.y;
-    const fromBehind =
-      dx * Math.cos(blocker.face) + offset * Math.sin(blocker.face) > 0;
-    const intercept = offset + (blocker.vy - runner.vy) * time;
+
+    const fromBehind = dx * Math.cos(blocker.face) + dy * Math.sin(blocker.face) > 0;
+    const acrossSpeed = (blocker.vy - runner.vy) * forwardX - (blocker.vx - runner.vx) * forwardY;
+    const intercept = across + acrossSpeed * time;
     if (
-      (!committed && !fromBehind) ||
-      (committed && Math.abs(offset) > clearance + 0.42) ||
-      (!committed && Math.abs(intercept) >= clearance) ||
+      (!committed && (!fromBehind || Math.abs(intercept) >= clearance)) ||
+      (committed && Math.abs(across) > clearance + 0.55) ||
       !canSeeBlocker(runner, blocker, state.players, radius)
     )
       continue;
-    threat = { blocker, clearance, time, intercept };
+    threat = { blocker, clearance, time, intercept, distance, closing, forwardX, forwardY };
   }
 
   if (!threat) {
@@ -130,7 +129,7 @@ export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
     return null;
   }
 
-  const { blocker, clearance, time, intercept } = threat;
+  const { blocker, clearance, time, intercept, distance, closing, forwardX, forwardY } = threat;
   const read =
     previous?.key === blocker.key
       ? previous
@@ -142,25 +141,32 @@ export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
   const agility = clamp((runner.AGI - 30) / 69, 0, 1);
   const steeringLimit =
     (0.23 + 0.55 * agility) * clamp(runner.balance, 0.45, 1);
-  const side = intercept >= 0 ? -1 : 1;
+  const calledSide = aim ? aim.y * forwardX - aim.x * forwardY : 0;
+  const side = Math.abs(calledSide) > 0.22 ? Math.sign(calledSide) : intercept >= 0 ? -1 : 1;
+  // Keep the lead point on the chosen shoulder until the runner passes it.
+  const passTime = distance / closing;
   for (const direction of read.side ? [read.side] : [side, -side]) {
-    const targetY =
-      blocker.y + blocker.vy * time + direction * (clearance + 0.15);
+    const margin = direction * (clearance + 0.22);
+    const targetX = blocker.x + blocker.vx * passTime - forwardY * margin;
+    const targetY = blocker.y + blocker.vy * passTime + forwardX * margin;
     if (
       targetY < 1.35 ||
       targetY > fieldWidth - 1.35 ||
-      !laneIsOpen(runner, blocker, state.players, radius, time, targetY)
+      !laneIsOpen(runner, blocker, state.players, radius, passTime, targetX, targetY)
     )
       continue;
     read.side = direction;
+    read.forwardX = forwardX;
+    read.forwardY = forwardY;
     read.steeringTime += dt;
     const commitment = clamp(read.steeringTime / 0.07, 0, 1);
-    const slope =
-      direction *
-      commitment *
-      clamp((targetY - runner.y) * direction * 1.3, 0, steeringLimit);
-    return { key: blocker.key, slope };
+    const lateral = (targetY - runner.y) * forwardX - (targetX - runner.x) * forwardY;
+    const slope = direction * commitment *
+      clamp(lateral * direction / Math.max(0.9, distance - clearance), 0, steeringLimit);
+    read.bank = clamp(slope * 0.34, -0.26, 0.26);
+    return { key: blocker.key, x: forwardX - forwardY * slope, y: forwardY + forwardX * slope };
   }
   read.steeringTime = 0;
+  read.bank = 0;
   return null;
 }

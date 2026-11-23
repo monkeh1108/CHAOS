@@ -134,7 +134,24 @@
     "dagger",
     "smash"
   ];
-  var RUNS = /* @__PURE__ */ new Set(["inside", "stretch", "power", "counter", "sweep"]);
+  var RUN_LANDMARKS = {
+    inside: { bend: [8, 26.65], finish: [16, 26.65] },
+    stretch: { bend: [6, 8], finish: [15, 8], block: { shift: -2.8, leadY: 19 } },
+    power: {
+      entry: [1, 22.3],
+      bend: [5, 19],
+      finish: [13, 16],
+      block: { shift: 0.75, leadY: 22, pull: "RG" }
+    },
+    counter: {
+      entry: [1, 33.2],
+      bend: [6, 38],
+      finish: [15, 39],
+      block: { shift: -0.75, leadY: 32.5, pull: "LG" }
+    },
+    sweep: { bend: [8, 43], finish: [16, 46], block: { shift: 3.2, leadY: 35, pull: "RG" } }
+  };
+  var RUNS = new Set(Object.keys(RUN_LANDMARKS));
   var PASS_ICONS = ["X", "Y", "A", "B"];
   var formationDesc = {
     spread: "11 personnel · shotgun 2×2",
@@ -860,6 +877,7 @@
     const blockMode = contact2 && p.blockMode ? p.blockMode : null;
     const blockArms = !!contact2 && !!blockMode;
     const plant = action === "juke" || action === "hesi" || !!(p.jukeDrive?.remaining > 0);
+    const sidestep = p.intent === "carry-auto" ? p.carrierObstacle?.bank || 0 : 0;
     const stance = preSnap && speed < 0.55 && !contact2 && !ground && !action && !air ? preSnapStance(p) : null;
     let state2 = "idle";
     if (ground)
@@ -905,7 +923,7 @@
       // 3D torso bank; lightweight articulation, not a new collision system.
       // Physical release state only changes presentation; zero effect on grip.
       // Twist is shown as lateral banking, drag as a forward stumble.
-      bank: (action === "juke" ? (p.action?.side || 1) * 0.16 * burst : action === "spin" ? 0.09 * burst : action === "hesi" ? -0.07 * burst : 0) + (release3?.kind === "twist" ? (release3.side || 1) * 0.24 * releasePulse : release3?.kind === "drag-release" ? 0.11 * releasePulse : 0),
+      bank: sidestep + (action === "juke" ? (p.action?.side || 1) * 0.16 * burst : action === "spin" ? 0.09 * burst : action === "hesi" ? -0.07 * burst : 0) + (release3?.kind === "twist" ? (release3.side || 1) * 0.24 * releasePulse : release3?.kind === "drag-release" ? 0.11 * releasePulse : 0),
       yaw: action === "spin" ? (p.action?.side || 1) * 0.38 * burst : release3?.kind === "twist" ? (release3.side || 1) * 0.22 * releasePulse : 0,
       armDrive: brace ? 0.65 : 1,
       impactAccent: action === "hit-stick" || action === "impact-block" ? 0.18 * burst : 0
@@ -5250,6 +5268,11 @@
             insideZoneBlockerAI(o, dt, claims, matchState.ballCarrier);
             continue;
           }
+          const plannedRun = RUN_LANDMARKS[matchState.selectedPlay]?.block;
+          if (plannedRun && matchState.ballCarrier.x < matchState.playStart + 8 && matchState.playClock < 2.4 && ["LT", "LG", "C", "RG", "RT", "TE", "FB"].includes(o.pos)) {
+            blockerAI(o, dt, claims);
+            continue;
+          }
           if (o === qb) quarterbackSupport(o, matchState.ballCarrier, dt);
           else if (running && o.pos === "WR")
             receiverRunBlock(o, dt, claims, matchState.ballCarrier);
@@ -5262,7 +5285,7 @@
         if (["LT", "LG", "C", "RG", "RT"].includes(o.key)) {
           if (matchState.controlMode === "line" && o.key === matchState.selectedLinemanKey)
             manualAthlete(o, dt, "user-block");
-          else blockerAI(o, dt);
+          else blockerAI(o, dt, matchState.selectedPlay === "inside" ? /* @__PURE__ */ new Set() : claims);
           continue;
         }
         if (o === qb) {
@@ -5290,7 +5313,7 @@
         }
         if (running && o.pos === "WR") receiverRunBlock(o, dt, claims);
         else if (running && (o.pos === "TE" || o.pos === "FB"))
-          rbLeadBlock(o, dt);
+          rbLeadBlock(o, dt, claims);
         else AIroute(o, dt);
       }
       for (const d of matchState.def) {
@@ -6743,8 +6766,11 @@
         o.intentTarget = target.key;
         const lead = clamp(0.12 + distance2D(o, target) / 35, 0.16, 0.37);
         const tx = target.x + target.vx * lead - 0.48;
+        const run = RUN_LANDMARKS[matchState.selectedPlay];
+        const playSide = run?.block && (run.bend[1] - 26.65) * (homeY - 26.65) > 0;
+        const leverage = playSide ? clamp((run.bend[1] - target.y) * 0.25, -0.6, 0.6) : 0;
         const lane = clamp(
-          target.y + target.vy * lead,
+          target.y + target.vy * lead + leverage,
           Math.max(0.8, homeY - laneWidth),
           Math.min(H2 - 0.8, homeY + laneWidth)
         );
@@ -6979,7 +7005,7 @@
 
   // src/ai/pass_protection.js
   function createPassProtection() {
-    let H2, P, RUNS2, arrive, blockBattle, closestThreat, insideZoneBlockerAI, matchState, steer;
+    let H2, P, arrive, blockBattle, closestThreat, insideZoneBlockerAI, matchState, steer;
     function assignPassProtection() {
       const line = ["LT", "LG", "C", "RG", "RT"].map(P).filter(Boolean);
       for (const o of line) {
@@ -7018,23 +7044,6 @@
     }
     function protectionLane(o) {
       return { LT: -3.6, LG: -1.8, C: 0, RG: 1.8, RT: 3.6 }[o.key] || 0;
-    }
-    function runningBlockThreats(o, rushing, run) {
-      const lane = 26.65 + protectionLane(o), same = o.blockTarget;
-      return [...rushing].filter((d) => d.shedCooldown <= 0 || d.key !== same).sort((a, b) => {
-        const rating3 = (d) => {
-          const assigned = matchState.blockLinks.get(o.key)?.defender === d.key ? -5 : 0;
-          const home = Math.abs(d.y - lane), distance2 = distance2D(o, d);
-          const competing = [...matchState.blockLinks.values()].some(
-            (link) => link.blocker !== o.key && link.defender === d.key
-          );
-          const extra = competing ? 3.5 : 0;
-          const overreach = home > 6.2 ? (home - 6.2) * 2 : 0;
-          const runSide = run && matchState.selectedPlay === "power" && o.key === "RG" ? d.y < 23 ? -2 : 3 : run && matchState.selectedPlay === "counter" && o.key === "LG" ? d.y > 30 ? -2 : 3 : 0;
-          return distance2 * 0.7 + home * 0.8 + overreach + extra + assigned + runSide;
-        };
-        return rating3(a) - rating3(b);
-      });
     }
     function passThreatPriority(d, qb) {
       const gap = distance2D(d, qb), approach = ((qb.x - d.x) * d.vx + (qb.y - d.y) * d.vy) / Math.max(0.2, gap);
@@ -7104,63 +7113,47 @@
       steer(o, tx - o.x, ty - o.y, dt, 1.04);
       if (distance2D(o, t) < 1.98) blockBattle(o, t, dt);
     }
-    function blockerAI(o, dt) {
-      if (matchState.selectedPlay === "inside") {
-        insideZoneBlockerAI(o, dt, /* @__PURE__ */ new Set(), null);
-        return;
-      }
-      const run = RUNS2.has(matchState.selectedPlay);
-      if (!run) {
-        passProtectAI(o, dt);
-        return;
-      }
-      o.intent = "protect";
-      o.intentTarget = "run-lane";
-      const rushing = matchState.def.filter(
-        (d) => !d.ground && d.beatenUntil < matchState.playClock && d.x > matchState.playStart - 1 && d.x < matchState.playStart + 16 && Math.abs(d.y - (26.65 + protectionLane(o))) < 10
-      );
-      if (!rushing.length) return;
-      if ((matchState.selectedPlay === "power" && o.key === "RG" || matchState.selectedPlay === "counter" && o.key === "LG") && matchState.playClock < 0.92) {
+    function runBlock(o, dt, claims) {
+      const { playStart, playClock, selectedPlay, blockLinks } = matchState;
+      const { bend, block } = RUN_LANDMARKS[selectedPlay];
+      const pulling = o.key === block.pull;
+      const lead = o.pos === "FB" || o.pos === "TE" && (o.spawnY - 26.65) * (bend[1] - 26.65) > 0;
+      const lane = pulling || lead ? block.leadY : o.spawnY + block.shift;
+      if (pulling && playClock < 1.65 && Math.abs(o.y - lane) > 1.7) {
         o.intent = "pull";
-        o.intentTarget = matchState.selectedPlay === "counter" ? "right C-gap" : "left C-gap";
-        steer(
-          o,
-          matchState.playStart - 1 - o.x,
-          (matchState.selectedPlay === "counter" ? 32 : 21.8) - o.y,
-          dt,
-          0.96
-        );
+        o.intentTarget = bend[1] < 26.65 ? "left C-gap" : "right C-gap";
+        steer(o, playStart - 1.25 - o.x, lane - o.y, dt, 1.04);
         return;
       }
-      const candidates = runningBlockThreats(o, rushing, run).filter(
-        (d) => d.key !== o.beatenTarget
+      const current = blockLinks.get(o.key)?.defender;
+      if (!current && o.beatenUntil <= playClock) o.beatenTarget = null;
+      const candidates = matchState.def.filter(
+        (d) => !d.ground && d.beatenUntil < playClock && d.key !== o.beatenTarget && d.x > playStart - 2 && d.x < playStart + 12 && Math.abs(d.y - lane) < 4.8 && distance2D(o, d) < 10 && (d.key === current || !claims.has(d.key))
       );
-      const locked = matchState.blockLinks.get(o.key), preferred = locked && rushing.find((d) => d.key === locked.defender);
-      if (!locked && o.beatenTarget && matchState.playClock >= o.beatenUntil) {
-        o.beatenTarget = null;
-      }
-      const t = preferred || o.blockTarget && rushing.find(
-        (d) => d.key === o.blockTarget && distance2D(d, o) < 4.2 && d.shedCooldown <= 0
-      ) || candidates[0];
-      if (!t) {
+      const score = (d) => distance2D(o, d) * 0.8 + Math.abs(d.y - lane) * 1.45 - (d.key === o.blockTarget && d.shedCooldown <= 0 ? 1 : 0);
+      const target = candidates.find((d) => d.key === current) ?? candidates.sort((a, b) => score(a) - score(b))[0];
+      if (!target) {
         o.intent = "climb-second-level";
         o.intentTarget = "find-linebacker";
-        arrive(
-          o,
-          matchState.playStart + clamp(matchState.playClock * 2, 2, 9),
-          26.65 + protectionLane(o),
-          dt,
-          0.92
-        );
+        arrive(o, playStart + (pulling || lead ? 3.6 : 2.8), lane, dt, 0.94);
         return;
       }
-      o.blockTarget = t.key;
-      o.intentTarget = t.key;
-      const lane = 26.65 + protectionLane(o), tY = clamp(t.y, lane - 3.4, lane + 3.4);
-      const tx = Math.max(matchState.playStart + 0.15, t.x - 0.6);
-      const ty = tY + (matchState.selectedPlay === "stretch" ? -0.35 : 0);
-      steer(o, tx - o.x, ty - o.y, dt, 0.96);
-      if (distance2D(o, t) < 1.9) blockBattle(o, t, dt);
+      claims.add(target.key);
+      o.blockTarget = target.key;
+      o.intent = pulling || lead ? "lead-block" : "run-block";
+      o.intentTarget = target.key;
+      const leadTime = 0.14;
+      const x = Math.max(playStart - 1.4, target.x + target.vx * leadTime - 0.5);
+      const y = clamp(target.y + target.vy * leadTime, lane - 2.4, lane + 2.4);
+      steer(o, x - o.x, y - o.y, dt, 0.98);
+      if (distance2D(o, target) < 1.9) blockBattle(o, target, dt);
+    }
+    function blockerAI(o, dt, claims) {
+      if (matchState.selectedPlay === "inside")
+        insideZoneBlockerAI(o, dt, claims, null);
+      else if (RUN_LANDMARKS[matchState.selectedPlay]?.block)
+        runBlock(o, dt, claims);
+      else passProtectAI(o, dt);
     }
     function rbPassProtection(p, dt) {
       const qb = P("QB"), rushers = matchState.def.filter((d) => d.rush && !d.ground);
@@ -7204,23 +7197,13 @@
       steer(p, tx - p.x, ty - p.y, dt, 1.09);
       if (distance2D(p, target) < 1.98) blockBattle(p, target, dt);
     }
-    function rbLeadBlock(p, dt) {
-      p.intent = "lead-block";
-      p.intentTarget = "front";
-      if (p.key === "FB" && matchState.selectedPlay === "power") {
-        const target = closestThreat(
-          p,
-          matchState.def.filter((d) => !d.rush && d.x > matchState.playStart)
-        ).p;
-        let ty = 22.3, tx = matchState.playStart + Math.min(8, matchState.playClock * 3);
-        if (target && distance2D(p, target) < 3) {
-          tx = target.x - 0.65;
-          ty = target.y;
-          blockBattle(p, target, dt);
-        }
-        steer(p, tx - p.x, ty - p.y, dt, 0.96);
+    function rbLeadBlock(p, dt, claims) {
+      if (RUN_LANDMARKS[matchState.selectedPlay]?.block) {
+        runBlock(p, dt, claims);
         return;
       }
+      p.intent = "lead-block";
+      p.intentTarget = "front";
       const rushers = matchState.def.filter((d) => d.rush);
       const t = closestThreat(p, rushers).p;
       if (t && distance2D(p, t) < 2.3) {
@@ -7235,7 +7218,6 @@
         ({
           H: H2,
           P,
-          RUNS: RUNS2,
           arrive,
           blockBattle,
           closestThreat,
@@ -7487,24 +7469,20 @@
       return fraction > 0 && fraction < 1 && Math.hypot(x - fraction * dx, y - fraction * dy) < radius(other);
     });
   }
-  function laneIsOpen(runner, blocker, players, radius, time, targetY) {
-    const dx = blocker.x + blocker.vx * time - runner.x;
-    const dy = targetY - runner.y;
+  function laneIsOpen(runner, blocker, players, radius, time, targetX, targetY) {
     return !players.some((other) => {
       if (other === runner || other === blocker) return false;
-      const relativeX = dx - other.vx * time;
-      const fraction = clamp(
-        (other.x - runner.x) / Math.max(relativeX, 0.1),
-        0,
-        1
-      );
-      const x = other.x + other.vx * time * fraction - runner.x - dx * fraction;
-      const y = other.y + other.vy * time * fraction - runner.y - dy * fraction;
-      return Math.hypot(x, y) < radius(runner) + radius(other) + PAD_MARGIN;
+      const x = other.x - runner.x;
+      const y = other.y - runner.y;
+      const dx = targetX - runner.x - other.vx * time;
+      const dy = targetY - runner.y - other.vy * time;
+      const fraction = clamp((x * dx + y * dy) / Math.max(dx * dx + dy * dy, 0.01), 0, 1);
+      return Math.hypot(x - dx * fraction, y - dy * fraction) < radius(runner) + radius(other) + PAD_MARGIN;
     });
   }
-  function readCarrierObstacle(runner, state2, radius, dt, fieldWidth) {
-    if (state2.suppressManualUntilNeutral || runner.vx < 1.8 || runner.stun > 0 || runner.action || runner.ground || runner.airState || runner.stumbleTime > 0 || state2.tackleLinks.size) {
+  function readCarrierObstacle(runner, state2, radius, dt, fieldWidth, aim2) {
+    const speed = Math.hypot(runner.vx, runner.vy);
+    if (state2.suppressManualUntilNeutral || speed < 1.8 || runner.stun > 0 || runner.action || runner.ground || runner.airState || runner.stumbleTime > 0 || state2.tackleLinks.size) {
       if (runner.carrierObstacle) runner.carrierObstacle = null;
       return null;
     }
@@ -7512,46 +7490,62 @@
     const { lookAhead, delay } = reactionTiming(runner);
     let threat2 = null;
     for (const blocker2 of state2.off) {
-      if (blocker2 === runner || !BLOCKER_POSITIONS.has(blocker2.pos) && !BLOCKING_INTENTS.has(blocker2.intent) && !state2.blockLinks.has(blocker2.key) || blocker2.ground || blocker2.airState || blocker2.indirectDrive && Math.hypot(blocker2.indirectDrive.x, blocker2.indirectDrive.y) >= MIN_DRIVE_IMPULSE || blocker2.vx < -0.45)
+      if (blocker2 === runner || !BLOCKER_POSITIONS.has(blocker2.pos) && !BLOCKING_INTENTS.has(blocker2.intent) && !state2.blockLinks.has(blocker2.key) || blocker2.ground || blocker2.airState || blocker2.indirectDrive && Math.hypot(blocker2.indirectDrive.x, blocker2.indirectDrive.y) >= MIN_DRIVE_IMPULSE)
         continue;
       const clearance3 = radius(runner) + radius(blocker2) + PAD_MARGIN;
       const dx = blocker2.x - runner.x;
-      const closing = runner.vx - blocker2.vx;
+      const dy = blocker2.y - runner.y;
       const committed = previous?.key === blocker2.key && previous.side;
-      const approachTime = (dx - clearance3) / closing;
+      const forwardX2 = (committed ? previous.forwardX : null) ?? runner.vx / speed;
+      const forwardY2 = (committed ? previous.forwardY : null) ?? runner.vy / speed;
+      const distance3 = dx * forwardX2 + dy * forwardY2;
+      const across = dy * forwardX2 - dx * forwardY2;
+      const blockerForward = blocker2.vx * forwardX2 + blocker2.vy * forwardY2;
+      const closing2 = runner.vx * forwardX2 + runner.vy * forwardY2 - blockerForward;
+      if (distance3 <= 0 || closing2 < 1.2 || blockerForward < -0.45) continue;
+      const approachTime = (distance3 - clearance3) / closing2;
       const time2 = Math.max(0, approachTime);
-      if (dx <= 0 || closing < 1.2 || !committed && approachTime < 0 || time2 > lookAhead || threat2 && time2 >= threat2.time)
+      if (!committed && approachTime < 0 || time2 > lookAhead || threat2 && time2 >= threat2.time)
         continue;
-      const offset = blocker2.y - runner.y;
-      const fromBehind = dx * Math.cos(blocker2.face) + offset * Math.sin(blocker2.face) > 0;
-      const intercept2 = offset + (blocker2.vy - runner.vy) * time2;
-      if (!committed && !fromBehind || committed && Math.abs(offset) > clearance3 + 0.42 || !committed && Math.abs(intercept2) >= clearance3 || !canSeeBlocker(runner, blocker2, state2.players, radius))
+      const fromBehind = dx * Math.cos(blocker2.face) + dy * Math.sin(blocker2.face) > 0;
+      const acrossSpeed = (blocker2.vy - runner.vy) * forwardX2 - (blocker2.vx - runner.vx) * forwardY2;
+      const intercept2 = across + acrossSpeed * time2;
+      if (!committed && (!fromBehind || Math.abs(intercept2) >= clearance3) || committed && Math.abs(across) > clearance3 + 0.55 || !canSeeBlocker(runner, blocker2, state2.players, radius))
         continue;
-      threat2 = { blocker: blocker2, clearance: clearance3, time: time2, intercept: intercept2 };
+      threat2 = { blocker: blocker2, clearance: clearance3, time: time2, intercept: intercept2, distance: distance3, closing: closing2, forwardX: forwardX2, forwardY: forwardY2 };
     }
     if (!threat2) {
       if (runner.carrierObstacle) runner.carrierObstacle = null;
       return null;
     }
-    const { blocker, clearance: clearance2, time, intercept } = threat2;
+    const { blocker, clearance: clearance2, time, intercept, distance: distance2, closing, forwardX, forwardY } = threat2;
     const read = previous?.key === blocker.key ? previous : { key: blocker.key, elapsed: 0, side: 0, steeringTime: 0 };
     if (read === previous) read.elapsed += dt;
     runner.carrierObstacle = read;
     if (!read.side && (read.elapsed < delay || time < 0.11)) return null;
     const agility = clamp((runner.AGI - 30) / 69, 0, 1);
     const steeringLimit = (0.23 + 0.55 * agility) * clamp(runner.balance, 0.45, 1);
-    const side = intercept >= 0 ? -1 : 1;
+    const calledSide = aim2 ? aim2.y * forwardX - aim2.x * forwardY : 0;
+    const side = Math.abs(calledSide) > 0.22 ? Math.sign(calledSide) : intercept >= 0 ? -1 : 1;
+    const passTime = distance2 / closing;
     for (const direction2 of read.side ? [read.side] : [side, -side]) {
-      const targetY = blocker.y + blocker.vy * time + direction2 * (clearance2 + 0.15);
-      if (targetY < 1.35 || targetY > fieldWidth - 1.35 || !laneIsOpen(runner, blocker, state2.players, radius, time, targetY))
+      const margin = direction2 * (clearance2 + 0.22);
+      const targetX = blocker.x + blocker.vx * passTime - forwardY * margin;
+      const targetY = blocker.y + blocker.vy * passTime + forwardX * margin;
+      if (targetY < 1.35 || targetY > fieldWidth - 1.35 || !laneIsOpen(runner, blocker, state2.players, radius, passTime, targetX, targetY))
         continue;
       read.side = direction2;
+      read.forwardX = forwardX;
+      read.forwardY = forwardY;
       read.steeringTime += dt;
       const commitment = clamp(read.steeringTime / 0.07, 0, 1);
-      const slope = direction2 * commitment * clamp((targetY - runner.y) * direction2 * 1.3, 0, steeringLimit);
-      return { key: blocker.key, slope };
+      const lateral = (targetY - runner.y) * forwardX - (targetX - runner.x) * forwardY;
+      const slope = direction2 * commitment * clamp(lateral * direction2 / Math.max(0.9, distance2 - clearance2), 0, steeringLimit);
+      read.bank = clamp(slope * 0.34, -0.26, 0.26);
+      return { key: blocker.key, x: forwardX - forwardY * slope, y: forwardY + forwardX * slope };
     }
     read.steeringTime = 0;
+    read.bank = 0;
     return null;
   }
 
@@ -7561,16 +7555,19 @@
     function autoCarry(p, dt) {
       p.intent = "carry-auto";
       p.intentTarget = "endzone";
-      const inBackfield = p.x < matchState.playStart + 5.5 && matchState.playClock < 2.5;
-      const lane = matchState.selectedPlay === "stretch" ? 16 : matchState.selectedPlay === "sweep" ? 39 : matchState.selectedPlay === "counter" ? 35 : matchState.selectedPlay === "power" ? 22.5 : 24.2;
-      let targetY = inBackfield && p === P("RB") ? p.y + clamp(lane - p.y, -3, 3) * 0.62 : p.y;
+      const { playStart, selectedPlay } = matchState;
+      const back = !matchState.specialState && p === P("RB");
+      const outsideTrack = back && selectedPlay !== "inside" && RUN_LANDMARKS[selectedPlay];
+      const runPoint = outsideTrack ? [outsideTrack.entry, outsideTrack.bend, outsideTrack.finish].find((point) => point && p.x < playStart + point[0]) : null;
+      const readingInside = back && !outsideTrack && p.x < playStart + 5.5 && matchState.playClock < 2.5;
+      let targetY = runPoint ? runPoint[1] : readingInside ? p.y + clamp(24.2 - p.y, -3, 3) * 0.62 : p.y;
       if (matchState.specialState?.returning && p === P("RB") && matchState.specialState.elapsed < 8)
         targetY = p.y + clamp(matchState.specialState.returnLaneY - p.y, -6, 6) * 0.65;
       targetY = clamp(targetY, 1.35, H2 - 1.35);
       const inFront = matchState.def.filter(
         (d) => d.stun <= 0 && d.x > p.x + 0.9 && d.x < p.x + 5 && Math.abs(d.y - p.y) < 2.1
       ).sort((a, b) => a.x - b.x)[0];
-      if (inFront) {
+      if (inFront && !runPoint) {
         const side = p.y <= 3.7 ? 1 : p.y >= H2 - 3.7 ? -1 : inFront.y >= p.y ? -1 : 1;
         const candidate = clamp(p.y + side * 2.2, 1.35, H2 - 1.35);
         if (Math.abs(candidate - inFront.y) > Math.abs(targetY - inFront.y) + 0.5)
@@ -7596,13 +7593,27 @@
         }
       }
       const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
-      const dx = Math.max(2, aheadX - p.x);
+      const dx = runPoint ? clamp(playStart + runPoint[0] - p.x, 2, 7) : Math.max(2, aheadX - p.x);
       const cuttingBack = p.intent === "cutback";
       if (cuttingBack && p.carrierObstacle) p.carrierObstacle = null;
-      const obstacle = cuttingBack ? null : readCarrierObstacle(p, matchState, radius, dt, H2);
-      const dy = obstacle ? dx * obstacle.slope : (targetY - p.y) * 2;
+      const trackDy = (targetY - p.y) * (runPoint ? 1 : 2);
+      const length = Math.hypot(dx, trackDy);
+      const obstacle = cuttingBack ? null : readCarrierObstacle(
+        p,
+        matchState,
+        radius,
+        dt,
+        H2,
+        runPoint ? { x: dx / length, y: trackDy / length } : null
+      );
       if (obstacle) p.intentTarget = obstacle.key;
-      steer(p, dx, dy, dt, 1.02);
+      steer(
+        p,
+        obstacle ? obstacle.x * length : dx,
+        obstacle ? obstacle.y * length : trackDy,
+        dt,
+        1.02
+      );
     }
     return {
       bind(services) {
@@ -7965,6 +7976,7 @@
         "escort",
         "block",
         "lead-block",
+        "pull",
         "pile-support",
         "rush",
         "run",
@@ -13431,16 +13443,17 @@
     }
     function routeArt(sim) {
       if (sim.phase !== "presnap" || sim.defenseArt?.length) return;
-      const run = ["inside", "stretch", "power", "counter", "sweep"].includes(
-        sim.play
-      );
-      if (run) {
+      const track = RUN_LANDMARKS[sim.play];
+      if (track) {
         const back = sim.players.find((p) => p.key === "RB");
-        if (!back) return;
-        const start = [back.x, back.y], handoff = [sim.los + 1, 26.65];
-        const edge = sim.play === "stretch" ? [sim.los + 6, 8] : sim.play === "sweep" ? [sim.los + 8, 43] : sim.play === "counter" ? [sim.los + 6, 38] : sim.play === "power" ? [sim.los + 5, 19] : [sim.los + 8, 26.65];
-        const end = sim.play === "stretch" ? [sim.los + 15, 8] : sim.play === "sweep" ? [sim.los + 16, 46] : sim.play === "counter" ? [sim.los + 15, 39] : sim.play === "power" ? [sim.los + 13, 16] : [sim.los + 16, 26.65];
-        const pts = [start, handoff, edge, end], tint = C.own;
+        const quarterback = sim.players.find((p) => p.key === "QB");
+        if (!back || !quarterback) return;
+        const start = [back.x, back.y];
+        const handoff = [quarterback.x + 0.3, quarterback.y];
+        const pts = [start, handoff];
+        for (const point of [track.entry, track.bend, track.finish])
+          if (point) pts.push([sim.los + point[0], point[1]]);
+        const tint = C.own;
         for (let i = 0; i < pts.length - 1; i++)
           artStroke(pts[i], pts[i + 1], tint, 0.22);
         const a = pts.at(-2), b = pts.at(-1), theta = Math.atan2(b[1] - a[1], b[0] - a[0]);
