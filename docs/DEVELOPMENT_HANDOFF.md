@@ -131,6 +131,37 @@ ref for character work and preserve those local edits.
    explicit full-update acceptance and merge authorization after playtesting.
    Only the owner performs the merge to `main`.
 
+## Owner feedback after the Step 1 playtest
+
+The torso, pelvis, neck, and current hunched defensive-line appearance were
+visually accepted on the combined build (`de5ef9b28909a946`). Step 2 is authorized
+for the shoulders, arms, and hands. Review Step 2 with the owner before advancing.
+Step 1 acceptance grants no PR integration or merge authorization.
+
+### Future defensive work
+
+- **Defensive line stances.** Preserve the accepted crouch. A later visual
+  pass should evaluate role-appropriate three-point stances, grounded hand
+  placement, and anatomically coherent joint loading and first steps into
+  blocking, including hand lift, torso extension, and leg drive.
+- **Defensive back ready stances.** A later visual pass should evaluate a more
+  athletic crouch with modest torso lean, hip and knee flexion, balanced
+  weight, natural hand positions, role variation, and smooth movement into
+  coverage.
+- **Head-on one-on-one tackling across defensive positions.** The owner
+  reports frequent apparent feet-first dives on favorable head-on approaches
+  and easy lateral escapes even when a defender initially has leverage.
+  Reproduce across roles and ratings. Trace selected attempt versus displayed
+  animation, actual reach/grip eligibility, cooldown, leverage, reaction,
+  turn, momentum, and acceleration before deciding whether the defect is
+  tactical, physical, or visual. A balanced defender should be able to earn
+  realistic body-level contact or a standing wrap. Keep legitimate dives,
+  misses, athletic mismatches, and well-timed jukes. Future QA should compare
+  jog/sprint speeds, slight inside/outside angles, lateral steering without
+  a special move, and timed jukes, including successes, misses, breaks, and
+  recovery. Recheck rear contact and multi-defender piles. Scope any repair
+  separately and preserve ratings, tackle reach, and reaction limits.
+
 ## Sources and limits
 
 Reviewed the visible turns of the [shared development conversation](https://chatgpt.com/share/6b04a1ec-5044-83ea-a3c5-fdf0c0157ec3),
