@@ -1,3 +1,4 @@
+import { clamp } from "../core/math.js";
 // Pure pre-snap positioning rules. These never expose the CPU's play call.
 const WIDTH = 53.333;
 const GOAL_LINE = 110;
@@ -5,7 +6,6 @@ const GOAL_LINE = 110;
 // about five yards. Deeper NFL-style alignments begin to shrink when the
 // original assignment would otherwise reach the goal line.
 const MAX_ENDZONE_DEPTH = 4.65;
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function compressedDepth(los, originalDepth) {
   if (!Number.isFinite(originalDepth) || originalDepth <= 0)
     return originalDepth;

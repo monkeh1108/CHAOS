@@ -1,6 +1,6 @@
-"use strict";
+import { clamp } from "../core/math.js";
+("use strict");
 // CHAOS v0.36.4r — intent/decision policy only. Nothing here creates contact.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function direction(defender, stick) {
   if (stick && stick.mag > 0.14) {
     const n = Math.max(0.001, Math.hypot(stick.x, stick.y));

@@ -1,10 +1,10 @@
+import { clamp } from "../core/math.js";
 // A player's right to *choose* a pass-defense action is not the right to touch
 // the football. Ball flight, collision, leap height and ratings determine the
 // eventual attempt. This policy only finds plausible participants while the
 // ball is traveling, including CBs tracking receivers still far downfield.
 const distance = (a, b) =>
   Math.hypot((a?.x ?? 0) - (b?.x ?? 0), (a?.y ?? 0) - (b?.y ?? 0));
-const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 function evaluate(player, receiver, flight, football, topSpeed, reach) {
   const not = (reason) => ({
     eligible: false,

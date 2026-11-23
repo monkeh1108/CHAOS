@@ -1,8 +1,7 @@
+import { clampFinite as clamp } from "../core/math.js";
 // v0.36.4s — physical disengagement after a genuine broken grip.
 // Not an artificial "can't tackle twice" rule: the same defender can reengage
 // once he has ACTUALLY let go, regained a pursuit stance and closed the gap.
-const clamp = (v, lo, hi) =>
-  Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : lo));
 function release(defender, runner, bodyGap, clock) {
   const separation = Math.hypot(
     (runner.x || 0) - (defender.x || 0),

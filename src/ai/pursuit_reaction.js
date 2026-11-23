@@ -1,7 +1,7 @@
+import { clamp } from "../core/math.js";
 // v0.36.4t: close-range reaction memory. Chasers follow observed movement,
 // not an instantaneous translation of every carrier juke. No velocity or
 // position is imposed on either athlete.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function aim(defender, carrier, base, clock) {
   if (!defender || !carrier || !base) return base;
   const distance = Math.hypot(carrier.x - defender.x, carrier.y - defender.y);

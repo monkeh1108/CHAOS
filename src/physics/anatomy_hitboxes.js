@@ -1,3 +1,4 @@
+import { clampFinite as clamp } from "../core/math.js";
 import { ChaosDiveReach } from "./dive_reach.js";
 import { ChaosLowContact } from "./low_contact.js";
 import { AnimationPolicy } from "../render/animation_policy.js";
@@ -5,7 +6,6 @@ import { AnimationPolicy } from "../render/animation_policy.js";
 // CHAOS original anatomical broad/narrow phase geometry. Stage 1: read-only,
 // using the same approximate dimensions and movement states as renderer3d.
 // No tackle awards, movement corrections or RNG happen in this module.
-const clamp = (n, a, b) => Math.max(a, Math.min(b, Number.isFinite(n) ? n : a));
 const v = (x, y, z) => ({ x, y, z });
 function dimensions(p) {
   const height = clamp(p.h || 74, 60, 86),

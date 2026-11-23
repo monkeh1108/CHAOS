@@ -1,6 +1,6 @@
+import { clamp } from "../core/math.js";
 // Deterministic blocking decisions, separate from steering, rendering and game rules.
 // This module can be ported independently to another engine.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const stat = (p, key, fallback = 70) =>
   Number.isFinite(p?.[key]) ? p[key] : fallback;
 const mass = (p) => (Number.isFinite(p?.w) ? p.w : 220);

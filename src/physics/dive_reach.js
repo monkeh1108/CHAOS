@@ -1,6 +1,6 @@
+import { clampFinite as clamp } from "../core/math.js";
 // CHAOS original procedural diving reach shared by visuals and anatomy.
 // Locomotion physics and tackle outcomes remain authoritative elsewhere.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, Number.isFinite(v) ? v : a));
 const ease = (t) => {
   t = clamp(t, 0, 1);
   return t * t * (3 - 2 * t);

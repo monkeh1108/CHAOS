@@ -1,7 +1,12 @@
+import {
+  escapeLegDrive,
+  escapeHold,
+  escapeProgress,
+} from "../core/tuning/tackle.js";
+import { clampFinite as clamp } from "../core/math.js";
 // CHAOS v0.36.4o — continuous, physics-informed escape contest.
 // Doesn't teleport characters, award an animation, or roll a dice.
 // GRIP is not introduced as a redundant new rating: TAK/AWR express hold technique.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, Number.isFinite(v) ? v : a));
 function drive(runner, defender, link) {
   const forwardX = Math.cos(runner.face || 0),
     forwardY = Math.sin(runner.face || 0);
@@ -14,11 +19,11 @@ function drive(runner, defender, link) {
   // Existing TRK, STR, ACC and mass have different roles: contact resistance,
   // lower-body force, ability to reaccelerate feet, and inertia respectively.
   const legPower = clamp(
-    ((runner.STR || 55) * 0.51 +
-      (runner.TRK || 55) * 0.31 +
-      (runner.ACC || 55) * 0.18 -
-      44) /
-      55,
+    ((runner.STR || 55) * escapeLegDrive.strengthWeight +
+      (runner.TRK || 55) * escapeLegDrive.truckingWeight +
+      (runner.ACC || 55) * escapeLegDrive.accelerationWeight -
+      escapeLegDrive.ratingFloor) /
+      escapeLegDrive.ratingSpan,
     0,
     1,
   );
@@ -40,7 +45,10 @@ function drive(runner, defender, link) {
   );
   const grip = clamp(link.grip || 0, 0, 1.6),
     quality = clamp(link.quality ?? 0.65, 0, 1.25);
-  const secure = link.style === "wrap" && grip >= 0.78 && quality >= 0.76;
+  const secure =
+    link.style === "wrap" &&
+    grip >= escapeHold.secureGrip &&
+    quality >= escapeHold.secureQuality;
   const hold = clamp(
     (defender.TAK || 65) * 0.5 +
       (defender.STR || 65) * 0.3 +
@@ -55,12 +63,12 @@ function drive(runner, defender, link) {
   );
   // A controlled wrap is not defeated by the same force as a hand swipe.
   const difficulty = secure
-    ? 1.48
+    ? escapeHold.secureDifficulty
     : link.style === "wrap"
-      ? 1.12
+      ? escapeHold.wrapDifficulty
       : link.style === "dive"
-        ? 0.94
-        : 0.78;
+        ? escapeHold.diveDifficulty
+        : escapeHold.brushDifficulty;
   const opposing = clamp((hold / 100) * defenderLeverage * difficulty, 0, 1.7);
   const runnerPower =
     effort * (0.64 + 0.36 * clamp((runner.w || 210) / 230, 0.6, 1.5));
@@ -91,10 +99,13 @@ function step(runner, defender, link, dt) {
   const contest = drive(runner, defender, link);
   const age = link.age || 0;
   // No grip: not a break-tackle event at all.
-  if ((link.grip || 0) < 0.24)
+  if ((link.grip || 0) < escapeProgress.minimumGrip)
     return { ...contest, broken: false, progress: 0, kind: "none" };
-  const lightHold = (link.grip || 0) < 0.75 || link.style !== "wrap";
-  const threshold = lightHold ? 0.19 : 0.62;
+  const lightHold =
+    (link.grip || 0) < escapeProgress.lightHoldGrip || link.style !== "wrap";
+  const threshold = lightHold
+    ? escapeProgress.lightThreshold
+    : escapeProgress.wrapThreshold;
   const gain = Math.max(0, contest.margin - (lightHold ? -0.1 : 0.09));
   const recovery = Math.max(0, -contest.margin) * 0.5;
   link.escapeProgress = clamp(
@@ -103,7 +114,8 @@ function step(runner, defender, link, dt) {
     1.5,
   );
   // Physical contest accumulates over time. No one-frame stat-triggered escape.
-  const broken = age > 0.15 && link.escapeProgress >= threshold;
+  const broken =
+    age > escapeProgress.minimumAgeSeconds && link.escapeProgress >= threshold;
   return {
     ...contest,
     broken,

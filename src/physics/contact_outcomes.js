@@ -1,9 +1,9 @@
+import { clampFinite as clamp, angleFromCosine } from "../core/math.js";
 import { AnatomyHitboxes } from "./anatomy_hitboxes.js";
 
 // CHAOS: original, deterministic anatomical contact interpretation.
 // Input: detected regions and actual physics/engagement state. No random draws.
 // This distinguishes touched vs tackled, and never creates a tackle by itself.
-const clamp = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(x) ? x : a));
 const core = new Set(["torso", "pelvis", "thigh"]);
 const arms = new Set(["upperArm", "forearm", "hand"]);
 const legs = new Set(["thigh", "shin"]);
@@ -75,7 +75,9 @@ function angle(runner, defender) {
   const cosine =
     (dx * Math.cos(facing) + dy * Math.sin(facing)) /
     Math.max(0.001, Math.hypot(dx, dy));
-  return (Math.acos(clamp(cosine, -1, 1)) * 180) / Math.PI;
+  return (
+    (angleFromCosine(Number.isFinite(cosine) ? cosine : -1) * 180) / Math.PI
+  );
 }
 function evaluate(runner, defender, link = null, hits = null) {
   const contacts =

@@ -1,8 +1,7 @@
-"use strict";
+import { clampFinite as clamp } from "../core/math.js";
+("use strict");
 // CHAOS v0.36.4p: physics-driven grip release and presentation evidence.
 // These outputs describe the physical contest, not animation-triggered wins.
-const clamp = (v, min, max) =>
-  Math.max(min, Math.min(max, Number.isFinite(v) ? v : min));
 function signSide(runner, defender) {
   const x = (runner.x || 0) - (defender.x || 0),
     y = (runner.y || 0) - (defender.y || 0);

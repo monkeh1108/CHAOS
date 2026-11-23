@@ -1,8 +1,8 @@
+import { clamp } from "../core/math.js";
 // v0.35.2: live ball-carrier pursuit with assignment-based edge containment.
 // PUR (pursuit) and PRC (play recognition) *both* govern angle quality.
 // Stable, per-snap misreads make lower-rated defenders imperfect without
 // re-rolling a random angle every animation frame or peeking at play calls.
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rating = (v) => (Number.isFinite(v) ? clamp(v, 1, 99) : 70);
 function quality(defender) {
   // A 99/99 player predicts the visible movement almost optimally. A 60/60

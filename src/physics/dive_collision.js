@@ -1,8 +1,8 @@
+import { clamp } from "../core/math.js";
 import { AnatomyHitboxes } from "./anatomy_hitboxes.js";
 
 // CHAOS v0.36.4n: physical low-dive contact, independent of tackle awards.
 // Uses the existing shared pose/anatomy and a short swept trajectory.
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const attackerRegions = new Set(["upperArm", "forearm", "hand", "torso"]);
 const targetRegions = new Set(["thigh", "shin", "pelvis"]);
 const nonHead = (h) => attackerRegions.has(h.b) && targetRegions.has(h.a);

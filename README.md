@@ -60,6 +60,7 @@ Use `npm run format` to format the JavaScript source after making edits.
 | Path | What lives there |
 | --- | --- |
 | `src/engine.js` | Current match loop, play execution, and browser wiring. |
+| `src/core/` | Shared simulation math and named tuning values. |
 | `src/sim/`, `src/ai/`, `src/physics/` | Special teams, play decisions, and collision and tackle modules. |
 | `src/input/`, `src/ui/`, `src/render/` | Controller rules, playbook navigation, and field and player presentation. |
 | `src/debug/`, `src/net/` | Contact diagnostics and the future online-play boundary. |
