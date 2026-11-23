@@ -13,7 +13,7 @@ export function createGridironRenderer(canvas) {
     preserveDrawingBuffer: false,
   });
   if (!gl) return null;
-  const vs = `attribute vec3 aPos;attribute vec3 aNormal;uniform mat4 uMVP;uniform mat4 uModel;varying float vShade;void main(){vec3 n=normalize(mat3(uModel)*aNormal);vShade=0.59+0.41*max(0.0,dot(n,normalize(vec3(-0.45,1.0,0.35))));gl_Position=uMVP*vec4(aPos,1.0);}`;
+  const vs = `attribute vec3 aPos;attribute vec3 aNormal;uniform mat4 uMVP;uniform mat4 uModel;varying float vShade;void main(){mat3 axes=mat3(uModel); vec3 mag2=vec3(dot(axes[0],axes[0]),dot(axes[1],axes[1]),dot(axes[2],axes[2]));vec3 n=normalize(axes*(aNormal/max(mag2,vec3(0.00001))));vShade=0.59+0.41*max(0.0,dot(n,normalize(vec3(-0.45,1.0,0.35))));gl_Position=uMVP*vec4(aPos,1.0);}`;
   const fs = `precision mediump float;uniform vec3 uColor;varying float vShade;void main(){gl_FragColor=vec4(uColor*vShade,1.0);}`;
   const shader = (type, src) => {
     const s = gl.createShader(type);
@@ -213,7 +213,65 @@ export function createGridironRenderer(canvas) {
         d = pt(v, u + 1);
       for (const p of [a, b, c, a, c, d]) ball.push(...p, ...norm(p));
     }
-  const meshes = { box: mesh(cube), sphere: mesh(ball) };
+  // Ring profiles give the jersey a waist and shoulder line and keep the
+  // limb segments rounded at the joint while narrowing toward the wrist.
+  function profileMesh(rings) {
+    const vertices = [];
+    const sides = 10;
+    const step = (2 * Math.PI) / sides;
+    const row = rings.map(([y, radius], i) => {
+      const [loY, loR] = rings[Math.max(0, i - 1)];
+      const [hiY, hiR] = rings[Math.min(rings.length - 1, i + 1)];
+      const slope = (loR - hiR) / (hiY - loY);
+      return Array.from({ length: sides }, (_, j) => {
+        const angle = j * step;
+        const x = Math.cos(angle),
+          z = Math.sin(angle);
+        return [x * radius, y, z * radius, ...norm([x, slope, z])];
+      });
+    });
+    for (let i = 0; i < row.length - 1; i++) {
+      const lower = row[i],
+        upper = row[i + 1];
+      for (let j = 0; j < sides; j++) {
+        const k = (j + 1) % sides;
+        vertices.push(...lower[j], ...upper[j], ...upper[k]);
+        vertices.push(...lower[j], ...upper[k], ...lower[k]);
+      }
+    }
+    return mesh(vertices);
+  }
+  const meshes = {
+    box: mesh(cube),
+    sphere: mesh(ball),
+    torso: profileMesh([
+      [-0.5, 0],
+      [-0.43, 0.36],
+      [-0.21, 0.4],
+      [0.15, 0.48],
+      [0.37, 0.5],
+      [0.46, 0.34],
+      [0.5, 0],
+    ]),
+    upperLimb: profileMesh([
+      [-0.5, 0],
+      [-0.43, 0.25],
+      [-0.22, 0.33],
+      [0.13, 0.5],
+      [0.36, 0.46],
+      [0.5, 0],
+    ]),
+    // Keep the narrow end over the hinge and the muscle belly below it.
+    lowerLimb: profileMesh([
+      [-0.5, 0],
+      [-0.43, 0.27],
+      [-0.21, 0.34],
+      [0.02, 0.5],
+      [0.23, 0.46],
+      [0.38, 0.35],
+      [0.5, 0],
+    ]),
+  };
   let markerDebug = {
     catchPoint: null,
     ballShadow: null,
@@ -583,29 +641,26 @@ export function createGridironRenderer(canvas) {
           : 0.58
       : 0;
     const shift = winded ? 0.05 : 0;
-    // Pelvis and pads, deliberate proportional differences for linemen/skill players.
-    box(
+    // Keep the established root and joint centers. Build the uniform around
+    // them so pads sit over the upper arms and the helmet sits on a neck.
+    sphere(
       root,
       [0, 0.94 + shift, 0],
-      [0.47 * breadth, 0.27, 0.45 * breadth],
+      [0.44 * breadth, 0.37, 0.57 * breadth],
       C.pants,
     );
-    box(
+    paint(
+      "torso",
       root,
-      [0, 1.37 + shift, 0],
-      [0.53 * breadth, 0.69, 0.59 * breadth],
+      [0, 1.35 + shift, 0],
+      [0.54 * breadth, 0.78, 0.75 * breadth],
       jersey,
     );
-    box(
-      root,
-      [0.015, 1.67 + shift, 0],
-      [0.47 * breadth, 0.18, 0.69 * breadth],
-      jersey,
-    );
-    sphere(root, [0, 1.95 + shift, 0], [0.49, 0.48, 0.49], trim);
-    // Facemask bars face downfield (positive local x).
-    box(root, [0.265, 1.9 + shift, 0], [0.07, 0.1, 0.49], C.bar);
-    box(root, [0.28, 2.02 + shift, 0], [0.06, 0.055, 0.4], C.bar);
+    sphere(root, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
+    sphere(root, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
+    sphere(root, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
+    box(root, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
+    box(root, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
       let hip = at(root, 0, 0.87, side * 0.2 * breadth);
       hip = mul(
@@ -628,7 +683,13 @@ export function createGridironRenderer(canvas) {
             (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0),
         ),
       );
-      box(hip, [0.03, -0.23, 0], [0.24, 0.52, 0.25 * breadth], C.pants);
+      paint(
+        "upperLimb",
+        hip,
+        [0.02, -0.22, 0],
+        [0.31, 0.65, 0.3 * breadth],
+        C.pants,
+      );
       const knee = mul(
         at(hip, 0.03, -0.48, 0),
         rotZ(
@@ -639,8 +700,14 @@ export function createGridironRenderer(canvas) {
             (rise > 0 ? 0.3 * arc : 0),
         ),
       );
-      box(knee, [0.07, -0.2, 0], [0.23, 0.43, 0.23 * breadth], C.pants);
-      box(knee, [0.17, -0.4, 0], [0.34, 0.16, 0.26 * breadth], C.shoe);
+      paint(
+        "lowerLimb",
+        knee,
+        [0.015, -0.205, 0],
+        [0.203, 0.56, 0.209 * breadth],
+        C.pants,
+      );
+      sphere(knee, [0.12, -0.405, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
       let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
@@ -744,44 +811,39 @@ export function createGridironRenderer(canvas) {
                                   ? -side * step * legAmp * 0.8 * pose.armDrive
                                   : 0.1);
       shoulder = mul(shoulder, rotZ(swing));
-      box(
+      sphere(
         shoulder,
-        [dive ? 0 : 0.07, -0.215, 0],
-        [0.23, 0.43, 0.2 * breadth],
+        [0.005, -0.026, -side * 0.029 * breadth],
+        [0.33 * breadth, 0.233, 0.29 * breadth],
         jersey,
       );
-      if (ground) {
-        const palm = mul(at(shoulder, 0.08, -0.42, 0), rotZ(0.28));
-        box(palm, [0.04, -0.14, 0], [0.17, 0.29, 0.17 * breadth], jersey);
-        sphere(palm, [0.12, -0.3, 0], [0.14, 0.11, 0.14], C.skin);
-      } else if (dive || standingWrapPose) {
-        const reachPose = dive ? divePose : standingWrapPose;
-        // Shared with anatomical hitboxes: straight reach, then inward wrap only
-        // when the tackle solver confirms an engagement. No early sickle bend.
-        const forearm = mul(
-          at(shoulder, 0, -0.43, 0),
-          mul(rotZ(reachPose.elbow), rotY(side * reachPose.inward)),
-        );
-        box(forearm, [0, -0.215, 0], [0.16, 0.43, 0.16 * breadth], jersey);
-        sphere(forearm, [0, -0.45, 0], [0.13, 0.12, 0.13], C.skin);
-      } else if (pose.blockArms) {
-        // Two-stage reach: forearms and hands visibly extend toward the pads,
-        // rather than hanging behind the torso in the old hunched pose.
-        const elbow = mul(at(shoulder, 0.02, -0.4, 0), rotZ(0.33));
-        box(elbow, [0.02, -0.15, 0], [0.18, 0.33, 0.17 * breadth], jersey);
-        sphere(elbow, [0.03, -0.34, 0], [0.15, 0.12, 0.15], C.skin);
-      } else box(shoulder, [0.17, -0.44, 0], [0.19, 0.18, 0.19], C.skin);
-      if (pose.stance === "three-point" && side < 0) {
-        sphere(shoulder, [0.2, -0.53, 0], [0.13, 0.11, 0.13], C.skin);
-      }
-      if (overhead && side < 0) {
-        const reach = mul(
-          at(shoulder, 0.13, -0.46, 0),
-          rotZ(aKind === "swat" ? 0.27 : -0.15),
-        );
-        box(reach, [0.08, -0.13, 0], [0.15, 0.29, 0.16], jersey);
-        sphere(reach, [0.16, -0.31, 0], [0.14, 0.13, 0.14], C.skin);
-      }
+      paint(
+        "upperLimb",
+        shoulder,
+        [0, -0.22, 0],
+        [0.217, 0.58, 0.21 * breadth],
+        jersey,
+      );
+
+      // Retain the contact arm pivots and bend from ChaosDiveReach so the
+      // redesigned sleeves and gloves still follow the same reaching hands.
+      const reachPose = ground ? null : divePose || standingWrapPose;
+      const bend =
+        reachPose?.elbow ??
+        (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
+      const elbow = mul(
+        at(shoulder, 0, -0.43, 0),
+        mul(rotZ(bend), rotY(side * (reachPose?.inward || 0))),
+      );
+      const extension = reachPose ? 0.43 : 0.34;
+      paint(
+        "lowerLimb",
+        elbow,
+        [0, -extension * 0.42, 0],
+        [0.155, extension * 1.22, 0.157 * breadth],
+        C.skin,
+      );
+      sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
     }
     if (carrier === p)
       sphere(root, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
