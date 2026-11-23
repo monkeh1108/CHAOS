@@ -109,3 +109,17 @@ For a playtest, run squarely into an upright defender without using a move.
 Then try cutting past a defender's outside shoulder. A solid collision
 should produce a wrap attempt, while a glancing touch can leave the runner
 upright. An ankle clip can buy the next defender time to finish the tackle.
+
+## Standing pursuit and low reaches
+
+AI defenders stay upright when they can still close on foot or an unblocked
+teammate is ahead of the runner. A dive remains available to a trailing
+defender when the runner is pulling away and the gap is still reachable.
+
+A fallen defender has to settle and face a runner within reach before making a
+single ankle grab during that fall. A fresh fall, a reach facing away, and a
+second grab during the same fall do not produce that contact.
+
+To compare, try several stretches and sweeps and watch how the first two
+defenders approach when they have help. A late dive can still happen after a
+runner escapes the last standing defender's angle.

@@ -18,15 +18,18 @@ function selection(d, a, geometry) {
   if (gap > 3.15) return "pursue";
   const toward = geometry.facing;
   if (toward < -0.15) return "pursue";
-  // A dive is a commitment when the runner is escaping beyond a normal reach,
-  // not an automatic tackle from contact-distance or an artificial skill roll.
+  // Stay upright if another defender has an angle or this defender can
+  // still close on foot. A dive is a last reach on an opening rear angle.
   const desperate =
-    gap > contact + 0.48 &&
-    gap < contact + 1.8 &&
-    closing < 0.85 &&
-    geometry.runnerSpeed > 3.25;
+    geometry.breakaway &&
+    !geometry.supportAhead &&
+    gap > contact + 0.5 &&
+    gap < contact + 1.45 &&
+    closing < -0.18 &&
+    closing > -1.25 &&
+    geometry.runnerSpeed > 4.7;
   const competent = d.TAK >= 66 && d.AGI >= 59;
-  if (desperate && competent && toward > 0.35 && geometry.freeLane)
+  if (desperate && competent && toward > 0.65 && geometry.freeLane)
     return "tackle-dive";
   const leverage = clamp(geometry.frontality, 0, 1);
   if (

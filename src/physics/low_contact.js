@@ -32,16 +32,23 @@ function advance(p, dt) {
 }
 // A grounded defender can still reach up and try to snag the carrier's foot.
 // Facing, position and reach matter; the ground state alone never guarantees a trip.
-function reachEligible(d, r) {
+function reachEligible(d, r, controlledGroundReach) {
   if (!d.ground) return true;
+  if (controlledGroundReach && (
+    d.ground.stage !== "winded" ||
+    d.ground.ankleAttempted ||
+    (d.ground.age || 0) < (d.ground.fall || 0) + 0.1 ||
+    d.stun > 0.12
+  )) return false;
   const dx = r.x - d.x,
     dy = r.y - d.y,
     dist = hyp(dx, dy);
-  if (dist > 1.62) return false;
+  if (dist > (controlledGroundReach ? 1.18 : 1.62)) return false;
   const facing =
     (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) /
     Math.max(0.01, dist);
-  return facing > -0.32 && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
+  return facing > (controlledGroundReach ? 0.12 : -0.32) &&
+    d.ground.stage !== "rise" && (d.TAK || 65) > 45;
 }
 // Predict closest relative approach within the step to prevent ankle tunneling.
 function sweep(a0, a1, b0, b1) {
@@ -56,8 +63,8 @@ function sweep(a0, a1, b0, b1) {
   );
   return { t, d: hyp(rx + vx * t, ry + vy * t) };
 }
-function evaluate(runnerBefore, r, defBefore, d) {
-  if (!isLowThreat(d) || !reachEligible(d, r))
+function evaluate(runnerBefore, r, defBefore, d, controlledGroundReach = false) {
+  if (!isLowThreat(d) || !reachEligible(d, r, controlledGroundReach))
     return { hit: false, kind: "not-low" };
   const near = sweep(runnerBefore, r, defBefore, d);
   const distance = Math.min(near.d, hyp(r.x - d.x, r.y - d.y));

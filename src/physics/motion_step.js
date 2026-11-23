@@ -142,6 +142,7 @@ export function createMotionStep() {
           r,
           prior.get(d.key) || d,
           d,
+          !matchState.specialState,
         );
         if (!hit.hit) continue;
         // Ignore early capsule fringe overlaps; measure meaningful contact nearer
@@ -186,8 +187,10 @@ export function createMotionStep() {
         );
         d.vx *= Math.max(0.22, 1 - severity * 0.34);
         d.vy *= Math.max(0.22, 1 - severity * 0.34);
-        if (d.ground) d.ankleReachTime = 0.34;
-        else d.impact = Math.max(d.impact, 0.18 + severity * 0.17);
+        if (d.ground) {
+          d.ankleReachTime = 0.34;
+          if (!matchState.specialState) d.ground.ankleAttempted = true;
+        } else d.impact = Math.max(d.impact, 0.18 + severity * 0.17);
         const truckWon =
           r.lastTruckOutcome?.win &&
           r.lastTruckOutcome.defender === d.key &&

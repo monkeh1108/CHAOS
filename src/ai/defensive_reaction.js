@@ -132,11 +132,26 @@ export function createDefensiveReaction() {
     const closing = ((d.vx - a.vx) * dx + (d.vy - a.vy) * dy) / along;
     const facing =
       (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / along;
+    const runnerSpeed = speed(a);
+    const breakaway =
+      dx > 0.45 &&
+      a.vx > 2.5 &&
+      (a.vx * dx + a.vy * dy) > along * runnerSpeed * 0.78 &&
+      (d.vx * dx + d.vy * dy) > along * 2.6;
+    const supportAhead = breakaway && matchState.def.some(
+      (other) =>
+        other !== d && !other.ground && other.stun <= 0 &&
+        !other.action?.time && other.blocked < 0.28 &&
+        other.x > a.x + 0.4 && other.x < a.x + 6 &&
+        Math.abs(other.y - (a.y + a.vy * 0.25)) < 3.2,
+    );
     const choice = ChaosTackleIntelligence.selection(d, a, {
       gap,
       contact: radius(d) + radius(a),
       closing,
-      runnerSpeed: speed(a),
+      runnerSpeed,
+      breakaway,
+      supportAhead,
       facing,
       frontality: facing,
       freeLane: d.blocked < 0.12,
@@ -148,7 +163,7 @@ export function createDefensiveReaction() {
       facing,
       time: matchState.playClock,
     };
-    if (choice === "tackle-dive" && !(speed(a) < 0.95 && gap < 2.5)) {
+    if (choice === "tackle-dive") {
       // A planted or nearly stopped runner needs a controlled wrap, not a
       // repeated launch of low dives through the same crowded rear contact.
       // AI may commit a physically plausible low dive before contact.

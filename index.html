@@ -729,12 +729,13 @@
     p.autoHopCooldown = Math.max(0, (p.autoHopCooldown || 0) - dt);
     p.ankleReachTime = Math.max(0, (p.ankleReachTime || 0) - dt);
   }
-  function reachEligible(d, r) {
+  function reachEligible(d, r, controlledGroundReach) {
     if (!d.ground) return true;
+    if (controlledGroundReach && (d.ground.stage !== "winded" || d.ground.ankleAttempted || (d.ground.age || 0) < (d.ground.fall || 0) + 0.1 || d.stun > 0.12)) return false;
     const dx = r.x - d.x, dy = r.y - d.y, dist = hypot(dx, dy);
-    if (dist > 1.62) return false;
+    if (dist > (controlledGroundReach ? 1.18 : 1.62)) return false;
     const facing = (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / Math.max(0.01, dist);
-    return facing > -0.32 && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
+    return facing > (controlledGroundReach ? 0.12 : -0.32) && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
   }
   function sweep(a0, a1, b0, b1) {
     const rx = a0.x - b0.x, ry = a0.y - b0.y;
@@ -746,8 +747,8 @@
     );
     return { t, d: hypot(rx + vx * t, ry + vy * t) };
   }
-  function evaluate(runnerBefore, r, defBefore, d) {
-    if (!isLowThreat(d) || !reachEligible(d, r))
+  function evaluate(runnerBefore, r, defBefore, d, controlledGroundReach = false) {
+    if (!isLowThreat(d) || !reachEligible(d, r, controlledGroundReach))
       return { hit: false, kind: "not-low" };
     const near = sweep(runnerBefore, r, defBefore, d);
     const distance2 = Math.min(near.d, hypot(r.x - d.x, r.y - d.y));
@@ -4009,9 +4010,9 @@
     if (gap > 3.15) return "pursue";
     const toward = geometry.facing;
     if (toward < -0.15) return "pursue";
-    const desperate = gap > contact2 + 0.48 && gap < contact2 + 1.8 && closing < 0.85 && geometry.runnerSpeed > 3.25;
+    const desperate = geometry.breakaway && !geometry.supportAhead && gap > contact2 + 0.5 && gap < contact2 + 1.45 && closing < -0.18 && closing > -1.25 && geometry.runnerSpeed > 4.7;
     const competent = d.TAK >= 66 && d.AGI >= 59;
-    if (desperate && competent && toward > 0.35 && geometry.freeLane)
+    if (desperate && competent && toward > 0.65 && geometry.freeLane)
       return "tackle-dive";
     const leverage = clamp(geometry.frontality, 0, 1);
     if (gap <= contact2 + 0.27 && closing > 2.5 && leverage > 0.65 && d.HIT >= 83 && d.TAK >= 71 && geometry.freeLane)
@@ -6271,11 +6272,18 @@
       const gap = distance2D(d, a), dx = a.x - d.x, dy = a.y - d.y, along = Math.max(0.01, gap);
       const closing = ((d.vx - a.vx) * dx + (d.vy - a.vy) * dy) / along;
       const facing = (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / along;
+      const runnerSpeed = speed(a);
+      const breakaway = dx > 0.45 && a.vx > 2.5 && a.vx * dx + a.vy * dy > along * runnerSpeed * 0.78 && d.vx * dx + d.vy * dy > along * 2.6;
+      const supportAhead = breakaway && matchState.def.some(
+        (other) => other !== d && !other.ground && other.stun <= 0 && !other.action?.time && other.blocked < 0.28 && other.x > a.x + 0.4 && other.x < a.x + 6 && Math.abs(other.y - (a.y + a.vy * 0.25)) < 3.2
+      );
       const choice = ChaosTackleIntelligence.selection(d, a, {
         gap,
         contact: radius(d) + radius(a),
         closing,
-        runnerSpeed: speed(a),
+        runnerSpeed,
+        breakaway,
+        supportAhead,
         facing,
         frontality: facing,
         freeLane: d.blocked < 0.12
@@ -6287,7 +6295,7 @@
         facing,
         time: matchState.playClock
       };
-      if (choice === "tackle-dive" && !(speed(a) < 0.95 && gap < 2.5)) {
+      if (choice === "tackle-dive") {
         const dir = { x: dx / along, y: dy / along };
         d.action = {
           kind: "tackle-dive",
@@ -9290,7 +9298,8 @@
             prior.get(r.key) || r,
             r,
             prior.get(d.key) || d,
-            d
+            d,
+            !matchState.specialState
           );
           if (!hit.hit) continue;
           if (hit.contact < 0.35) continue;
@@ -9328,8 +9337,10 @@
           );
           d.vx *= Math.max(0.22, 1 - severity * 0.34);
           d.vy *= Math.max(0.22, 1 - severity * 0.34);
-          if (d.ground) d.ankleReachTime = 0.34;
-          else d.impact = Math.max(d.impact, 0.18 + severity * 0.17);
+          if (d.ground) {
+            d.ankleReachTime = 0.34;
+            if (!matchState.specialState) d.ground.ankleAttempted = true;
+          } else d.impact = Math.max(d.impact, 0.18 + severity * 0.17);
           const truckWon = r.lastTruckOutcome?.win && r.lastTruckOutcome.defender === d.key && matchState.playClock - r.lastTruckOutcome.at < 0.48;
           const feedback = ChaosContactFeedback.label({
             severity,
