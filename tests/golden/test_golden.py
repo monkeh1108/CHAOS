@@ -5,7 +5,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 
 HERE = Path(__file__).resolve().parent
@@ -36,6 +38,10 @@ window.requestAnimationFrame = () => 0;
         profile = Path(directory) / "profile"
         flags = ["--headless=new", "--disable-gpu", "--no-first-run",
                  "--virtual-time-budget=1500", "--window-size=1120,800"]
+        # The disposable Linux Actions worker blocks Chromium's user namespaces.
+        # Match the Playwright QA launch there, retaining Chromium defaults locally.
+        if sys.platform.startswith("linux") and os.environ.get("GITHUB_ACTIONS") == "true":
+            flags.append("--no-sandbox")
         stdout = Path(directory) / "stdout"
         stderr = Path(directory) / "stderr"
         if os.name == "nt":
@@ -77,20 +83,42 @@ def canonical(data):
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
 
 
+def capture_repeatable(browser, html, scenario, label):
+    first = canonical(capture(browser, html, scenario))
+    second = canonical(capture(browser, html, scenario))
+    if first != second:
+        raise AssertionError(f"{scenario}: two fresh {label} runs produced different snapshots")
+    return first
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--browser", required=True, help="Path to Chromium, Chrome, or Edge")
+    parser.add_argument("--browser", default=os.environ.get("CHAOS_CHROMIUM"),
+                        help="Path to Chromium, Chrome, or Edge (or set CHAOS_CHROMIUM)")
     parser.add_argument("--html", type=Path, default=ROOT / "index.html")
+    parser.add_argument("--reference-html", type=Path, default=os.environ.get("CHAOS_GOLDEN_REFERENCE"),
+                        help="Compare against a fixed baseline build in the same browser")
     parser.add_argument("--record", action="store_true", help="Explicitly write the reference snapshots")
     args = parser.parse_args()
+    if args.record and args.reference_html:
+        parser.error("--record and --reference-html cannot be combined")
+    browser = args.browser
+    if not browser:
+        browser = next((path for name in ("chromium", "chromium-browser", "google-chrome", "msedge")
+                        if (path := shutil.which(name))), None)
+    if not browser and os.name == "nt":
+        edge = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"))
+        edge = edge / "Microsoft/Edge/Application/msedge.exe"
+        if edge.is_file():
+            browser = str(edge)
+    if not browser:
+        parser.error("Install a Chromium-family browser or provide --browser or CHAOS_CHROMIUM.")
     html = args.html.read_text(encoding="utf-8")
-    actual = {}
-    for scenario in SCENARIOS:
-        first = canonical(capture(args.browser, html, scenario))
-        second = canonical(capture(args.browser, html, scenario))
-        if first != second:
-            raise AssertionError(f"{scenario}: two fresh browser runs produced different snapshots")
-        actual[scenario] = first
+    reference = args.reference_html.read_text(encoding="utf-8") if args.reference_html else None
+    actual = {
+        scenario: capture_repeatable(browser, html, scenario, "current build")
+        for scenario in SCENARIOS
+    }
 
     fixtures = HERE / "fixtures"
     if args.record:
@@ -100,11 +128,15 @@ def main():
         path = fixtures / f"{scenario}.json"
         if args.record:
             path.write_text(snapshot, encoding="utf-8", newline="\n")
-        elif snapshot != path.read_text(encoding="utf-8"):
-            failures.append(scenario)
-            continue
+        else:
+            expected = (capture_repeatable(browser, reference, scenario, "baseline")
+                        if reference is not None else path.read_text(encoding="utf-8"))
+            if snapshot != expected:
+                failures.append(scenario)
+                continue
         digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:12]
-        print(f"PASS {scenario}: two identical runs ({digest})")
+        label = "exact match to two baseline runs" if reference is not None else "two identical runs"
+        print(f"PASS {scenario}: {label} ({digest})")
     if failures:
         raise AssertionError(f"Golden snapshot mismatch: {', '.join(failures)}")
 

@@ -1,11 +1,7 @@
 'use strict';
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const ctx=vm.createContext({});
-for(const name of ['render/animation_policy','physics/dive_reach','physics/anatomy_hitboxes','physics/dive_collision']){
- vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name+'.js','utf8'),ctx);
-}
-vm.runInContext('this.API={AnatomyHitboxes,ChaosDiveCollision}',ctx);
-const {ChaosDiveCollision}=ctx.API;
+const assert = require('node:assert/strict');
+const { ChaosDiveCollision } = require('../../src/physics/dive_collision.js');
+
 const runner=(x,y)=>({key:'RB',team:0,pos:'RB',h:72,w:225,x,y,face:Math.PI,vx:0,vy:0,balance:1,impact:0});
 const diver=(x,y,face=0)=>({key:'MLB',team:1,pos:'MLB',h:73,w:235,x,y,face,vx:8,vy:0,
  action:{kind:'tackle-dive',age:.30,time:.23,used:false},balance:1,impact:0});

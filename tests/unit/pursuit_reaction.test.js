@@ -1,6 +1,7 @@
 'use strict';
-const assert=require('node:assert/strict');
-const Pursuit=require('../../src/ai/pursuit_reaction');
+const assert = require('node:assert/strict');
+const { ChaosPursuitReaction: Pursuit } = require('../../src/ai/pursuit_reaction.js');
+
 function player(x,y,vx,vy){return {x,y,vx,vy,PUR:76,PRC:71,AGI:78}}
 const carrier=player(20,20,5,0),def=player(18,20,5,0);
 const base={x:20.5,y:20,mode:'tackle'};

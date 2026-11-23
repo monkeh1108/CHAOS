@@ -1,0 +1,3 @@
+# Python browser QA dependencies.
+playwright==1.51.0
+pytest==8.3.5

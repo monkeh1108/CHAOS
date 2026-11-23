@@ -1,8 +1,6 @@
 'use strict';
-const fs=require('fs'),vm=require('vm');
-const src=fs.readFileSync(__dirname+'/../../src/physics/low_contact.js','utf8');
-const context=vm.createContext({console,Math});vm.runInContext(src+'\nthis.low=ChaosLowContact;',context);
-const L=context.low;
+const { ChaosLowContact: L } = require('../../src/physics/low_contact.js');
+
 const assert=(truth,msg)=>{if(!truth)throw Error('FAIL '+msg)};
 const R={x:0,y:0,face:0,vx:6,vy:0,TAK:70,AGI:78,AWR:78,STR:78,balance:1,stam:1};
 const D={x:.7,y:0,face:Math.PI,vx:-3,vy:0,action:{kind:'tackle-dive',time:.5},TAK:81};

@@ -6,12 +6,17 @@ CHAOS is an independent 11-on-11 browser football prototype with playable offens
 
 Open `index.html` directly in a modern browser. Complete the coin toss, then use the on-screen playbook. The standalone is self-contained and needs no web server.
 
-The maintained source lives under `src/`. From the repository root, use Python 3.10 or newer to rebuild and check the standalone.
+The maintained source lives under `src/`. From the repository root, use
+Node.js 22.13+ or 24+ to install the pinned build tools and rebuild the
+committed standalone.
 
 ```sh
-python build_standalone.py
-python build_standalone.py --check
+npm ci
+npm run build
+npm run build:check
 ```
+
+`python build_standalone.py --check` remains an alias for the same build check.
 
 ## Controls
 
@@ -32,16 +37,23 @@ Receiver icons show which pass target each button controls. The same buttons tak
 
 ## Tests
 
-Run these examples from the repository root. Golden verification takes the path to an installed Chromium-family browser. Legacy browser checks also require Python Playwright and Chromium.
+Run these commands from the repository root with Node.js 22.13+ or 24+,
+npm, Python, and a Chromium-family browser. Set `CHAOS_CHROMIUM` to the
+browser executable if automatic discovery does not find it.
 
 ```sh
-node tests/unit/tackle_escape.test.js
-node tests/integration/receiver_icons.test.js
-python tests/golden/test_golden.py --browser /path/to/chromium
-python tests/browser/contact_lab.py
+npm run lint
+npm test
+python -m pip install -r requirements-dev.txt
+python -m playwright install chromium
+npm run test:browser
 ```
 
-On Windows the three Node integration checks may need an LF-only standalone copy as their first argument. See [Known issues](docs/KNOWN_ISSUES.md) and the [Phase 0 baseline](docs/refactor/BASELINE.md).
+`npm test` runs the Node and golden suites. For a focused browser check,
+run `python -m pytest tests/browser/test_contact_lab.py`. The original QA
+results are in the [Phase 0 baseline](docs/refactor/BASELINE.md).
+
+Use `npm run format` to format the JavaScript source after making edits.
 
 ## Architecture at a glance
 

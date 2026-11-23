@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -33,6 +33,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: python .github/scripts/select_task.py
+      - name: Install build dependencies
+        if: steps.select.outputs.has_task == 'true'
+        run: npm ci
       - name: Run Codex with limited workspace permission
         if: steps.select.outputs.has_task == 'true'
         uses: openai/codex-action@v1

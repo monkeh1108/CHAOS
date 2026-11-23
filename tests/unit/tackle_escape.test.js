@@ -1,8 +1,7 @@
 'use strict';
-const assert=require('assert'),vm=require('vm'),fs=require('fs');
-const ctx=vm.createContext({});
-vm.runInContext(fs.readFileSync(__dirname+'/../../src/physics/tackle_escape.js','utf8'),ctx);
-const model=vm.runInContext('ChaosTackleEscape',ctx);
+const assert = require('node:assert/strict');
+const { ChaosTackleEscape: model } = require('../../src/physics/tackle_escape.js');
+
 function scenario({grip=.52,quality=.47,style='dive',strength=90,trucking=92,acc=89,stamina=.95,balance=.98,defense=69,runnerSpeed=5,defSpeed=1}={}){
  const runner={x:1.08,y:0,vx:runnerSpeed,vy:0,face:0,w:245,STR:strength,TRK:trucking,ACC:acc,stam:stamina,balance};
  const defender={x:0,y:0,vx:defSpeed,vy:0,TAK:defense,STR:defense,AWR:defense,w:195};

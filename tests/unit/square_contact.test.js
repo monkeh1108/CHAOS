@@ -1,6 +1,7 @@
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const ctx=vm.createContext({});vm.runInContext(fs.readFileSync(__dirname+'/../../src/physics/square_contact.js','utf8')+'\nthis.CSC=ChaosSquareContact',ctx);
-const {CSC}=ctx;
+'use strict';
+const assert = require('node:assert/strict');
+const { ChaosSquareContact: CSC } = require('../../src/physics/square_contact.js');
+
 let direct=CSC.classify({vx:5,vy:0},{vx:-4,vy:0},1,0);
 assert(direct.square>.85,JSON.stringify(direct));
 let glancing=CSC.classify({vx:4,vy:4},{vx:-2,vy:5},1,0);

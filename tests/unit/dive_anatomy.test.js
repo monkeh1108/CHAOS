@@ -1,8 +1,9 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ctx=vm.createContext({});
-for(const n of ['render/animation_policy','physics/dive_reach','physics/anatomy_hitboxes','physics/contact_outcomes'])vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+n+'.js','utf8'),ctx);
-const R=vm.runInContext('ChaosDiveReach',ctx),A=vm.runInContext('AnatomyHitboxes',ctx),C=vm.runInContext('ChaosContactOutcomes',ctx);
+const assert = require('node:assert/strict');
+const { ChaosDiveReach: R } = require('../../src/physics/dive_reach.js');
+const { AnatomyHitboxes: A } = require('../../src/physics/anatomy_hitboxes.js');
+const { ChaosContactOutcomes: C } = require('../../src/physics/contact_outcomes.js');
+
 const mk=(age,used=false)=>({key:'S',pos:'SS',h:74,w:210,face:0,x:0,y:0,vx:9,vy:0,travel:age*9,action:{kind:'tackle-dive',age,time:.53-age,used}});
 for(const age of [.08,.22,.30,.40,.48]){
  const r=R.pose(mk(age));assert(r,'dive pose exists');

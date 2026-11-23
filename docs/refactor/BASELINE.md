@@ -63,3 +63,33 @@ The test uses the engine's direct stepping interface. After a whistle,
 requested ticks still label the sampling points, while the debug step
 stops advancing the play. The fixture does not cover real-time game clock
 behavior, live controller input, or visual fidelity.
+
+## Phase 2 browser comparison
+
+The owner ran the 55 Playwright cases on the bundled build. Forty-one passed
+and 14 failed on that run. A focused comparison against the original
+`bdbd167` standalone reproduced failures in these 12 cases:
+
+- Audibles, camera gaps and toss, controller CPU rush, game flow, kickoff control returns
+- Play selection and input, presnap adjustments, protection quickgame, protection switch
+- Recovery drag, visual smoke, Xbox ball air
+
+Those cases remain in the strict browser CI suite. The comparison used the
+same pytest cases and an override pointing to the original standalone.
+
+The blocking stance fixture was updated to read the imported blocking
+policy through `GRIDIRON_DEBUG.policies`. The live dive fixture also failed
+only on the bundled run. When motion was advanced explicitly in an Edge
+probe, both builds produced the same counts for front, side, diagonal and
+miss approaches (1, 1, 1, and 0). The revised test now controls browser
+frames as well as its explicit motion steps. These checks do not require
+a gameplay edit.
+
+The owner reran both focused Playwright cases after these fixture changes.
+Both passed.
+
+Linux CI uses the original `bdbd167` HTML as a fixed reference on its own
+browser. Three Windows reference snapshots differed on the Linux runner.
+CI captures each scenario twice on both builds and requires exact equality
+within that environment. The verifier still uses the committed Windows JSON
+by default, and CI never overwrites those fixtures.

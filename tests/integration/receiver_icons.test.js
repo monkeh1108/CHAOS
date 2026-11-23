@@ -50,10 +50,10 @@ sandbox.window = sandbox;
 vm.runInContext('Math.random = () => 431 / 4294967296', sandbox);
 sandbox.document.getElementById('athlete').value = 'QB';
 const html = fs.readFileSync(process.argv[2] || path.join(__dirname, '../../index.html'), 'utf8');
-const script = html.split('<script>')[1].split('</script>')[0];
-const labStart = script.indexOf("'use strict';\n// Isolated, deterministic collision replay scene");
-assert.ok(labStart > 0);
-vm.runInContext(script.slice(0, labStart).replace('window.GRIDIRON_DEBUG={',
+const script = html.replace(/\r\n/g, '\n').split('<script>')[1].split('</script>')[0];
+const withoutLab = script.replace(/\bmountContactLab\(\);/, '');
+assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
+vm.runInContext(withoutLab.replace(/window\.GRIDIRON_DEBUG\s*=\s*\{/,
  `
  window.renderFrame = render;
  window.startKickoff = () => setupKickoff(0);

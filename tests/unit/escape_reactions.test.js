@@ -1,9 +1,12 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm'),path=require('path');
-const root=path.resolve(__dirname,'../..');
-const ctx=vm.createContext({});
-for(const part of ['physics/escape_reactions.js','physics/tackle_escape.js','render/animation_policy.js'])vm.runInContext(fs.readFileSync(path.join(root,'src',part),'utf8'),ctx);
-const [reaction,esc,anim]=vm.runInContext('[ChaosEscapeReactions, ChaosTackleEscape, AnimationPolicy]',ctx);
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '../..');
+const { ChaosEscapeReactions: reaction } = require('../../src/physics/escape_reactions.js');
+const { ChaosTackleEscape: esc } = require('../../src/physics/tackle_escape.js');
+const { AnimationPolicy: anim } = require('../../src/render/animation_policy.js');
+
 const runner={team:0,x:1,y:0,vx:5,vy:0,face:0,w:232,STR:91,TRK:90,ACC:88,stam:.98,balance:.97,travel:4};
 const defender={team:1,x:0,y:0,vx:2,vy:0,face:Math.PI,TAK:67,STR:69,AWR:70,balance:1,stam:.97,travel:2};
 const link={style:'wrap',grip:.48,quality:.48,age:.31,escapeProgress:.12,attachment:{force:1.17,stretch:0}};
@@ -53,6 +56,6 @@ for(let i=0;i<65;i++){secure.age+=1/60;const value=esc.step(runner,strongDef,sec
 // Source-based guard that was broken in v0.36.4o: no unconditional ground state.
 const engine=fs.readFileSync(path.join(root,'src/engine.js'),'utf8');
 const f=engine.slice(engine.indexOf('function releaseTackle('),engine.indexOf('// Defenders choose a secure wrap'));
-assert(f.includes('if(reaction.fall){') && !f.includes("if(reason==='escape'){\n  d.ground"),'grounding must require physical criterion');
+assert(/if\s*\(\s*reaction\.fall\s*\)\s*\{/.test(f) && !f.includes("if(reason==='escape'){\n  d.ground"),'grounding must require physical criterion');
 assert(f.includes('d.tackleCooldown') && f.includes('d.escapeReaction'),'standing defender retains a recoverable response');
 console.log('PASS: weak-grip upright slip; visible pre-break strain/leg drive; twist; sustained-wrap pull; diving follow-through; earned severe imbalance; repeated-break fatigue; secure-wrap resistance');

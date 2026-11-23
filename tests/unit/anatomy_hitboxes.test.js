@@ -1,7 +1,7 @@
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const context=vm.createContext({});
-for(const name of ['render/animation_policy','physics/anatomy_hitboxes']) vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+name+'.js','utf8'),context);
-const A=vm.runInContext('AnatomyHitboxes',context);
+'use strict';
+const assert = require('node:assert/strict');
+const { AnatomyHitboxes: A } = require('../../src/physics/anatomy_hitboxes.js');
+
 function p(h,w,x=0,y=0,face=0){return {key:'p',pos:'RB',h,w,x,y,face,vx:0,vy:0,travel:0,action:null,ground:null};}
 const small=A.sample(p(68,170)),big=A.sample(p(80,330));
 assert(big.dims.visualHeight>small.dims.visualHeight);

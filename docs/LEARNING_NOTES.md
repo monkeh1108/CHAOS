@@ -32,3 +32,16 @@ and find the first sampled tick where someone has the ball.
   `git show bdbd167:engine.js`. The colon asks Git for the named file
   from that commit. Try running both commands and finding the first line
   of that old engine.
+
+## Phase 2 tooling
+
+- **ES modules** make dependencies explicit. For example, the renderer imports
+  `AnimationPolicy` from its source file. Node tests can load that module
+  without starting the game.
+- **A bundler** follows imports from the entry point and packages source into
+  the one script that ships inside `index.html`.
+- **A linter** flags patterns that deserve review. In `GRIDIRON_DEBUG.getState`,
+  the duplicate `pursuitPoint` key causes the second entry to win. The build
+  and lint output flag this existing duplicate.
+- **A formatter** standardizes layout. It makes it easier to review an
+  unrelated rule or physics change later.

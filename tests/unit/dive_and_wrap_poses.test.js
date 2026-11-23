@@ -1,8 +1,8 @@
 'use strict';
-const assert=require('assert'),fs=require('fs'),vm=require('vm');
-const ctx=vm.createContext({});
-for(const n of ['render/animation_policy','physics/dive_reach','physics/anatomy_hitboxes'])vm.runInContext(fs.readFileSync(__dirname+'/../../src/'+n+'.js','utf8'),ctx);
-const R=vm.runInContext('ChaosDiveReach',ctx),A=vm.runInContext('AnatomyHitboxes',ctx);
+const assert = require('node:assert/strict');
+const { ChaosDiveReach: R } = require('../../src/physics/dive_reach.js');
+const { AnatomyHitboxes: A } = require('../../src/physics/anatomy_hitboxes.js');
+
 const base={key:'SS',h:74,w:208,x:0,y:0,face:0};
 const diving={...base,action:{kind:'tackle-dive',age:.30,time:.23,used:false}};
 const d=R.pose(diving);assert(Math.abs(d.shoulder-2.35619449)<.02,'135 degree dive reach');
