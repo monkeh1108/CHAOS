@@ -5342,12 +5342,14 @@
           finish("out", p.x, p.name + " steps out of bounds.");
           return;
         }
-        if (matchState.contactEnabled) resolveTackles(p, dt);
-        if (matchState.phase !== "live") return;
+        if (p.ground?.kind !== "indirect-contact") {
+          if (matchState.contactEnabled) resolveTackles(p, dt);
+          if (matchState.phase !== "live") return;
+        }
         const crowd = matchState.def.filter(
           (d) => !d.ground && distance2D(d, p) < 2.65
         ).length;
-        if (crowd >= 2 && Math.hypot(p.vx, p.vy) < 0.65) {
+        if (p.ground?.kind !== "indirect-contact" && crowd >= 2 && Math.hypot(p.vx, p.vy) < 0.65) {
           p.stoppedProgress = (p.stoppedProgress || 0) + dt;
           if (p.stoppedProgress > 2.1) {
             finish(
@@ -8048,6 +8050,127 @@
     };
   }
 
+  // src/physics/indirect_contact.js
+  var DRIVE_LIFETIME = 0.14;
+  var MIN_DRIVE_IMPULSE = 30;
+  var LINE_BLOCKERS = /* @__PURE__ */ new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
+  function indirectContactActive(state2) {
+    return state2.phase === "live" && state2.selectedPlay === "inside" && !state2.specialState && state2.ballCarrier?.team === 0;
+  }
+  function ageIndirectDrive(player, dt) {
+    const drive2 = player.indirectDrive;
+    if (!drive2) return;
+    drive2.remaining -= dt;
+    if (drive2.remaining <= 0) player.indirectDrive = null;
+  }
+  function recordDefenderDrive(state2, blocker, defender, x, y, engaged = false) {
+    if (!indirectContactActive(state2) || blocker.team !== 0 || defender.team !== 1 || blocker === state2.ballCarrier || x >= 0 || !engaged && !LINE_BLOCKERS.has(blocker.pos)) {
+      return;
+    }
+    const impulse = Math.hypot(x, y);
+    if (impulse < (engaged ? 2 : MIN_DRIVE_IMPULSE)) return;
+    const previous = blocker.indirectDrive;
+    if (previous?.defender === defender.key && previous.blockers.length === 1) {
+      const retained = previous.remaining / DRIVE_LIFETIME;
+      x += previous.x * retained;
+      y += previous.y * retained;
+    } else if (previous && Math.hypot(previous.x, previous.y) > impulse) {
+      return;
+    }
+    blocker.indirectDrive = {
+      defender: defender.key,
+      blockers: [blocker.key],
+      x,
+      y,
+      remaining: DRIVE_LIFETIME
+    };
+  }
+  function transmittedDrive(blocker, teammate, normalX, normalY, approach, impulse) {
+    const drive2 = blocker.indirectDrive;
+    if (!drive2 || drive2.blockers.includes(teammate.key) || approach < 0.6) {
+      return null;
+    }
+    const projection = drive2.x * normalX + drive2.y * normalY;
+    const transmitted = Math.min(impulse, projection);
+    if (transmitted < MIN_DRIVE_IMPULSE) return null;
+    drive2.x -= transmitted * normalX;
+    drive2.y -= transmitted * normalY;
+    return {
+      defender: drive2.defender,
+      blockers: [...drive2.blockers, teammate.key],
+      x: transmitted * normalX,
+      y: transmitted * normalY,
+      remaining: drive2.remaining
+    };
+  }
+  function resolveTeammateImpact(state2, blocker, teammate, normalX, normalY, approach, speed, impulse, mass2) {
+    if (!indirectContactActive(state2) || blocker.team !== 0 || teammate.team !== 0) {
+      return;
+    }
+    if (blocker === state2.ballCarrier) return;
+    const drive2 = transmittedDrive(
+      blocker,
+      teammate,
+      normalX,
+      normalY,
+      approach,
+      impulse
+    );
+    if (teammate !== state2.ballCarrier) {
+      if (drive2 && (!teammate.indirectDrive || Math.hypot(drive2.x, drive2.y) > Math.hypot(teammate.indirectDrive.x, teammate.indirectDrive.y))) {
+        teammate.indirectDrive = drive2;
+      }
+      return;
+    }
+    if (teammate.ground || speed < 1.1 || impulse < 45) return;
+    const causalImpulse = drive2 ? Math.hypot(drive2.x, drive2.y) : 0;
+    const facing = Math.cos(teammate.face || 0) * -normalX + Math.sin(teammate.face || 0) * -normalY;
+    const ratings = teammate.STR * 0.25 + teammate.AWR * 0.25 + teammate.AGI * 0.3 + teammate.STA * 0.2;
+    const stability = clamp(
+      0.58 + (ratings - 65) * 6e-3 + teammate.balance * 0.36 + facing * 0.07 - (teammate.airState ? 0.12 : 0),
+      0.58,
+      1.35
+    );
+    const severity = (drive2 ? causalImpulse : impulse * 0.44) / (mass2 * 3.6 * stability);
+    const before = teammate.balance;
+    const fall = drive2 ? severity > 1.12 && (before < 0.7 || severity > 1.42) : severity > 1.35 && before < 0.52;
+    const stagger = severity > (drive2 ? 0.52 : 0.8);
+    teammate.lastIndirectContact = {
+      kind: !drive2 ? "teammate-bump" : drive2.blockers.length > 2 ? "chain-collapse" : "driven-blocker",
+      blocker: blocker.key,
+      defender: drive2?.defender ?? null,
+      chain: drive2?.blockers.slice(0, -1) ?? [blocker.key],
+      impulse,
+      causalImpulse,
+      speed,
+      severity,
+      outcome: fall ? "fall" : stagger ? "stagger" : "deflect"
+    };
+    if (!stagger) return;
+    teammate.balance = clamp(before - severity * 0.14, 0.25, 1);
+    teammate.stumbleTime = Math.max(
+      teammate.stumbleTime || 0,
+      clamp(severity * 0.28, 0.16, 0.55)
+    );
+    if (fall) {
+      teammate.action = null;
+      teammate.airState = null;
+      teammate.sprinting = false;
+      teammate.ground = {
+        stage: "fall",
+        time: 0.17,
+        fall: 0.17,
+        rest: 0.32,
+        rise: 0.25,
+        age: 0,
+        from: blocker.key,
+        kind: "indirect-contact",
+        dir: Math.atan2(normalY, normalX),
+        severity
+      };
+    }
+  }
+
   // src/ai/blocking_policy.js
   var stat = (p, key, fallback = 70) => Number.isFinite(p?.[key]) ? p[key] : fallback;
   var mass = (p) => Number.isFinite(p?.w) ? p.w : 220;
@@ -8240,8 +8363,18 @@
         }
         if (d.PMV >= 69 && e.age > 0.12 && powerEdge > -17) {
           const drive2 = clamp((powerEdge + 24) * 0.018, 0.1, 0.95) * clamp(mass2(d) / 117, 0.7, 1.4);
-          o.vx -= ix * drive2 * dt * 3.5;
-          o.vy -= iy * drive2 * dt * 3.5;
+          const recoilX = ix * drive2 * dt * 3.5;
+          const recoilY = iy * drive2 * dt * 3.5;
+          o.vx -= recoilX;
+          o.vy -= recoilY;
+          recordDefenderDrive(
+            matchState,
+            o,
+            d,
+            -recoilX * mass2(o) * YARD_M2,
+            -recoilY * mass2(o) * YARD_M2,
+            true
+          );
           d.technique = "power-move";
           d.lean = clamp(d.lean + 0.05 * dt, -0.5, 0.5);
           if (!e.powerUsed) {
@@ -8473,7 +8606,7 @@
 
   // src/physics/body_collision.js
   function createBodyCollision() {
-    let YARD_M2, groundContact, log, mass2, matchState, radius;
+    let YARD_M2, finish, groundContact, log, mass2, matchState, radius;
     function bodyCoupling(a, b, pass) {
       if ((ChaosLowContact.clearance(a, b) || ChaosLowContact.clearance(b, a)) && !(a.ground && b.ground))
         return false;
@@ -8492,6 +8625,19 @@
         sep = Math.hypot(dx, dy);
       }
       const nx = dx / sep, ny = dy / sep, ma = mass2(a), mb = mass2(b), invA = 1 / ma, invB = 1 / mb;
+      if (matchState.phase === "live" && a.team !== b.team && matchState.ballCarrier?.ground?.kind === "indirect-contact" && (a === matchState.ballCarrier || b === matchState.ballCarrier)) {
+        const runner = matchState.ballCarrier;
+        const defender = runner === a ? b : a;
+        const contact2 = ChaosContactOutcomes.evaluate(runner, defender);
+        if (contact2.bodyContact && contact2.penetration >= 0.065) {
+          finish(
+            "tackle",
+            runner.x,
+            runner.name + " touched down by " + defender.pos
+          );
+          return true;
+        }
+      }
       if (pass === 0 && a.team !== b.team) {
         for (const [attacker, victim, sign] of [
           [a, b, 1],
@@ -8573,6 +8719,9 @@
       }
       const relX = b.vx - a.vx, relY = b.vy - a.vy, closing = relX * nx + relY * ny;
       if (closing >= -0.025) return penetration > 0;
+      const tracksDrive = indirectContactActive(matchState);
+      const approachA = tracksDrive ? a.vx * nx + a.vy * ny : 0;
+      const approachB = tracksDrive ? -b.vx * nx - b.vy * ny : 0;
       const normalSpeed = -closing, slide = relX * -ny + relY * nx;
       const restitution = normalSpeed < 1 ? 0.02 : clamp(0.06 + 8e-3 * normalSpeed, 0.06, 0.16);
       const J = -(1 + restitution) * closing / (invA + invB);
@@ -8591,6 +8740,38 @@
       b.vx += jt * invB * -ny;
       b.vy += jt * invB * nx;
       const hit = J * YARD_M2;
+      if (tracksDrive) {
+        if (a.team !== b.team) {
+          if (a.team === 1 && approachA >= 0.35) {
+            recordDefenderDrive(matchState, b, a, nx * hit, ny * hit);
+          } else if (b.team === 1 && approachB >= 0.35) {
+            recordDefenderDrive(matchState, a, b, -nx * hit, -ny * hit);
+          }
+        } else if (a.team === 0) {
+          resolveTeammateImpact(
+            matchState,
+            a,
+            b,
+            nx,
+            ny,
+            approachA,
+            normalSpeed,
+            hit,
+            mb
+          );
+          resolveTeammateImpact(
+            matchState,
+            b,
+            a,
+            -nx,
+            -ny,
+            approachB,
+            normalSpeed,
+            hit,
+            ma
+          );
+        }
+      }
       if (matchState.carrierCollisionDiagnostics && (a === matchState.ballCarrier || b === matchState.ballCarrier)) {
         matchState.carrierCollisionDiagnostics.push({
           pair: [a.key, b.key],
@@ -8694,7 +8875,7 @@
     }
     return {
       bind(services) {
-        ({ YARD_M: YARD_M2, groundContact, log, mass: mass2, matchState, radius } = services);
+        ({ YARD_M: YARD_M2, finish, groundContact, log, mass: mass2, matchState, radius } = services);
       },
       resolveBodyContacts
     };
@@ -8804,6 +8985,7 @@
         (p) => ChaosContactEvidence2.poseCopy(p)
       );
       for (const p of matchState.players) {
+        if (p.indirectDrive) ageIndirectDrive(p, dt);
         if (p.ground) {
           p.vx *= 0.66;
           p.vy *= 0.66;
@@ -11840,6 +12022,10 @@
       },
       debugCarrierCollisionImpulses: () => matchState.carrierCollisionDiagnostics?.slice() || [],
       debugTackleEligibility: () => matchState.tackleDiagnostics?.slice() || [],
+      debugIndirectContact: () => {
+        const event = matchState.ballCarrier?.lastIndirectContact;
+        return event ? { ...event, chain: [...event.chain] } : null;
+      },
       debugContactWatch: (all = false) => {
         ChaosContactEvidence2.setEnabled(true);
         ChaosContactEvidence2.setFullScan(all);

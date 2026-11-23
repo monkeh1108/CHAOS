@@ -1,3 +1,8 @@
+import {
+  indirectContactActive,
+  recordDefenderDrive,
+  resolveTeammateImpact,
+} from "./indirect_contact.js";
 import { clamp } from "../core/math.js";
 import { ChaosTackleIntelligence } from "../ai/tackle_intelligence.js";
 import { ChaosBodyConstraint } from "../physics/body_constraint.js";
@@ -6,7 +11,7 @@ import { ChaosLowContact } from "../physics/low_contact.js";
 import { ChaosSquareContact } from "../physics/square_contact.js";
 
 export function createBodyCollision() {
-  let YARD_M, groundContact, log, mass, matchState, radius;
+  let YARD_M, finish, groundContact, log, mass, matchState, radius;
 
   function bodyCoupling(a, b, pass) {
     // A real airborne foot clearance may pass over a *low* obstacle; upright
@@ -61,6 +66,24 @@ export function createBodyCollision() {
       mb = mass(b),
       invA = 1 / ma,
       invB = 1 / mb;
+    if (
+      matchState.phase === "live" &&
+      a.team !== b.team &&
+      matchState.ballCarrier?.ground?.kind === "indirect-contact" &&
+      (a === matchState.ballCarrier || b === matchState.ballCarrier)
+    ) {
+      const runner = matchState.ballCarrier;
+      const defender = runner === a ? b : a;
+      const contact = ChaosContactOutcomes.evaluate(runner, defender);
+      if (contact.bodyContact && contact.penetration >= 0.065) {
+        finish(
+          "tackle",
+          runner.x,
+          runner.name + " touched down by " + defender.pos,
+        );
+        return true;
+      }
+    }
     if (pass === 0 && a.team !== b.team) {
       // Physics contact happens first. A committed hit may strike ANY opponent:
       // receiver, blocker, lineman, or carrier. No targeted magnetism/pancake.
@@ -185,6 +208,9 @@ export function createBodyCollision() {
       relY = b.vy - a.vy,
       closing = relX * nx + relY * ny;
     if (closing >= -0.025) return penetration > 0;
+    const tracksDrive = indirectContactActive(matchState);
+    const approachA = tracksDrive ? a.vx * nx + a.vy * ny : 0;
+    const approachB = tracksDrive ? -b.vx * nx - b.vy * ny : 0;
     const normalSpeed = -closing,
       slide = relX * -ny + relY * nx;
     const restitution =
@@ -210,6 +236,38 @@ export function createBodyCollision() {
     b.vx += jt * invB * -ny;
     b.vy += jt * invB * nx;
     const hit = J * YARD_M;
+    if (tracksDrive) {
+      if (a.team !== b.team) {
+        if (a.team === 1 && approachA >= 0.35) {
+          recordDefenderDrive(matchState, b, a, nx * hit, ny * hit);
+        } else if (b.team === 1 && approachB >= 0.35) {
+          recordDefenderDrive(matchState, a, b, -nx * hit, -ny * hit);
+        }
+      } else if (a.team === 0) {
+        resolveTeammateImpact(
+          matchState,
+          a,
+          b,
+          nx,
+          ny,
+          approachA,
+          normalSpeed,
+          hit,
+          mb,
+        );
+        resolveTeammateImpact(
+          matchState,
+          b,
+          a,
+          -nx,
+          -ny,
+          approachB,
+          normalSpeed,
+          hit,
+          ma,
+        );
+      }
+    }
     if (
       matchState.carrierCollisionDiagnostics &&
       (a === matchState.ballCarrier || b === matchState.ballCarrier)
@@ -328,7 +386,8 @@ export function createBodyCollision() {
 
   return {
     bind(services) {
-      ({ YARD_M, groundContact, log, mass, matchState, radius } = services);
+      ({ YARD_M, finish, groundContact, log, mass, matchState, radius } =
+        services);
     },
     resolveBodyContacts,
   };

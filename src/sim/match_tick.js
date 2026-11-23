@@ -285,13 +285,21 @@ export function createMatchTick() {
         finish("out", p.x, p.name + " steps out of bounds.");
         return;
       }
-      if (matchState.contactEnabled) resolveTackles(p, dt);
-      if (matchState.phase !== "live") return;
+      // A runner who fell without direct defensive contact remains live.
+      // The body solver ends the play on a later verified opponent touch.
+      if (p.ground?.kind !== "indirect-contact") {
+        if (matchState.contactEnabled) resolveTackles(p, dt);
+        if (matchState.phase !== "live") return;
+      }
       // Forward progress can be ruled stopped during a sustained, crowded contact pile.
       const crowd = matchState.def.filter(
         (d) => !d.ground && dist(d, p) < 2.65,
       ).length;
-      if (crowd >= 2 && Math.hypot(p.vx, p.vy) < 0.65) {
+      if (
+        p.ground?.kind !== "indirect-contact" &&
+        crowd >= 2 &&
+        Math.hypot(p.vx, p.vy) < 0.65
+      ) {
         p.stoppedProgress = (p.stoppedProgress || 0) + dt;
         if (p.stoppedProgress > 2.1) {
           finish(

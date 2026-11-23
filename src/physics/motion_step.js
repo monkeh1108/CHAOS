@@ -1,3 +1,4 @@
+import { ageIndirectDrive } from "./indirect_contact.js";
 import { clamp } from "../core/math.js";
 import { ChaosDiveCollision } from "../physics/dive_collision.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
@@ -24,6 +25,7 @@ export function createMotionStep() {
       ChaosContactEvidence.poseCopy(p),
     );
     for (const p of matchState.players) {
+      if (p.indirectDrive) ageIndirectDrive(p, dt);
       if (p.ground) {
         p.vx *= 0.66;
         p.vy *= 0.66;
