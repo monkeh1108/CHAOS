@@ -59,7 +59,17 @@ export function runningCycle(travel, speed, scale, previous, clock) {
   const phase = continues
     ? previous.phase + (travel - previous.travel) / stride
     : travel / stride;
-  return { travel, phase: phase % 1, stride, speed, pace, acceleration, clock };
+  const step = (continues ? previous.step : 0) + Math.floor(phase);
+  return {
+    travel,
+    phase: phase % 1,
+    step,
+    stride,
+    speed,
+    pace,
+    acceleration,
+    clock,
+  };
 }
 
 export function runningBody(cycle) {
@@ -86,14 +96,14 @@ export function runningBody(cycle) {
   };
 }
 
-export function runningWeight(p, pose) {
+export function runningWeight(p, pose, cutting = false) {
   // Keep the established poses for a plant, contact, or special action.
   if (
-    pose.action ||
+    (pose.action && !(cutting && pose.action === "juke")) ||
     pose.air ||
     pose.ground ||
     pose.stance ||
-    pose.plant ||
+    (pose.plant && !cutting) ||
     p.airState ||
     (p.wrapReach || 0) > 0.01 ||
     p.intent === "wrap" ||
@@ -112,10 +122,11 @@ export function runningWeight(p, pose) {
   );
 }
 
-export function runningLeg(cycle, speed, side, scale, hip) {
+export function runningLegTarget(cycle, speed, side, scale) {
   const effort = strideEffort(speed);
   const support = 0.56 - 0.11 * effort;
-  const phase = (cycle.phase + (side > 0 ? 0.5 : 0)) % 1;
+  const offset = cycle.phase + (side > 0 ? 0.5 : 0);
+  const phase = offset % 1;
   const swing = limit((phase - support) / (1 - support), 0, 1);
   const rollOff = 0.36 + 0.21 * effort + 0.05 * ease(cycle.acceleration / 6);
   const pitch =
@@ -130,18 +141,141 @@ export function runningLeg(cycle, speed, side, scale, hip) {
     (0.145 + 0.145 * effort) *
     Math.sin(Math.PI * swing) ** 2 *
     (1.17 - 0.34 * swing);
-  // Match the cleat's ellipsoid sole at the requested pitch, including toe-off.
+  const stance = phase / support;
+  return {
+    x,
+    lateral: 0,
+    lift,
+    pitch,
+    contact: cycle.step + Math.floor(offset),
+    acquire: stance < 0.33,
+    lock: 1 - ease((stance - 0.68) / 0.32),
+  };
+}
+
+export function jukeBody(drive, facing, previous, speed) {
+  const side =
+    previous?.drive === drive
+      ? previous.side
+      : drive.nx * -Math.sin(facing) + drive.ny * Math.cos(facing) < 0
+        ? 1
+        : -1;
+  const progress = limit(1 - drive.remaining / drive.duration, 0, 1);
+  const load = ease(progress / 0.12) * (1 - ease((progress - 0.14) / 0.28));
+  const push =
+    ease((progress - 0.13) / 0.18) * (1 - ease((progress - 0.36) / 0.29));
+  const weight = ease(progress / 0.1) * (1 - ease((progress - 0.55) / 0.45));
+  const effort =
+    0.55 + 0.25 * limit(drive.power, 0, 1) + 0.2 * strideEffort(speed);
+  return {
+    drive,
+    side,
+    progress,
+    weight,
+    effort,
+    load,
+    push,
+    drop: (0.095 * load + 0.034 * push) * effort,
+    shift: side * (0.09 * load - 0.045 * push) * effort,
+    bank: side * (0.075 * load - 0.23 * push) * effort,
+  };
+}
+
+export function jukeLegTarget(cut, stride, side) {
+  const { progress, weight, effort, side: outside } = cut;
+  const support = side === outside;
+  const transfer = ease((progress - 0.17) / 0.34);
+  const reach = (support ? 0.13 : 0.08 + 0.17 * transfer) * effort;
+  // The outside foot braces first. The other foot reaches into the cut
+  // and accepts weight before both legs return to the running cycle.
+  return {
+    x:
+      stride.x * (1 - weight) +
+      (support ? 0.27 : 0.08 + 0.21 * transfer) * weight,
+    lateral: reach * weight,
+    lift:
+      stride.lift * (1 - weight) +
+      (support
+        ? 0.18 * Math.sin(Math.PI * ease((progress - 0.32) / 0.34))
+        : 0.17 * Math.sin(Math.PI * ease(progress / 0.48))) *
+        effort *
+        weight,
+    pitch:
+      stride.pitch * (1 - weight) +
+      (support ? -0.49 * ease((progress - 0.14) / 0.23) : 0.11 * transfer) *
+        weight,
+    contact: cut.drive,
+    acquire: support
+      ? progress >= 0.04 && progress < 0.22
+      : progress >= 0.44 && progress < 0.57,
+    lock: support
+      ? ease(progress / 0.09) * (1 - ease((progress - 0.19) / 0.14))
+      : ease((progress - 0.44) / 0.05) * (1 - ease((progress - 0.57) / 0.19)),
+    // A grounded landing can be sampled just before the lock ramps in.
+    landing: !support,
+  };
+}
+
+export function solveGroundedLeg(target, side, scale, hip, previous) {
+  const { pitch } = target;
+  // Match the ellipsoid sole at the requested pitch. The contact position is
+  // latched in field space while the hips translate, bank, and rotate.
   const sole =
     Math.hypot(0.185 * Math.sin(pitch), 0.0725 * Math.cos(pitch)) -
     0.12 * Math.sin(pitch);
-  const y = ((sole + lift) * scale - hip[13] - hip[1] * x) / hip[5];
+  const height = (sole + target.lift) * scale;
+  const lateral = target.lateral * side;
+  const localY =
+    (height - hip[13] - hip[1] * target.x - hip[9] * lateral) / hip[5];
+  const worldX =
+    hip[12] + hip[0] * target.x + hip[4] * localY + hip[8] * lateral;
+  const worldZ =
+    hip[14] + hip[2] * target.x + hip[6] * localY + hip[10] * lateral;
+  let plant =
+    previous?.contact === target.contact && previous?.side === side
+      ? previous
+      : null;
+  if (!plant && target.acquire && (target.lock > 0 || target.landing)) {
+    const heading = Math.atan2(hip[2], hip[0]);
+    plant = {
+      contact: target.contact,
+      side,
+      x: worldX,
+      z: worldZ,
+      heading,
+      weight: 1,
+    };
+  }
+  let x = target.x;
+  let y = localY;
+  let z = lateral;
+  if (plant && plant.weight > 0 && target.lock > 0) {
+    const wx = plant.x - hip[12],
+      wy = sole * scale - hip[13],
+      wz = plant.z - hip[14];
+    const scaleSquared = scale * scale;
+    const lockedX = (wx * hip[0] + wy * hip[1] + wz * hip[2]) / scaleSquared;
+    const lockedY = (wx * hip[4] + wy * hip[5] + wz * hip[6]) / scaleSquared;
+    const lockedZ = (wx * hip[8] + wy * hip[9] + wz * hip[10]) / scaleSquared;
+    const reach = Math.hypot(lockedX, lockedY, lockedZ);
+    const heading = Math.atan2(hip[2], hip[0]) - plant.heading;
+    const turn = Math.abs(Math.atan2(Math.sin(heading), Math.cos(heading)));
+    const release =
+      (1 - ease((reach - 0.855) / 0.085)) * (1 - ease((turn - 0.47) / 0.65));
+    if (release < plant.weight) plant = { ...plant, weight: release };
+    const lock = target.lock * plant.weight;
+    x += (lockedX - x) * lock;
+    y += (lockedY - y) * lock;
+    z += (lockedZ - z) * lock;
+  }
+  const planarY = -Math.hypot(y, z);
   const distance = limit(
-    Math.hypot(x, y),
+    Math.hypot(x, planarY),
     0.21,
     thighLength + shinLength - 0.002,
   );
   const hipAngle =
-    Math.atan2(x, -y) +
+    Math.atan2(x, -planarY) +
     Math.acos(
       limit(
         (thighLength ** 2 + distance ** 2 - shinLength ** 2) /
@@ -163,7 +297,9 @@ export function runningLeg(cycle, speed, side, scale, hip) {
   return {
     hip: hipAngle,
     knee,
-    ankle: pitch - hipAngle - knee - Math.atan2(hip[1], hip[5]),
+    roll: Math.atan2(-z, -y),
+    pitch,
+    plant,
   };
 }
 

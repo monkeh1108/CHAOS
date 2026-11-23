@@ -3,10 +3,13 @@ import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
 import {
   AnimationPolicy,
+  jukeBody,
+  jukeLegTarget,
   runningBody,
   runningCycle,
-  runningLeg,
+  runningLegTarget,
   runningWeight,
+  solveGroundedLeg,
 } from "./animation_policy.js";
 
 // Original lightweight WebGL renderer. No network, textures, assets, or
@@ -582,7 +585,7 @@ export function createGridironRenderer(canvas) {
     if (rec && rec !== selected)
       groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
   }
-  const strideCycles = new WeakMap();
+  const locomotion = new WeakMap();
   function player(
     p,
     clock,
@@ -611,14 +614,40 @@ export function createGridironRenderer(canvas) {
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
-    const gait = involved || presnap ? 0 : runningWeight(p, pose);
-    const previousCycle = strideCycles.get(p);
+    const prior = locomotion.get(p);
+    const travel = p.travel || 0;
+    const continuous =
+      prior &&
+      clock >= prior.cycle.clock &&
+      clock - prior.cycle.clock <= 0.12 &&
+      travel >= prior.cycle.travel;
+    const state = continuous ? prior : null;
+    const drive = p.jukeDrive;
+    const canCut =
+      drive?.remaining > 0 &&
+      !involved &&
+      !presnap &&
+      !pose.ground &&
+      !pose.air &&
+      !p.airState &&
+      !(p.stumbleTime > 0) &&
+      !pose.blockArms &&
+      !pose.escapePulse &&
+      pose.standUp <= 0.05 &&
+      !(p.wrapReach > 0.01) &&
+      p.intent !== "wrap" &&
+      (!pose.action || pose.action === "juke");
+    const cut = canCut
+      ? jukeBody(drive, displayFace, state?.cut, pose.speed)
+      : null;
+    const gait = involved || presnap ? 0 : runningWeight(p, pose, !!cut);
+    const legWeight = gait + (1 - gait) * (cut?.weight || 0);
     const cycle =
-      gait > 0 || previousCycle
-        ? runningCycle(p.travel || 0, pose.speed, s, previousCycle, clock)
+      legWeight > 0 || state
+        ? runningCycle(travel, pose.speed, s, state?.cycle, clock)
         : null;
-    if (cycle && cycle.clock !== previousCycle?.clock)
-      strideCycles.set(p, cycle);
+    const feet = [null, null];
+    if (cycle) locomotion.set(p, { cycle, cut, feet });
     const running = gait > 0 ? runningBody(cycle) : null;
     // The same physical contact and knocked-down states drive the pose.
     if (ground) {
@@ -643,11 +672,17 @@ export function createGridironRenderer(canvas) {
       root = at(
         root,
         0,
-        bob - pose.crouch + gait * (((running?.bob || 0) - 0.067) * s - bob),
-        0,
+        bob -
+          pose.crouch +
+          legWeight * (((running?.bob || 0) - 0.067) * s - bob) -
+          (cut?.drop || 0) * s,
+        (cut?.shift || 0) * s,
       );
       root = mul(root, rotZ(pose.lean + pose.stanceLean - pose.impactAccent));
-      root = mul(root, rotX(pose.bank));
+      root = mul(
+        root,
+        rotX(pose.bank * (1 - (cut?.weight || 0)) + (cut?.bank || 0)),
+      );
       root = mul(root, rotY(pose.yaw));
     }
     root = mul(root, scale(s, s, s));
@@ -754,7 +789,10 @@ export function createGridironRenderer(canvas) {
     // Counter-rotate about the waist and keep the original attachment points.
     const pelvis = running
       ? at(
-          mul(at(root, 0, 0.87, 0), rotY(running.pelvisYaw * gait)),
+          mul(
+            at(root, 0, 0.87, 0),
+            rotY(running.pelvisYaw * gait * (1 - (cut?.weight || 0))),
+          ),
           0,
           -0.87,
           0,
@@ -796,7 +834,14 @@ export function createGridironRenderer(canvas) {
     box(chest, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
       let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
-      const leg = gait > 0 ? runningLeg(cycle, cycle.pace, side, s, hip) : null;
+      const footIndex = side < 0 ? 0 : 1;
+      let leg = null;
+      if (legWeight > 0) {
+        const stride = runningLegTarget(cycle, cycle.pace, side, s);
+        const target = cut ? jukeLegTarget(cut, stride, side) : stride;
+        leg = solveGroundedLeg(target, side, s, hip, state?.feet[footIndex]);
+        feet[footIndex] = leg.plant;
+      }
       const hipSwing =
         (run ? side * legAmp * step : 0) +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
@@ -812,7 +857,11 @@ export function createGridironRenderer(canvas) {
           : 0) +
         (rise > 0 ? -0.22 * arc : 0) +
         (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-      hip = mul(hip, rotZ(hipSwing * (1 - gait) + (leg?.hip || 0) * gait));
+      if (leg) hip = mul(hip, rotX(leg.roll * legWeight));
+      hip = mul(
+        hip,
+        rotZ(hipSwing * (1 - legWeight) + (leg?.hip || 0) * legWeight),
+      );
       const kneePivot = at(hip, 0.03, -0.48, 0);
       const baseKnee =
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
@@ -820,7 +869,8 @@ export function createGridironRenderer(canvas) {
         (ground ? groundFold * 0.72 : 0) +
         (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) +
         (rise > 0 ? 0.3 * arc : 0);
-      const kneeBend = baseKnee * (1 - gait) + (leg?.knee || 0) * gait;
+      const kneeBend =
+        baseKnee * (1 - legWeight) + (leg?.knee || 0) * legWeight;
       // A wider blend gives the knee room to fold while the ankle and the
       // portion of the calf below the bend still follow the original hinge.
       drawLimb(
@@ -835,12 +885,35 @@ export function createGridironRenderer(canvas) {
       );
       const knee = mul(kneePivot, rotZ(kneeBend));
       const foot = at(knee, 0, -0.405, 0);
-      sphere(
-        leg ? mul(foot, rotZ(leg.ankle * gait)) : foot,
-        [0.12, 0, 0],
-        [0.37, 0.145, 0.225 * breadth],
-        C.shoe,
-      );
+      if (leg) {
+        const pitch = Math.atan2(foot[1], Math.hypot(foot[0], foot[2]));
+        const yaw = Math.atan2(foot[2], foot[0]);
+        const yawError = Math.atan2(
+          Math.sin(displayFace - yaw),
+          Math.cos(displayFace - yaw),
+        );
+        const bank = Math.atan2(-foot[9], foot[5]);
+        const heading = yaw + yawError * legWeight;
+        const slope = pitch + (leg.pitch - pitch) * legWeight;
+        const tilt = bank * (1 - legWeight);
+        // Reorient the cleat around its solved ankle without another matrix chain.
+        const cy = Math.cos(heading),
+          sy = Math.sin(heading);
+        const cp = Math.cos(slope),
+          sp = Math.sin(slope);
+        const cb = Math.cos(tilt),
+          sb = Math.sin(tilt);
+        foot[0] = s * cy * cp;
+        foot[1] = s * sp;
+        foot[2] = s * sy * cp;
+        foot[4] = s * (-cy * sp * cb - sy * sb);
+        foot[5] = s * cp * cb;
+        foot[6] = s * (-sy * sp * cb + cy * sb);
+        foot[8] = s * (cy * sp * sb - sy * cb);
+        foot[9] = -s * cp * sb;
+        foot[10] = s * (sy * sp * sb + cy * cb);
+      }
+      sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
       let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
@@ -944,7 +1017,13 @@ export function createGridironRenderer(canvas) {
                                   ? -side * step * legAmp * 0.8 * pose.armDrive
                                   : 0.1);
       const pump = running ? 0.21 + side * running.armDrive : swing;
-      shoulder = mul(shoulder, rotZ(swing + (pump - swing) * gait));
+      const cutBalance = cut
+        ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
+        : 0;
+      shoulder = mul(
+        shoulder,
+        rotZ(swing + (pump - swing) * gait + cutBalance),
+      );
       sphere(
         shoulder,
         [0.005, -0.026, -side * 0.029 * breadth],

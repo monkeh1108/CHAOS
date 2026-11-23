@@ -861,7 +861,17 @@
     const acceleration = track ? previous.acceleration + ((speed - previous.speed) / dt - previous.acceleration) * limit(dt * 7, 0, 1) : 0;
     const stride = (1.4 + 0.68 * strideEffort(pace)) * scale;
     const phase = continues ? previous.phase + (travel - previous.travel) / stride : travel / stride;
-    return { travel, phase: phase % 1, stride, speed, pace, acceleration, clock };
+    const step3 = (continues ? previous.step : 0) + Math.floor(phase);
+    return {
+      travel,
+      phase: phase % 1,
+      step: step3,
+      stride,
+      speed,
+      pace,
+      acceleration,
+      clock
+    };
   }
   function runningBody(cycle) {
     const effort = strideEffort(cycle.pace);
@@ -880,29 +890,116 @@
       elbow: 0.84 + 0.39 * effort + 0.08 * drive2
     };
   }
-  function runningWeight(p, pose2) {
-    if (pose2.action || pose2.air || pose2.ground || pose2.stance || pose2.plant || p.airState || (p.wrapReach || 0) > 0.01 || p.intent === "wrap" || p.stumbleTime > 0 || pose2.standUp > 0.05 || pose2.escapePulse > 0 || pose2.blockArms || pose2.escapeStrain > 0.12)
+  function runningWeight(p, pose2, cutting = false) {
+    if (pose2.action && !(cutting && pose2.action === "juke") || pose2.air || pose2.ground || pose2.stance || pose2.plant && !cutting || p.airState || (p.wrapReach || 0) > 0.01 || p.intent === "wrap" || p.stumbleTime > 0 || pose2.standUp > 0.05 || pose2.escapePulse > 0 || pose2.blockArms || pose2.escapeStrain > 0.12)
       return 0;
     const forward = (p.vx || 0) * Math.cos(p.face) + (p.vy || 0) * Math.sin(p.face);
     return ease2((pose2.speed - 0.7) / 2.4) * ease2((forward / Math.max(0.01, pose2.speed) - 0.28) / 0.54);
   }
-  function runningLeg(cycle, speed, side, scale, hip) {
+  function runningLegTarget(cycle, speed, side, scale) {
     const effort = strideEffort(speed);
     const support = 0.56 - 0.11 * effort;
-    const phase = (cycle.phase + (side > 0 ? 0.5 : 0)) % 1;
+    const offset = cycle.phase + (side > 0 ? 0.5 : 0);
+    const phase = offset % 1;
     const swing = limit((phase - support) / (1 - support), 0, 1);
     const rollOff = 0.36 + 0.21 * effort + 0.05 * ease2(cycle.acceleration / 6);
     const pitch = phase < support ? 0.12 * (1 - ease2(phase / 0.13)) - rollOff * ease2((phase / support - 0.57) / 0.43) : -rollOff + (rollOff + 0.12) * ease2(swing);
     const x = cycle.stride / scale * (support * 0.5 - phase + ease2(swing)) - (0.025 + 0.035 * effort);
     const lift = (0.145 + 0.145 * effort) * Math.sin(Math.PI * swing) ** 2 * (1.17 - 0.34 * swing);
+    const stance = phase / support;
+    return {
+      x,
+      lateral: 0,
+      lift,
+      pitch,
+      contact: cycle.step + Math.floor(offset),
+      acquire: stance < 0.33,
+      lock: 1 - ease2((stance - 0.68) / 0.32)
+    };
+  }
+  function jukeBody(drive2, facing, previous, speed) {
+    const side = previous?.drive === drive2 ? previous.side : drive2.nx * -Math.sin(facing) + drive2.ny * Math.cos(facing) < 0 ? 1 : -1;
+    const progress = limit(1 - drive2.remaining / drive2.duration, 0, 1);
+    const load = ease2(progress / 0.12) * (1 - ease2((progress - 0.14) / 0.28));
+    const push = ease2((progress - 0.13) / 0.18) * (1 - ease2((progress - 0.36) / 0.29));
+    const weight = ease2(progress / 0.1) * (1 - ease2((progress - 0.55) / 0.45));
+    const effort = 0.55 + 0.25 * limit(drive2.power, 0, 1) + 0.2 * strideEffort(speed);
+    return {
+      drive: drive2,
+      side,
+      progress,
+      weight,
+      effort,
+      load,
+      push,
+      drop: (0.095 * load + 0.034 * push) * effort,
+      shift: side * (0.09 * load - 0.045 * push) * effort,
+      bank: side * (0.075 * load - 0.23 * push) * effort
+    };
+  }
+  function jukeLegTarget(cut, stride, side) {
+    const { progress, weight, effort, side: outside } = cut;
+    const support = side === outside;
+    const transfer = ease2((progress - 0.17) / 0.34);
+    const reach = (support ? 0.13 : 0.08 + 0.17 * transfer) * effort;
+    return {
+      x: stride.x * (1 - weight) + (support ? 0.27 : 0.08 + 0.21 * transfer) * weight,
+      lateral: reach * weight,
+      lift: stride.lift * (1 - weight) + (support ? 0.18 * Math.sin(Math.PI * ease2((progress - 0.32) / 0.34)) : 0.17 * Math.sin(Math.PI * ease2(progress / 0.48))) * effort * weight,
+      pitch: stride.pitch * (1 - weight) + (support ? -0.49 * ease2((progress - 0.14) / 0.23) : 0.11 * transfer) * weight,
+      contact: cut.drive,
+      acquire: support ? progress >= 0.04 && progress < 0.22 : progress >= 0.44 && progress < 0.57,
+      lock: support ? ease2(progress / 0.09) * (1 - ease2((progress - 0.19) / 0.14)) : ease2((progress - 0.44) / 0.05) * (1 - ease2((progress - 0.57) / 0.19)),
+      // A grounded landing can be sampled just before the lock ramps in.
+      landing: !support
+    };
+  }
+  function solveGroundedLeg(target, side, scale, hip, previous) {
+    const { pitch } = target;
     const sole = Math.hypot(0.185 * Math.sin(pitch), 0.0725 * Math.cos(pitch)) - 0.12 * Math.sin(pitch);
-    const y = ((sole + lift) * scale - hip[13] - hip[1] * x) / hip[5];
+    const height2 = (sole + target.lift) * scale;
+    const lateral = target.lateral * side;
+    const localY = (height2 - hip[13] - hip[1] * target.x - hip[9] * lateral) / hip[5];
+    const worldX = hip[12] + hip[0] * target.x + hip[4] * localY + hip[8] * lateral;
+    const worldZ = hip[14] + hip[2] * target.x + hip[6] * localY + hip[10] * lateral;
+    let plant = previous?.contact === target.contact && previous?.side === side ? previous : null;
+    if (!plant && target.acquire && (target.lock > 0 || target.landing)) {
+      const heading = Math.atan2(hip[2], hip[0]);
+      plant = {
+        contact: target.contact,
+        side,
+        x: worldX,
+        z: worldZ,
+        heading,
+        weight: 1
+      };
+    }
+    let x = target.x;
+    let y = localY;
+    let z = lateral;
+    if (plant && plant.weight > 0 && target.lock > 0) {
+      const wx = plant.x - hip[12], wy = sole * scale - hip[13], wz = plant.z - hip[14];
+      const scaleSquared = scale * scale;
+      const lockedX = (wx * hip[0] + wy * hip[1] + wz * hip[2]) / scaleSquared;
+      const lockedY = (wx * hip[4] + wy * hip[5] + wz * hip[6]) / scaleSquared;
+      const lockedZ = (wx * hip[8] + wy * hip[9] + wz * hip[10]) / scaleSquared;
+      const reach = Math.hypot(lockedX, lockedY, lockedZ);
+      const heading = Math.atan2(hip[2], hip[0]) - plant.heading;
+      const turn = Math.abs(Math.atan2(Math.sin(heading), Math.cos(heading)));
+      const release3 = (1 - ease2((reach - 0.855) / 0.085)) * (1 - ease2((turn - 0.47) / 0.65));
+      if (release3 < plant.weight) plant = { ...plant, weight: release3 };
+      const lock = target.lock * plant.weight;
+      x += (lockedX - x) * lock;
+      y += (lockedY - y) * lock;
+      z += (lockedZ - z) * lock;
+    }
+    const planarY = -Math.hypot(y, z);
     const distance2 = limit(
-      Math.hypot(x, y),
+      Math.hypot(x, planarY),
       0.21,
       thighLength + shinLength - 2e-3
     );
-    const hipAngle = Math.atan2(x, -y) + Math.acos(
+    const hipAngle = Math.atan2(x, -planarY) + Math.acos(
       limit(
         (thighLength ** 2 + distance2 ** 2 - shinLength ** 2) / (2 * thighLength * distance2),
         -1,
@@ -919,7 +1016,9 @@
     return {
       hip: hipAngle,
       knee,
-      ankle: pitch - hipAngle - knee - Math.atan2(hip[1], hip[5])
+      roll: Math.atan2(-z, -y),
+      pitch,
+      plant
     };
   }
   function preSnapStance(p) {
@@ -13868,7 +13967,7 @@
       if (rec && rec !== selected)
         groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
     }
-    const strideCycles = /* @__PURE__ */ new WeakMap();
+    const locomotion = /* @__PURE__ */ new WeakMap();
     function player(p, clock, selected, carrier, contacts2, possession, presnap, blockOpponent) {
       const s = (p.h || 74) / 74, breadth = Math.max(0.76, Math.min(1.4, (p.w || 205) / 215));
       const partner = blockOpponent?.get(p.key);
@@ -13879,11 +13978,18 @@
       const involved = contacts2?.has(p.key) || p.pushing;
       const pose2 = AnimationPolicy.sample(p, involved, presnap);
       const run = pose2.run * (1 - (pose2.standUp || 0) * 0.65), step3 = pose2.cycle, bob = pose2.bob;
-      const gait = involved || presnap ? 0 : runningWeight(p, pose2);
-      const previousCycle = strideCycles.get(p);
-      const cycle = gait > 0 || previousCycle ? runningCycle(p.travel || 0, pose2.speed, s, previousCycle, clock) : null;
-      if (cycle && cycle.clock !== previousCycle?.clock)
-        strideCycles.set(p, cycle);
+      const prior = locomotion.get(p);
+      const travel = p.travel || 0;
+      const continuous = prior && clock >= prior.cycle.clock && clock - prior.cycle.clock <= 0.12 && travel >= prior.cycle.travel;
+      const state2 = continuous ? prior : null;
+      const drive2 = p.jukeDrive;
+      const canCut = drive2?.remaining > 0 && !involved && !presnap && !pose2.ground && !pose2.air && !p.airState && !(p.stumbleTime > 0) && !pose2.blockArms && !pose2.escapePulse && pose2.standUp <= 0.05 && !(p.wrapReach > 0.01) && p.intent !== "wrap" && (!pose2.action || pose2.action === "juke");
+      const cut = canCut ? jukeBody(drive2, displayFace, state2?.cut, pose2.speed) : null;
+      const gait = involved || presnap ? 0 : runningWeight(p, pose2, !!cut);
+      const legWeight = gait + (1 - gait) * (cut?.weight || 0);
+      const cycle = legWeight > 0 || state2 ? runningCycle(travel, pose2.speed, s, state2?.cycle, clock) : null;
+      const feet = [null, null];
+      if (cycle) locomotion.set(p, { cycle, cut, feet });
       const running = gait > 0 ? runningBody(cycle) : null;
       if (ground) {
         const fall = ground.stage === "fall" ? Math.min(1, (ground.age || 0) / Math.max(0.05, ground.fall || 0.25)) : 1;
@@ -13901,11 +14007,14 @@
         root = at(
           root,
           0,
-          bob - pose2.crouch + gait * (((running?.bob || 0) - 0.067) * s - bob),
-          0
+          bob - pose2.crouch + legWeight * (((running?.bob || 0) - 0.067) * s - bob) - (cut?.drop || 0) * s,
+          (cut?.shift || 0) * s
         );
         root = mul(root, rotZ(pose2.lean + pose2.stanceLean - pose2.impactAccent));
-        root = mul(root, rotX(pose2.bank));
+        root = mul(
+          root,
+          rotX(pose2.bank * (1 - (cut?.weight || 0)) + (cut?.bank || 0))
+        );
         root = mul(root, rotY(pose2.yaw));
       }
       root = mul(root, scale(s, s, s));
@@ -13971,7 +14080,10 @@
       const groundFold = ground ? recovering ? 0.6 * (1 - riseProgress) : ground.stage === "fall" ? 0.35 : 0.58 : 0;
       const shift = winded ? 0.05 : 0;
       const pelvis = running ? at(
-        mul(at(root, 0, 0.87, 0), rotY(running.pelvisYaw * gait)),
+        mul(
+          at(root, 0, 0.87, 0),
+          rotY(running.pelvisYaw * gait * (1 - (cut?.weight || 0)))
+        ),
         0,
         -0.87,
         0
@@ -14008,12 +14120,23 @@
       box(chest, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
       for (const side of [-1, 1]) {
         let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
-        const leg = gait > 0 ? runningLeg(cycle, cycle.pace, side, s, hip) : null;
+        const footIndex = side < 0 ? 0 : 1;
+        let leg = null;
+        if (legWeight > 0) {
+          const stride = runningLegTarget(cycle, cycle.pace, side, s);
+          const target = cut ? jukeLegTarget(cut, stride, side) : stride;
+          leg = solveGroundedLeg(target, side, s, hip, state2?.feet[footIndex]);
+          feet[footIndex] = leg.plant;
+        }
         const hipSwing = (run ? side * legAmp * step3 : 0) + (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) + (pose2.stance === "three-point" ? 0.26 : pose2.stance === "coverage-ready" ? 0.13 : pose2.stance === "receiver" ? 0.16 : 0) + (hurdle || dive ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT)) : 0) + (rise > 0 ? -0.22 * arc : 0) + (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-        hip = mul(hip, rotZ(hipSwing * (1 - gait) + (leg?.hip || 0) * gait));
+        if (leg) hip = mul(hip, rotX(leg.roll * legWeight));
+        hip = mul(
+          hip,
+          rotZ(hipSwing * (1 - legWeight) + (leg?.hip || 0) * legWeight)
+        );
         const kneePivot = at(hip, 0.03, -0.48, 0);
         const baseKnee = (run ? Math.abs(step3 * legAmp) * 0.5 : 0) + (pose2.stance ? 0.2 : 0) + (ground ? groundFold * 0.72 : 0) + (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) + (rise > 0 ? 0.3 * arc : 0);
-        const kneeBend = baseKnee * (1 - gait) + (leg?.knee || 0) * gait;
+        const kneeBend = baseKnee * (1 - legWeight) + (leg?.knee || 0) * legWeight;
         drawLimb(
           meshes.leg,
           kneePivot,
@@ -14026,12 +14149,31 @@
         );
         const knee = mul(kneePivot, rotZ(kneeBend));
         const foot = at(knee, 0, -0.405, 0);
-        sphere(
-          leg ? mul(foot, rotZ(leg.ankle * gait)) : foot,
-          [0.12, 0, 0],
-          [0.37, 0.145, 0.225 * breadth],
-          C.shoe
-        );
+        if (leg) {
+          const pitch = Math.atan2(foot[1], Math.hypot(foot[0], foot[2]));
+          const yaw = Math.atan2(foot[2], foot[0]);
+          const yawError = Math.atan2(
+            Math.sin(displayFace - yaw),
+            Math.cos(displayFace - yaw)
+          );
+          const bank = Math.atan2(-foot[9], foot[5]);
+          const heading = yaw + yawError * legWeight;
+          const slope = pitch + (leg.pitch - pitch) * legWeight;
+          const tilt = bank * (1 - legWeight);
+          const cy = Math.cos(heading), sy = Math.sin(heading);
+          const cp = Math.cos(slope), sp = Math.sin(slope);
+          const cb = Math.cos(tilt), sb = Math.sin(tilt);
+          foot[0] = s * cy * cp;
+          foot[1] = s * sp;
+          foot[2] = s * sy * cp;
+          foot[4] = s * (-cy * sp * cb - sy * sb);
+          foot[5] = s * cp * cb;
+          foot[6] = s * (-sy * sp * cb + cy * sb);
+          foot[8] = s * (cy * sp * sb - sy * cb);
+          foot[9] = -s * cp * sb;
+          foot[10] = s * (sy * sp * sb + cy * cb);
+        }
+        sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
         let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
         const stiffExtended = action === "stiff" && side < 0;
         const overhead = ["aggressive", "ball", "swat"].includes(aKind);
@@ -14041,7 +14183,11 @@
         const getUpArm = ground ? p.ankleReachTime > 0 ? 1.48 + (side < 0 ? 0.17 : -0.1) : recovering ? 0.95 - riseProgress * 0.62 + (side < 0 ? 0.15 : -0.06) : ground.stage === "fall" ? 0.68 : 1.02 : null;
         const swing = getUpArm !== null ? getUpArm : standingWrapPose ? standingWrapPose.shoulder : freeHandEscape ? (p.team === 0 ? side < 0 ? 0.58 : 0.22 : 0.68) + pose2.escapePulse * (p.team === 0 ? side < 0 ? 0.52 : -0.12 : 0.45) : pose2.stance ? stanceSwing : kick ? side < 0 ? -0.86 : 0.3 : stiffExtended ? 1.3 : hurdle ? side < 0 ? 1.28 : 0.86 : dive ? divePose.shoulder : overhead ? highpoint : catchArm || (pose2.blockArms ? (pose2.blockMode === "drive" ? 1.16 : pose2.blockMode === "seal" ? 0.96 : pose2.blockMode === "double-team" ? 1.12 : 1.02) + side * 0.07 : armsOut ? 0.62 - side * 0.1 : run ? -side * step3 * legAmp * 0.8 * pose2.armDrive : 0.1);
         const pump = running ? 0.21 + side * running.armDrive : swing;
-        shoulder = mul(shoulder, rotZ(swing + (pump - swing) * gait));
+        const cutBalance = cut ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort : 0;
+        shoulder = mul(
+          shoulder,
+          rotZ(swing + (pump - swing) * gait + cutBalance)
+        );
         sphere(
           shoulder,
           [5e-3, -0.026, -side * 0.029 * breadth],
