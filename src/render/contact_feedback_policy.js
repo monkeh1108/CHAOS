@@ -1,4 +1,4 @@
-// v0.36.4t. Presentation ONLY: no changes to forces, trip thresholds,
+// Presentation ONLY: no changes to forces, trip thresholds,
 // action matchup odds, or possession/tackle resolution.
 function label({ severity, balance, truckWon, tripped }) {
   if (tripped) return "TRIPPED";

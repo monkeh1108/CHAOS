@@ -7,10 +7,6 @@ import { RunPursuitPolicy } from "../ai/run_pursuit_policy.js";
 export function createPursuit() {
   let H, P, RUNS, arrive, matchState, maxSpeed, steer;
 
-  function targetDef(d) {
-    return d.assignment?.kind === "man" ? P(d.assignment.target) : null;
-  }
-
   // Run fits are assigned before the snap. Defenders recognize *visual* cues at
   // different delays; a coverage player doesn't magically know the offensive call.
   const FITS = {
@@ -86,7 +82,7 @@ export function createPursuit() {
     const anchoredGap =
       fit.gapSpot ??
       DefensivePresnap.gapTarget(d, matchState.off, matchState.playStart);
-    let x =
+    const x =
       anchoredGap?.x ??
       matchState.playStart +
         (inner

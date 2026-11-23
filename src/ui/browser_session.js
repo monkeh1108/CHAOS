@@ -1,3 +1,4 @@
+import { reportBrowserDiagnostic } from "../debug/browser_diagnostics.js";
 import { readFieldControls, XBOX } from "../input/controls.js";
 import { createPlaybookUi } from "./playbook.js";
 import { createGameHud } from "../ui/game_hud.js";
@@ -192,13 +193,33 @@ export function attachGameBrowser(session) {
     syncControls();
     refreshControllerStatus();
   }
+  function readAvailableGamepads() {
+    try {
+      return navigator.getGamepads?.() || [];
+    } catch {
+      // A blocked browser gamepad API is handled like a disconnected pad.
+      return null;
+    }
+  }
+
+  function capturePointer(target, pointerId) {
+    try {
+      target.setPointerCapture?.(pointerId);
+    } catch (error) {
+      // Synthetic or canceled pointer events can end before capture starts.
+      if (
+        error?.name !== "NotFoundError" &&
+        error?.name !== "InvalidStateError"
+      ) {
+        reportBrowserDiagnostic("warn", "Pointer capture unavailable", error);
+      }
+    }
+  }
+
   function pollGamepad() {
     if (session.tossStage === "call" || session.tossStage === "decision") {
       // Coin toss is controller accessible without leaking pre-snap game inputs.
-      let pads = [];
-      try {
-        pads = Array.from(navigator.getGamepads?.() || []);
-      } catch (_) {}
+      const pads = Array.from(readAvailableGamepads() || []);
       const pad = pads.find((p) => p?.connected && p.mapping === "standard");
       if (!pad) {
         tossPadPrevious = [];
@@ -224,10 +245,8 @@ export function attachGameBrowser(session) {
       else refreshControllerStatus();
       return;
     }
-    let pads;
-    try {
-      pads = navigator.getGamepads() || [];
-    } catch (e) {
+    const pads = readAvailableGamepads();
+    if (!pads) {
       clearPad();
       return;
     }
@@ -533,7 +552,7 @@ export function attachGameBrowser(session) {
   window.addEventListener("gamepaddisconnected", () => pollGamepad());
   function frame(timestamp) {
     if (!frame.prev) frame.prev = timestamp;
-    let elapsed = Math.min((timestamp - frame.prev) / 1000, 0.05);
+    const elapsed = Math.min((timestamp - frame.prev) / 1000, 0.05);
     frame.prev = timestamp;
     pollGamepad();
 
@@ -715,7 +734,7 @@ export function attachGameBrowser(session) {
       return;
     const at = screenToField(e),
       rec = eligibleTargets();
-    let choices = rec
+    const choices = rec
       .map((p, i) => ({ i, d: Math.hypot(p.x - at.x, p.y - at.y) }))
       .sort((a, b) => a.d - b.d);
     if (choices[0].d < 6) passTo(choices[0].i, 0.27);
@@ -739,7 +758,7 @@ export function attachGameBrowser(session) {
   $("joystick").addEventListener("pointerdown", (e) => {
     joystick.active = true;
     joystick.pointer = e.pointerId;
-    $("joystick").setPointerCapture(e.pointerId);
+    capturePointer($("joystick"), e.pointerId);
     resizeStick(e);
     e.preventDefault();
   });
@@ -1039,9 +1058,7 @@ export function attachGameBrowser(session) {
   );
   $("stiffAction").addEventListener("pointerdown", (e) => {
     action("holdStiffArm", true);
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch (_) {}
+    capturePointer(e.currentTarget, e.pointerId);
   });
   $("stiffAction").addEventListener("pointerup", () =>
     action("holdStiffArm", false),
@@ -1068,19 +1085,17 @@ export function attachGameBrowser(session) {
   $("reset").addEventListener("click", () => action("startNewMatch"));
   $("downloadTrace").addEventListener("click", downloadTrace);
   $("athlete").addEventListener("change", sliders);
-  for (let el of document.querySelectorAll("[data-play]"))
+  for (const el of document.querySelectorAll("[data-play]"))
     el.addEventListener("click", () => choosePlay(el.dataset.play));
   for (const id of ["formation", "front", "coverage", "pressure"]) {
     $(id).addEventListener("change", () => {
       if (session.phase !== "live") action("setScheme", id, $(id).value);
     });
   }
-  for (let el of document.querySelectorAll("[data-target]")) {
+  for (const el of document.querySelectorAll("[data-target]")) {
     el.addEventListener("pointerdown", (e) => {
       action("startPass", Number(el.dataset.target), "pointer");
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {}
+      capturePointer(el, e.pointerId);
     });
     el.addEventListener("pointerup", () => {
       if (session.pendingPass?.source === "pointer") action("releasePass");
@@ -1160,6 +1175,7 @@ export function attachGameBrowser(session) {
   });
   const fieldRenderer = createFieldRenderer({
     canvas,
+    reportDiagnostic: reportBrowserDiagnostic,
     width: session.W,
     height: session.H,
     readState: () => ({

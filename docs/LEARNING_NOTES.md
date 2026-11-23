@@ -116,3 +116,14 @@ same dispatcher.
 To trace the handoff, find collectTackleContacts in tackle_resolution.js and
 follow it into tackle_contacts.js. The rear-pile QA still uses the same
 physical checks for grip, movement, and a completed tackle.
+
+## Checkpoint 10
+
+- **Dead code** is code whose result has no reader. Removing an unused
+  calculation makes it easier to find the formulas that decide a play.
+- A **fallback** is explicit behavior when a dependency fails. If the
+  browser blocks controller access, the game clears the controller state.
+  If WebGL fails, the 2D field remains playable and diagnostics record why.
+- The linter checks that match rules, AI, and physics stay free of browser
+  globals and wall-clock dependencies. Replays check that the sampled
+  football outcomes still match the original build.

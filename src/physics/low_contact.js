@@ -1,5 +1,5 @@
 import { clampFinite as clamp, hypot as hyp } from "../core/math.js";
-// CHAOS v0.36.4q: physical foot-level obstacles, trips and airborne clearance.
+// Physical foot-level obstacles, trips and airborne clearance.
 // A jump only changes the runner's vertical foot clearance; it NEVER awards a
 // tackle break, freezes a defender, or grants a period of invulnerability.
 const isLowThreat = (p) =>

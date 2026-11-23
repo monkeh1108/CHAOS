@@ -1,5 +1,5 @@
 import { clamp } from "../core/math.js";
-// v0.35.2: live ball-carrier pursuit with assignment-based edge containment.
+// Live ball-carrier pursuit with assignment-based edge containment.
 // PUR (pursuit) and PRC (play recognition) *both* govern angle quality.
 // Stable, per-snap misreads make lower-rated defenders imperfect without
 // re-rolling a random angle every animation frame or peeking at play calls.
@@ -47,7 +47,7 @@ function plan(
     return base;
   const sep = Math.hypot(carrier.x - defender.x, carrier.y - defender.y);
   // At tackling range: finish the contact rather than aim for a speculative
-  // lane. This also protects the rear-contact tackle fix from v0.34.8.
+  // lane and stay on the runner's reachable tackle angle.
   if (sep < 4.6) return { ...base, retreatRead: false };
   const baseQuality = quality(defender);
   const center = fieldWidth / 2,

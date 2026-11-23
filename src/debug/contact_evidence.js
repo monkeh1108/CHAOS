@@ -1,6 +1,6 @@
 import { AnatomyHitboxes } from "../physics/anatomy_hitboxes.js";
 
-// CHAOS v0.36.4e: original, dependency-free contact evidence system.
+// Original, dependency-free contact evidence system.
 // Observe true body-region intersections; NEVER award tackles or change velocity.
 const MAX = 160;
 export function createContactEvidenceState() {
@@ -56,7 +56,6 @@ export function createContactEvidence(state = createContactEvidenceState()) {
     if (!data().enabled) return [];
     data().tick++;
     const previous = new Map(before.map((p) => [p.key, p]));
-    const now = new Map(after.map((p) => [p.key, p]));
     const pairs = [];
     for (let i = 0; i < after.length; i++)
       for (let j = i + 1; j < after.length; j++) {

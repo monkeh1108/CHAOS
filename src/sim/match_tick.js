@@ -205,7 +205,7 @@ export function createMatchTick() {
         rbLeadBlock(o, dt);
       else AIroute(o, dt);
     }
-    for (let d of matchState.def) {
+    for (const d of matchState.def) {
       if (grounded.has(d.key)) continue;
       if (
         ["tackle-dive", "hit-stick", "cut-stick"].includes(d.action?.kind) &&

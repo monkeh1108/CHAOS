@@ -214,8 +214,8 @@ export function createGame(
   function closestThreat(p, filter) {
     let best = null,
       bd = 999;
-    for (let d of filter) {
-      let dd = dist(p, d);
+    for (const d of filter) {
+      const dd = dist(p, d);
       if (dd < bd) {
         bd = dd;
         best = d;

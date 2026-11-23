@@ -1,4 +1,3 @@
-import { clamp } from "../core/math.js";
 // A player's right to *choose* a pass-defense action is not the right to touch
 // the football. Ball flight, collision, leap height and ratings determine the
 // eventual attempt. This policy only finds plausible participants while the

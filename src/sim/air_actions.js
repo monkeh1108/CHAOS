@@ -46,7 +46,7 @@ export function createAirActions() {
     };
   }
 
-  // V30: visual feedback is a record of the user's actual action choice, not a
+  // Visual feedback is a record of the user's actual action choice, not a
   // promise that the resulting catch/swat/hurdle will succeed.
   const AIR_LABELS = {
     rac: "RAC",

@@ -322,7 +322,7 @@ export function createBallCarrier() {
       return;
     const p = matchState.ballCarrier || P("QB");
     if (!p || p.stam < 0.13) return;
-    let stick = stickInput(),
+    const stick = stickInput(),
       len = Math.hypot(stick.x, stick.y);
     let dx = len > 0.2 ? stick.x : Math.cos(p.face),
       dy = len > 0.2 ? stick.y : Math.sin(p.face);

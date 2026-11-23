@@ -3,6 +3,7 @@ import { clamp, distance2D as dist } from "../core/math.js";
 export function createReceiverFlight() {
   let catchReach, flightMarkers, matchState, maxSpeed, steer;
 
+  // Only receivers who can realistically reach the projected catch point join the contest.
   function receiverFlightAI(o, dt) {
     if (
       !matchState.ball?.flying ||

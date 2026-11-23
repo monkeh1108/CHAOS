@@ -9,6 +9,7 @@ export function createFieldRenderer({
   height: H,
   readState,
   queries,
+  reportDiagnostic,
 }) {
   const $ = (id) => document.getElementById(id);
   const ctx = canvas.getContext("2d");
@@ -51,7 +52,11 @@ export function createFieldRenderer({
     return visualMode;
   }
   function recoverFrom3DFailure(err) {
-    console.error("3D rendering failed; restoring visible 2D view", err);
+    reportDiagnostic?.(
+      "error",
+      "3D rendering failed; restoring visible 2D view",
+      err,
+    );
     renderer3d = null;
     setVisualMode("2d");
     const status = $("renderStatus3d");
@@ -68,7 +73,7 @@ export function createFieldRenderer({
     const xspan = H * ratio;
     const scale = fieldSize.h / H;
     const focus = ball?.flying ? ball : ballCarrier || P("QB") || active;
-    let desired =
+    const desired =
       phase === "presnap"
         ? isFreeKick(specialState)
           ? kickLineX(specialState)
@@ -89,27 +94,25 @@ export function createFieldRenderer({
   }
   function drawField(v) {
     const { playStart, first } = readState();
-    const s = v.px,
-      from = Math.max(0, Math.floor(v.left / 5) * 5),
-      to = Math.min(120, v.left + v.span);
+    const s = v.px;
     ctx.fillStyle = "#265b45";
     ctx.fillRect(0, 0, fieldSize.w, fieldSize.h);
     for (let x = 0; x < 120; x += 10) {
-      let [px] = xy(x, 0, v);
+      const [px] = xy(x, 0, v);
       ctx.fillStyle = (x / 10) % 2 ? "#2a6548" : "#2a6045";
       ctx.fillRect(px, 0, 10 * s, fieldSize.h);
     }
-    for (let x of [0, 110]) {
-      let [px] = xy(x, 0, v);
+    for (const x of [0, 110]) {
+      const [px] = xy(x, 0, v);
       ctx.fillStyle = "#1c3b52";
       ctx.fillRect(px, 0, 10 * s, fieldSize.h);
     }
     ctx.fillStyle = "#f6f8e5";
     ctx.globalAlpha = 0.7;
     for (let x = 10; x <= 110; x += 5) {
-      let [px] = xy(x, 0, v);
+      const [px] = xy(x, 0, v);
       ctx.fillRect(px - 0.06 * s, 0, 0.12 * s, fieldSize.h);
-      for (let y of [15, 38.3])
+      for (const y of [15, 38.3])
         ctx.fillRect(px - 0.48 * s, y * s, 0.96 * s, 0.1 * s);
     }
     ctx.globalAlpha = 1;
@@ -120,7 +123,7 @@ export function createFieldRenderer({
     ctx.fillStyle = "#ecfff5a3";
     for (let x = 20; x < 110; x += 10) {
       const yardLabel = 50 - Math.abs(60 - x);
-      let [px, py] = xy(x, 10, v);
+      const [px, py] = xy(x, 10, v);
       ctx.fillText(yardLabel, px, py);
       ctx.save();
       ctx.translate(px, 43 * s);
@@ -129,8 +132,8 @@ export function createFieldRenderer({
       ctx.restore();
     }
     ctx.restore();
-    for (let x of [playStart, first]) {
-      let [px] = xy(x, 0, v);
+    for (const x of [playStart, first]) {
+      const [px] = xy(x, 0, v);
       ctx.save();
       ctx.strokeStyle = x === first ? "#f8e765" : "#88bdfd";
       ctx.lineWidth = 2;
@@ -141,8 +144,8 @@ export function createFieldRenderer({
       ctx.stroke();
       ctx.restore();
     }
-    for (let x of [0, 110]) {
-      let [px, py] = xy(x + 5, H / 2, v);
+    for (const x of [0, 110]) {
+      const [px, py] = xy(x + 5, H / 2, v);
       ctx.save();
       ctx.translate(px, py);
       ctx.rotate(-Math.PI / 2);
@@ -225,7 +228,7 @@ export function createFieldRenderer({
     const { phase, gameStarted, controlMode, off, ballCarrier, intended } =
       readState();
     if (phase === "dead" || (gameStarted && controlMode === "defense")) return;
-    for (let p of off) {
+    for (const p of off) {
       if (!p.route || ballCarrier) continue;
       ctx.strokeStyle =
         p === intended ? "#e8ff91" : p.key === "TE" ? "#ffbf80" : "#d6f6f6";
@@ -783,7 +786,7 @@ export function createFieldRenderer({
         Math.sin(totalClock * 173) * shake * 7,
         Math.cos(totalClock * 157) * shake * 6,
       );
-    let v = view();
+    const v = view();
     drawField(v);
     if (!specialState) {
       drawAssignments(v);
@@ -791,13 +794,13 @@ export function createFieldRenderer({
     }
     drawContactLinks(v);
     drawPileOverlay(v);
-    for (let p of players.filter((q) => q.team === 1))
+    for (const p of players.filter((q) => q.team === 1))
       playerShape(p, v, markerCarrier);
-    for (let p of players.filter((q) => q.team === 0))
+    for (const p of players.filter((q) => q.team === 0))
       playerShape(p, v, markerCarrier);
     drawBall(v);
     if (phase === "presnap" && !specialState) {
-      let [x, y] = xy(playStart, 26.6, v);
+      const [x, y] = xy(playStart, 26.6, v);
       ctx.fillStyle = "#f8f1bf";
       ctx.font = "bold 12px ui-sans-serif";
       ctx.textAlign = "center";
@@ -871,7 +874,7 @@ export function createFieldRenderer({
     try {
       renderer3d = createGridironRenderer($("render3d"));
     } catch (e) {
-      console.warn("WebGL view unavailable; using 2D", e);
+      reportDiagnostic?.("warn", "WebGL view unavailable; using 2D", e);
     }
     $("render3d").addEventListener("webglcontextlost", (e) => {
       e.preventDefault();

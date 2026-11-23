@@ -40,7 +40,7 @@ function contact({
   helpers = 0,
   runner = null,
 }) {
-  const { advantage, power } = match(blocker, defender, helpers);
+  const { advantage } = match(blocker, defender, helpers);
   const dx = (defender.x || 0) - (blocker.x || 0),
     dy = (defender.y || 0) - (blocker.y || 0);
   const distance = Math.max(0.001, Math.hypot(dx, dy)),

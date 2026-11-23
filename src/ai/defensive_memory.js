@@ -1,4 +1,4 @@
-// v0.35.2: observed play history; only repeated, *completed* run-escape
+// Observed play history; only repeated, *completed* run-escape
 // patterns can inform live pursuit. No adaptive play-calling yet.
 // Records only revealed actions after the snap; never exposes a selected future play.
 const makeTeam = () => ({

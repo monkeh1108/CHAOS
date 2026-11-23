@@ -48,7 +48,7 @@ export function createPassControl() {
       matchState.passThrown ||
       matchState.ballCarrier ||
       !qb ||
-      qb.x <= matchState.playStart + 0.1
+      qb.x <= matchState.playStart
     )
       return false;
     matchState.pendingPass = null;

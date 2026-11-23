@@ -100,6 +100,8 @@ export function createPlaySetup() {
       passes: 0,
       lastScore: 0,
       lastRisk: 0,
+      runTarget: null,
+      pocketTarget: null,
     };
     matchState.lastContact = 0;
     matchState.playClock = 0;
@@ -114,7 +116,7 @@ export function createPlaySetup() {
     matchState.contactEnabled = true;
     const x = matchState.yard,
       ly = 26.65;
-    let qbdepth =
+    const qbdepth =
       matchState.selectedFormation === "iform"
         ? -1.6
         : matchState.selectedFormation === "ace"

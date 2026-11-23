@@ -175,7 +175,7 @@ export function createPlayerMovement() {
           (1 + spd * 0.065 + Math.max(0, p.h - 72) * 0.008)) *
         dt;
       p.face += clamp(faceDifference, -maxTurn, maxTurn);
-      // v0.26: a defender doesn't come to a virtual stop every time a
+      // A defender doesn't come to a virtual stop every time a
       // receiver catches a ball or the runner changes direction. Rotate some
       // *existing momentum* toward the new pursuit vector. The turn rate is
       // bounded by agility, pursuit skill, recognition, body mass and speed:
@@ -272,7 +272,7 @@ export function createPlayerMovement() {
         p.intent.startsWith("route") && p.routeBreakTime > 0
           ? clamp(0.93 + (p.CUT - 70) * 0.0048, 0.76, 1.07)
           : 1;
-      // v0.25: a small off-the-mark stride assist. It fades by jogging speed,
+      // A small off-the-mark stride assist. It fades by jogging speed,
       // so ACC still controls launch, SPD remains the absolute top-speed cap,
       // and a moving player receives no artificial speed boost.
       const earlyStride = 1 + 0.16 * clamp((3.2 - spd) / 3.2, 0, 1);
@@ -398,7 +398,7 @@ export function createPlayerMovement() {
       }
     }
 
-    let s = Math.hypot(vx, vy);
+    const s = Math.hypot(vx, vy);
     // Two genuine gears: steady running and full sprint. Releasing RT now
     // decreases the available speed, so a sprinting DB can gain ground on a
     // non-sprinting runner. This applies equally to human and AI athletes.

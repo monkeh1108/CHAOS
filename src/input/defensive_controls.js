@@ -1,4 +1,4 @@
-// V33: pure policy for the user's defensive face-button tackles.
+// Pure policy for the user's defensive face-button tackles.
 // No engine globals or physics mutations: proximity selects the animation/technique.
 export const DefensiveControls = Object.freeze({
   choose(button, distance, contactRadius) {
