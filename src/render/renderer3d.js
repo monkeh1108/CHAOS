@@ -288,15 +288,19 @@ export function createGridironRenderer(canvas) {
     const vertices = [];
     const sides = 10;
     const step = (2 * Math.PI) / sides;
-    const row = rings.map(([y, radius], i) => {
-      const [loY, loR] = rings[Math.max(0, i - 1)];
-      const [hiY, hiR] = rings[Math.min(rings.length - 1, i + 1)];
-      const slope = (loR - hiR) / (hiY - loY);
+    const row = rings.map(([y, width, depth = width], i) => {
+      const [loY, loWidth, loDepth = loWidth] = rings[Math.max(0, i - 1)];
+      const [hiY, hiWidth, hiDepth = hiWidth] =
+        rings[Math.min(rings.length - 1, i + 1)];
+      const widthSlope = (loWidth - hiWidth) / (hiY - loY);
+      const depthSlope = (loDepth - hiDepth) / (hiY - loY);
+      const aspect = width ? depth / width : 1;
       return Array.from({ length: sides }, (_, j) => {
         const angle = j * step;
         const x = Math.cos(angle),
           z = Math.sin(angle);
-        return [x * radius, y, z * radius, ...norm([x, slope, z])];
+        const slope = depthSlope * x * x + widthSlope * aspect * z * z;
+        return [x * depth, y, z * width, ...norm([x, slope, z * aspect])];
       });
     });
     for (let i = 0; i < row.length - 1; i++) {
@@ -352,11 +356,14 @@ export function createGridironRenderer(canvas) {
       [0.46, 0.34],
       [0.5, 0],
     ]),
+    // Keep width at the hip and the jersey overlap above it. The lower
+    // rings rise into the crotch and flatten the seat over the thigh roots.
     pelvis: profileMesh([
-      [-0.53, 0],
-      [-0.42, 0.35],
-      [-0.18, 0.5],
-      [0.09, 0.45],
+      [-0.37, 0],
+      [-0.3, 0.25, 0.24],
+      [-0.18, 0.43, 0.35],
+      [0.02, 0.48, 0.39],
+      [0.19, 0.41, 0.38],
       [0.36, 0.34],
       [0.49, 0.27],
       [0.57, 0],
@@ -378,12 +385,14 @@ export function createGridironRenderer(canvas) {
       [-0.055, 0.075],
       [0, 0.079],
       [0.055, 0.083],
-      [0.11, 0.095],
-      [0.18, 0.118],
+      // Taper the sides above the knee while retaining quadriceps depth.
+      [0.11, 0.09, 0.095],
+      [0.18, 0.105, 0.116],
       [0.3, 0.148],
-      [0.42, 0.145],
-      [0.54, 0.105],
-      [0.58, 0.064],
+      // Taper the hip attachment while retaining the muscle below it.
+      [0.42, 0.114, 0.124],
+      [0.54, 0.09, 0.103],
+      [0.58, 0.082],
     ]),
   };
   let markerDebug = {
@@ -862,13 +871,20 @@ export function createGridironRenderer(canvas) {
     sphere(head, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
     box(head, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
     box(head, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
+    const idleRoll =
+      pose.state === "idle" && !presnap && !pose.plant && !p.airState
+        ? 0.032 * breadth * Math.max(0, 1 - pose.speed / 0.9)
+        : 0;
     for (const side of [-1, 1]) {
       let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
       const footIndex = side < 0 ? 0 : 1;
       let leg = null;
       if (legWeight > 0) {
         const stride = runningLegTarget(cycle, cycle.pace, side, s);
-        const target = cut ? jukeLegTarget(cut, stride, side) : stride;
+        // Narrow new running targets without moving a locked plant or a juke target.
+        const target = cut
+          ? jukeLegTarget(cut, stride, side)
+          : { ...stride, lateral: -0.032 * breadth };
         leg = solveGroundedLeg(target, side, s, hip, state?.feet[footIndex]);
         feet[footIndex] = leg.plant;
       }
@@ -887,7 +903,8 @@ export function createGridironRenderer(canvas) {
           : 0) +
         (rise > 0 ? -0.22 * arc : 0) +
         (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-      if (leg) hip = mul(hip, rotX(leg.roll * legWeight));
+      const roll = (leg?.roll || 0) * legWeight + side * idleRoll;
+      if (roll) hip = mul(hip, rotX(roll));
       hip = mul(
         hip,
         rotZ(hipSwing * (1 - legWeight) + (leg?.hip || 0) * legWeight),
