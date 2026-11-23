@@ -6,7 +6,7 @@ def test_protection_switch(browser_session, standalone_html):
     args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-angle=swiftshader']
     with browser_session(headless=True, args=args) as b:
      for size in [1120,390]:
-      page=b.new_page(viewport={'width':size,'height':844});errors=[];page.on('pageerror',lambda e: errors.append(str(e)));page.set_content(h)
+      page=b.new_page(viewport={'width':size,'height':844});errors=[];page.on('pageerror',lambda e: errors.append(str(e)));page.set_content(h);page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
       # stable dedicated blockers and pressure call each front
       for front in ['nickel','base43','base34']:
        for pressure in ['balanced','blitz','stunt']:
@@ -30,7 +30,7 @@ def test_protection_switch(browser_session, standalone_html):
       a=page.evaluate('''()=>{let d=GRIDIRON_DEBUG;d.reset();d.setScheme('spread','nickel','cover1','balanced');d.select('verticals');d.snap();d.debugSetContactEnabled(false);d.step(25);d.passTo(1,.21);return d.getState()}''')
       assert a['ball'] and a['target']=='WR2' and a['active']==None,a
       page.evaluate('''()=>{window.fakePad={connected:true,index:0,id:'Xbox One test',mapping:'standard',axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,value:0}))};Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.fakePad]});window.fakePad.buttons[1]={pressed:true,value:1};}''')
-      page.wait_for_timeout(95)
+      page.wait_for_function("GRIDIRON_DEBUG.getState().manualReceiver")
       s=page.evaluate('GRIDIRON_DEBUG.getState()');assert s['manualReceiver'] and s['active']=='WR2',(size,s['active'],s['manualReceiver'])
       # Set a live airborne ball away from WR to keep play alive, directional control.
       page.evaluate('''()=>{window.fakePad.axes=[0.65,0,0,0];}''')

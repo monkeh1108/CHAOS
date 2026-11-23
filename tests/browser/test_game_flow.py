@@ -11,7 +11,7 @@ def test_game_flow(browser_session, standalone_html):
       page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')");page.wait_for_timeout(200)
       d='GRIDIRON_DEBUG'
       s=page.evaluate(f'{d}.getMatch()')
-      assert s['quarter']==1 and s['quarterSeconds']==900 and s['teamPoints']==[0,0] and s['specialState']['kind']=='kickoff',s
+      assert s['quarter']==1 and s['quarterSeconds']==page.evaluate(f'{d}.getQuarterDuration()') and s['teamPoints']==[0,0] and s['specialState']['kind']=='kickoff',s
       assert page.locator('#callSheet.visible').count()==1
       print(width,'opening',s['specialState']['kind'],'view',page.evaluate(f'{d}.getState().viewMode'))
       page.locator('#sheetSnap').click();s=page.evaluate(f'{d}.getState()')

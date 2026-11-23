@@ -9,7 +9,7 @@ def test_controller_cpu_rush(browser_session, standalone_html):
       page=browser.new_page(viewport={'width':width,'height':820})
       errors=[]
       page.on('pageerror',lambda e: errors.append(str(e)))
-      page.set_content(HTML,wait_until='load')
+      page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
       page.wait_for_timeout(90)
       D='GRIDIRON_DEBUG'
       state=lambda:page.evaluate(f'{D}.getState()')

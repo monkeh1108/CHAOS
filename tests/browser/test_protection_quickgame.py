@@ -17,8 +17,8 @@ def test_protection_quickgame(browser_session, standalone_html):
       assert normal is None or not normal.get('recognized'),normal
       # Move the safety close to the LOS before the snap, regardless of its hidden play call.
       spotted=[]
-      for i in range(12):
-       page.evaluate('GRIDIRON_DEBUG.reset();GRIDIRON_DEBUG.debugDefensePresnap()')
+      for seed in range(1, 49):
+       page.evaluate('seed => { GRIDIRON_DEBUG.reset(); GRIDIRON_DEBUG.debugSeed(seed); GRIDIRON_DEBUG.debugDefensePresnap(); }', seed)
        state=page.evaluate('GRIDIRON_DEBUG.getState()')
        safety=next(x for x in state['players'] if x['key']=='FS')
        assert page.evaluate(f'GRIDIRON_DEBUG.debugPositionDefender("FS",{state["yard"]+2.0},{safety["y"]})')
@@ -34,6 +34,8 @@ def test_protection_quickgame(browser_session, standalone_html):
       assert q==2,('Q1->Q2',q)
       page.evaluate('GRIDIRON_DEBUG.debugSetQuarterTime(0)')
       page.wait_for_timeout(160)
+      assert page.evaluate('GRIDIRON_DEBUG.getMatch().phase') == 'halftime'
+      page.get_by_role('button', name='START THIRD QUARTER', exact=True).click()
       state=page.evaluate('GRIDIRON_DEBUG.getMatch()')
       assert state['quarter']==3 and state['specialState']['kind']=='kickoff',state
       assert not errors,errors

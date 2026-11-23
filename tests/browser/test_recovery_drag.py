@@ -1,6 +1,18 @@
 """Regression: special teams advances ground recovery; a rear wrap ends a return."""
 
 
+START_LIVE_RETURN = """function startLiveReturn(g) {
+    g.newGame();
+    g.debugFinishCoinToss('heads', 'receive');
+    g.debugSetContactEnabled(false);
+    g.debugSeed(3);
+    g.startKick();
+    const kick=g.getMatch().specialState;
+    g.debugMovePlayer('RB',kick.landingX,kick.targetY);
+    for(let i=0;i<240 && !g.getMatch().specialState?.returning && g.getState().phase==='live';i++)g.step(1);
+} """
+
+
 def test_recovery_drag(browser_session, standalone_html):
     html=standalone_html
     with browser_session(headless=True, args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-angle=swiftshader']) as browser:
@@ -10,8 +22,9 @@ def test_recovery_drag(browser_session, standalone_html):
       page.on('pageerror',lambda e:errors.append(str(e)))
       page.set_content(html,wait_until='load')
       result=page.evaluate('''() => {
+    ''' + START_LIVE_RETURN + '''
     const g=GRIDIRON_DEBUG;
-    g.newGame();g.startKick();g.step(200);
+    startLiveReturn(g);
     let s=g.getState();
     if(s.phase!=='live'||s.ballCarrier!=='RB')return {error:'return not live',phase:s.phase,match:g.getMatch()};
     // Representative first-contact knockdown on the outside coverage player.
@@ -22,12 +35,15 @@ def test_recovery_drag(browser_session, standalone_html):
     const after=g.getState().players.find(p=>p.key==='CB1');
     return {knocked,before:before.ground,after:after.ground,afterIntent:after.intent,phase:g.getState().phase};
   }''')
+      assert 'error' not in result,(width,result)
       assert result['knocked'],(width,result)
       assert result['before'],(width,result)
       assert result['after'] is None or result['after']['age'] >= .9,(width,result)
       # Separate isolated return; ensure close pursuit isn't lost to prior contacts.
       outcome=page.evaluate('''() => {
-    const g=GRIDIRON_DEBUG;g.newGame();g.startKick();g.step(200);
+    ''' + START_LIVE_RETURN + '''
+    const g=GRIDIRON_DEBUG;
+    startLiveReturn(g);
     if(g.getState().phase!=='live')return {error:'no live return'};
     g.debugSetContactEnabled(true);
     g.debugMovePlayer('RB',70,25);g.debugSetStamina('RB',.10);g.debugSetVelocity('RB',3.1,0);
