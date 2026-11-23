@@ -8,7 +8,6 @@ export function createQuarterback() {
     maxSpeed,
     convertQuarterbackScramble,
     acceleration,
-    closestThreat,
     dispatchInput,
     eligibleTargets,
     log,
@@ -236,18 +235,27 @@ export function createQuarterback() {
     const targets = eligibleTargets();
     if (matchState.playClock >= matchState.cpuQB.nextRead) {
       const bodies = matchState.players.filter((p) => p !== qb && !p.ground);
-      const activeRush = matchState.def.filter(
-        (d) =>
-          !d.ground &&
-          (d.rush ||
-            (dist(d, qb) < 5.8 &&
-              d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) >
-                Math.max(0.6, dist(d, qb) * 0.42))),
-      );
-      const rush = closestThreat(qb, activeRush);
-      const protectedRush = rush.p?.blocked > 0 && rush.d > 2.4;
-      const pressure =
-        clamp((5.2 - rush.d) / 4.7, 0, 1) * (protectedRush ? 0.55 : 1);
+      let rush = { player: null, distance: Infinity, pressure: 0 };
+      // Rank by effective pressure so an engaged defender cannot hide a free rusher.
+      for (const d of matchState.def) {
+        if (d.ground) continue;
+        const distance = dist(d, qb);
+        const closing = d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y);
+        if (
+          !d.rush &&
+          (distance >= 5.8 || closing <= Math.max(0.6, distance * 0.42))
+        )
+          continue;
+        const protectedRush = d.blocked > 0 && distance > 2.4;
+        const pressure =
+          clamp((5.2 - distance) / 4.7, 0, 1) * (protectedRush ? 0.55 : 1);
+        if (
+          pressure > rush.pressure ||
+          (pressure === rush.pressure && distance < rush.distance)
+        )
+          rush = { player: d, distance, pressure };
+      }
+      const { pressure } = rush;
       matchState.cpuQB.reads++;
       const patience = (qb.PAT - 65) * 0.009;
       const timeDemand =
@@ -296,7 +304,8 @@ export function createQuarterback() {
           CpuQBPolicy.dangerLimit(qb.VIS) +
             risk * (singleCoverage ? 0.6 : 0.18) &&
         chosen.openness > (singleCoverage ? 0.22 - risk * 0.35 : 0.22);
-      const emergency = pressure > 0.79 + (qb.BSK - 65) * 0.004 && rush.d < 2.3;
+      const emergency =
+        pressure > 0.79 + (qb.BSK - 65) * 0.004 && rush.distance < 2.3;
       const expired = matchState.playClock > Math.max(4.7, timeDemand + 2.6);
       const lane =
         matchState.playClock > 1 ? quarterbackLane(qb, bodies) : null;
@@ -351,7 +360,7 @@ export function createQuarterback() {
           qb,
           bodies,
           pressure,
-          rush.p,
+          rush.player,
         );
       }
     }
@@ -383,7 +392,6 @@ export function createQuarterback() {
         maxSpeed,
         convertQuarterbackScramble,
         acceleration,
-        closestThreat,
         dispatchInput,
         eligibleTargets,
         log,

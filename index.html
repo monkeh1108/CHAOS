@@ -7726,7 +7726,7 @@
 
   // src/ai/quarterback.js
   function createQuarterback() {
-    let H2, arrive, radius, maxSpeed, convertQuarterbackScramble, acceleration, closestThreat, dispatchInput, eligibleTargets, log, matchState, projectedReceiver, speed, sprintHeld, steer, stickInput;
+    let H2, arrive, radius, maxSpeed, convertQuarterbackScramble, acceleration, dispatchInput, eligibleTargets, log, matchState, projectedReceiver, speed, sprintHeld, steer, stickInput;
     function quarterbackWindow(qb, rec) {
       const rough = Math.max(0.35, Math.hypot(rec.x - qb.x, rec.y - qb.y) / 23);
       const predicted = projectedReceiver(rec, clamp(rough * 1.35, 0.4, 2));
@@ -7878,12 +7878,19 @@
       const targets = eligibleTargets();
       if (matchState.playClock >= matchState.cpuQB.nextRead) {
         const bodies = matchState.players.filter((p) => p !== qb && !p.ground);
-        const activeRush = matchState.def.filter(
-          (d) => !d.ground && (d.rush || distance2D(d, qb) < 5.8 && d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y) > Math.max(0.6, distance2D(d, qb) * 0.42))
-        );
-        const rush = closestThreat(qb, activeRush);
-        const protectedRush = rush.p?.blocked > 0 && rush.d > 2.4;
-        const pressure = clamp((5.2 - rush.d) / 4.7, 0, 1) * (protectedRush ? 0.55 : 1);
+        let rush = { player: null, distance: Infinity, pressure: 0 };
+        for (const d of matchState.def) {
+          if (d.ground) continue;
+          const distance2 = distance2D(d, qb);
+          const closing = d.vx * (qb.x - d.x) + d.vy * (qb.y - d.y);
+          if (!d.rush && (distance2 >= 5.8 || closing <= Math.max(0.6, distance2 * 0.42)))
+            continue;
+          const protectedRush = d.blocked > 0 && distance2 > 2.4;
+          const pressure2 = clamp((5.2 - distance2) / 4.7, 0, 1) * (protectedRush ? 0.55 : 1);
+          if (pressure2 > rush.pressure || pressure2 === rush.pressure && distance2 < rush.distance)
+            rush = { player: d, distance: distance2, pressure: pressure2 };
+        }
+        const { pressure } = rush;
         matchState.cpuQB.reads++;
         const patience = (qb.PAT - 65) * 9e-3;
         const timeDemand = CpuQBPolicy.minimumSettle(matchState.selectedPlay, qb.DEC, qb.VIS) + patience;
@@ -7908,7 +7915,7 @@
         );
         const singleCoverage = chosen?.inside === 1 && chosen.range > 15;
         const readable = chosen && perceivedScore(chosen) > CpuQBPolicy.selectThreshold(qb.DEC, qb.VIS) && chosen.danger < CpuQBPolicy.dangerLimit(qb.VIS) + risk * (singleCoverage ? 0.6 : 0.18) && chosen.openness > (singleCoverage ? 0.22 - risk * 0.35 : 0.22);
-        const emergency = pressure > 0.79 + (qb.BSK - 65) * 4e-3 && rush.d < 2.3;
+        const emergency = pressure > 0.79 + (qb.BSK - 65) * 4e-3 && rush.distance < 2.3;
         const expired = matchState.playClock > Math.max(4.7, timeDemand + 2.6);
         const lane2 = matchState.playClock > 1 ? quarterbackLane(qb, bodies) : null;
         const runValue = lane2 ? lane2.value + Math.min(lane2.gain, matchState.togo) * 0.28 + pressure * 5 : 0;
@@ -7933,7 +7940,7 @@
             qb,
             bodies,
             pressure,
-            rush.p
+            rush.player
           );
         }
       }
@@ -7961,7 +7968,6 @@
           maxSpeed,
           convertQuarterbackScramble,
           acceleration,
-          closestThreat,
           dispatchInput,
           eligibleTargets,
           log,
