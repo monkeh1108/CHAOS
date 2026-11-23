@@ -74,3 +74,17 @@ secure and the expression that uses the difficulty.
 
 Find `playSelectionChanged` in `src/engine.js` and `src/ui/game_hud.js`. Follow
 the play name from the engine to the button the browser highlights.
+
+## Checkpoint 7
+
+- **Match state** is the information the next tick needs, including the
+  clock, ball and players, active tackles, and random sequence.
+- **Serialization** turns that information into data that can be saved or
+  sent. The snapshot preserves shared references so a runner still refers
+  to the same athlete in both the roster and the tackle links.
+- An explicit **seed** lets you replay the same setup and decisions. The
+  snapshot keeps the current random sequence so a restored game continues
+  from the same point.
+
+In `tests/integration/match_snapshot.test.js`, follow the pass from release
+through saving, restoring into a fresh game, and comparing subsequent events.

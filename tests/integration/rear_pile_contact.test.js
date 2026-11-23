@@ -41,10 +41,10 @@ assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 // Set fixture inputs and inspect closure state without changing production debug controls.
 vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
  window.fixture = {
-  neutral() {controlMode='offense';manualDrive=true;suppressManualUntilNeutral=false;},
-  input(value) {keys.arrowright=value;},
-  time() {return playClock;},
-  contacts() {return Object.fromEntries(liveTackleContacts);},
+  neutral() {matchState.controlMode='offense';matchState.manualDrive=true;matchState.suppressManualUntilNeutral=false;},
+  input(value) {matchState.keys.arrowright=value;},
+  time() {return matchState.playClock;},
+  contacts() {return Object.fromEntries(matchState.liveTackleContacts);},
   missDive(key) {
    P(key).action={kind:'tackle-dive',time:.01,age:.52,used:false};
    P(key).diveRecovery=1.2;
