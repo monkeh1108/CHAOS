@@ -731,11 +731,11 @@
   }
   function reachEligible(d, r, controlledGroundReach) {
     if (!d.ground) return true;
-    if (controlledGroundReach && (d.ground.stage !== "winded" || d.ground.ankleAttempted || (d.ground.age || 0) < (d.ground.fall || 0) + 0.1 || d.stun > 0.12)) return false;
+    if (controlledGroundReach && (d.ground.stage !== "winded" || d.ground.ankleAttempted || (d.ground.age || 0) < (d.ground.fall || 0) || d.stun > 0.12)) return false;
     const dx = r.x - d.x, dy = r.y - d.y, dist = hypot(dx, dy);
-    if (dist > (controlledGroundReach ? 1.18 : 1.62)) return false;
+    if (dist > (controlledGroundReach ? 1.34 : 1.62)) return false;
     const facing = (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) / Math.max(0.01, dist);
-    return facing > (controlledGroundReach ? 0.12 : -0.32) && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
+    return facing > (controlledGroundReach ? 0 : -0.32) && d.ground.stage !== "rise" && (d.TAK || 65) > 45;
   }
   function sweep(a0, a1, b0, b1) {
     const rx = a0.x - b0.x, ry = a0.y - b0.y;

@@ -34,7 +34,7 @@ test("a grounded defender has to settle and face the runner before reaching once
     return ChaosLowContact.evaluate(runner, runner, d, d, true).hit;
   };
   assert.equal(reaches({ stage: "fall", age: 0.12, fall: 0.18 }), false);
-  assert.equal(reaches({ stage: "winded", age: 0.2, fall: 0.18 }), false);
+  assert.equal(reaches({ stage: "winded", age: 0.17, fall: 0.18 }), false);
   assert.equal(reaches({ stage: "winded", age: 0.33, fall: 0.18 }, 0), false);
   assert.equal(reaches({ stage: "winded", age: 0.33, fall: 0.18 }), true);
   assert.equal(reaches({ stage: "winded", age: 0.33, fall: 0.18, ankleAttempted: true }), false);

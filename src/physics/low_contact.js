@@ -37,17 +37,17 @@ function reachEligible(d, r, controlledGroundReach) {
   if (controlledGroundReach && (
     d.ground.stage !== "winded" ||
     d.ground.ankleAttempted ||
-    (d.ground.age || 0) < (d.ground.fall || 0) + 0.1 ||
+    (d.ground.age || 0) < (d.ground.fall || 0) ||
     d.stun > 0.12
   )) return false;
   const dx = r.x - d.x,
     dy = r.y - d.y,
     dist = hyp(dx, dy);
-  if (dist > (controlledGroundReach ? 1.18 : 1.62)) return false;
+  if (dist > (controlledGroundReach ? 1.34 : 1.62)) return false;
   const facing =
     (Math.cos(d.face || 0) * dx + Math.sin(d.face || 0) * dy) /
     Math.max(0.01, dist);
-  return facing > (controlledGroundReach ? 0.12 : -0.32) &&
+  return facing > (controlledGroundReach ? 0 : -0.32) &&
     d.ground.stage !== "rise" && (d.TAK || 65) > 45;
 }
 // Predict closest relative approach within the step to prevent ankle tunneling.
