@@ -53,7 +53,7 @@ const html = fs.readFileSync(process.argv[2] || path.join(__dirname, '../../inde
 const script = html.replace(/\r\n/g, '\n').split('<script>')[1].split('</script>')[0];
 const withoutLab = script.replace(/\bmountContactLab\(\);/, '');
 assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
-vm.runInContext(withoutLab.replace(/window\.GRIDIRON_DEBUG\s*=\s*\{/,
+vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/,
  `
  window.renderFrame = render;
  window.startKickoff = () => setupKickoff(0);
@@ -66,7 +66,7 @@ vm.runInContext(withoutLab.replace(/window\.GRIDIRON_DEBUG\s*=\s*\{/,
  };
  window.turnover = () => newPossession(1, 30);
  window.setFormation = formation => { selectedFormation = formation; setup(); };
- window.GRIDIRON_DEBUG={`), sandbox);
+ const debug = {`), sandbox);
 const g = sandbox.GRIDIRON_DEBUG;
 
 const node = id => sandbox.document.getElementById(id);

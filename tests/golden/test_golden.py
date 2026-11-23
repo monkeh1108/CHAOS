@@ -26,7 +26,8 @@ window.goldenOriginalRandom = Math.random;
 Math.random = () => 431 / 4294967296;
 window.requestAnimationFrame = () => 0;
 </script>"""
-    driver = (HERE / "scenarios.js").read_text(encoding="utf-8")
+    replay = (HERE / "match_replay.js").read_text(encoding="utf-8")
+    driver = replay + "\n" + (HERE / "scenarios.js").read_text(encoding="utf-8")
     if "<script>" not in html or "</body>" not in html:
         raise ValueError("Expected the standalone CHAOS HTML")
     page = html.replace("<script>", setup + "<script>", 1)

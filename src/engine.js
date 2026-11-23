@@ -37,15 +37,11 @@ import { ChaosTackleEscape } from "./physics/tackle_escape.js";
 import { ChaosTackleReengagement } from "./physics/tackle_reengagement.js";
 import { ChaosTackleStruggle } from "./physics/tackle_struggle.js";
 import { ChaosContactFeedback } from "./render/contact_feedback_policy.js";
-import { createGridironRenderer } from "./render/renderer3d.js";
 import { specialTeams } from "./sim/special_teams.js";
 import { PlaybookNavigation } from "./ui/playbook_navigation.js";
 
-(() => {
-  const $ = (id) => document.getElementById(id),
-    canvas = $("field"),
-    ctx = canvas.getContext("2d"),
-    W = 120,
+export function createGame({ attach, onEvent } = {}) {
+  const W = 120,
     H = 53.333,
     G = 10.73,
     YARD_M = 0.9144,
@@ -799,54 +795,6 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     playTrace.push(sample);
     if (playTrace.length > 1200) playTrace.shift();
   }
-  function downloadTrace() {
-    if (!playTrace.length || !lastTraceMeta) return;
-    const payload = {
-      format: "gridiron-lab-play-trace-v1",
-      samplingHz: 10,
-      description:
-        "Own game simulation data only. No footage, files, or background screen capture.",
-      ...lastTraceMeta,
-      players: players.map((p) => ({
-        key: p.key,
-        name: p.name,
-        pos: p.pos,
-        team: p.team,
-        h: p.h,
-        w: p.w,
-        SPD: p.SPD,
-        ACC: p.ACC,
-        STA: p.STA,
-        PUR: p.PUR,
-        PRC: p.PRC,
-        COV: p.COV,
-        RTE: p.RTE,
-        CUT: p.CUT,
-        DBL: p.DBL,
-        REL: p.REL,
-        HND: p.HND,
-        PRS: p.PRS,
-        JAM: p.JAM,
-        MIR: p.MIR,
-        RCR: p.RCR,
-        DIS: p.DIS,
-      })),
-      samples: playTrace,
-      events: logs,
-    };
-    const blob = new Blob([JSON.stringify(payload)], {
-      type: "application/json",
-    });
-    const uri = URL.createObjectURL(blob),
-      a = document.createElement("a");
-    a.href = uri;
-    a.download =
-      "gridiron_play_trace_" + lastTraceMeta.play + "_" + Date.now() + ".json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(uri), 2500);
-  }
 
   // Contact constraints run at 60Hz. This is deliberately a simple 2D rigid-body
   // approximation, NOT animation-dependent collision outcomes or 3D ragdolls.
@@ -978,7 +926,6 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     passThrown = false,
     result = "",
     playStart = 30,
-    camera = 30,
     lastContact = 0,
     msg = "",
     logs = [],
@@ -991,7 +938,6 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     confetti = [],
     shake = 0,
     offset = 0,
-    fieldSize = { w: 1, h: 1 },
     joystick = { x: 0, y: 0, active: false, pointer: null },
     mobile = false,
     manualDrive = false,
@@ -1022,8 +968,6 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       drops: 0,
       complete: 0,
     };
-  let visualMode = "3d",
-    renderer3d = null;
   // V31: a game state wrapped around the existing physical scrimmage engine.
   // x=10 is the offense's own goal line, x=110 is its opponent's goal line;
   // on change of possession, field coordinates are mirrored (120 - x).
@@ -1129,12 +1073,12 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         : rand() < 0.58
           ? "spread"
           : "bunch";
-    document
-      .querySelectorAll(".play")
-      .forEach((b) =>
-        b.classList.toggle("selected", b.dataset.play === selectedPlay),
-      );
-    $("formation").value = selectedFormation;
+    emitPresentation({ type: "playSelectionChanged", play: selectedPlay });
+    emitPresentation({
+      type: "selectionChanged",
+      key: "formation",
+      value: selectedFormation,
+    });
     return selectedPlay;
   }
   function clockText(seconds) {
@@ -1159,13 +1103,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   function setResultUI(heading, detail, action = "NEXT PLAY") {
     result = heading;
     message("<strong>" + heading + ".</strong> " + detail);
-    $("resultText").textContent = heading;
-    $("resultDetail").textContent = detail;
-    $("overlay").classList.add("visible");
-    $("targets").style.display = "none";
-    $("receiverPins").style.display = "none";
-    $("snap").disabled = false;
-    $("snap").textContent = action;
+    emitPresentation({ type: "resultShown", heading, detail, action });
     log(heading + " · " + detail);
   }
   function audibleChoices() {
@@ -1183,24 +1121,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     }));
   }
   function renderAudibles() {
-    const menu = $("audibleMenu");
-    if (!menu) return;
-    menu.classList.toggle("visible", audibleOpen);
-    menu.setAttribute("aria-hidden", String(!audibleOpen));
-    if (!audibleOpen) return;
-    $("audibleHeading").textContent =
-      (controlMode === "defense" ? "DEFENSIVE" : "OFFENSIVE") +
-      " AUDIBLES · " +
-      (controlMode === "defense"
-        ? selectedFront
-        : selectedFormation
-      ).toUpperCase();
-    $("audibleOptions").innerHTML = audibleChoices()
-      .map(
-        (o, i) =>
-          `<button type="button" data-audible="${i}"><b>${AUDIBLE_BUTTONS[i]} · ${o.label}</b><small>${o.play || o.coverage + " / " + o.pressure}</small></button>`,
-      )
-      .join("");
+    emitPresentation({ type: "audiblesChanged" });
   }
   function closeAudibles() {
     audibleOpen = false;
@@ -1228,16 +1149,20 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     if (controlMode === "defense") {
       coveragePreference = option.coverage;
       pressurePreference = option.pressure;
-      $("coverage").value = coveragePreference;
-      $("pressure").value = pressurePreference;
+      emitPresentation({
+        type: "selectionChanged",
+        key: "coverage",
+        value: coveragePreference,
+      });
+      emitPresentation({
+        type: "selectionChanged",
+        key: "pressure",
+        value: pressurePreference,
+      });
       setup();
     } else {
       selectedPlay = option.play;
-      document
-        .querySelectorAll(".play")
-        .forEach((b) =>
-          b.classList.toggle("selected", b.dataset.play === selectedPlay),
-        );
+      emitPresentation({ type: "playSelectionChanged", play: selectedPlay });
       setup();
     }
     playSeconds = remaining;
@@ -1249,147 +1174,8 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   function showPlaybook() {
     closeAudibles();
     if (phase !== "presnap" || matchOver) return;
-    const box = $("callSheet"),
-      list = $("callSheetPlays");
-    const heading = $("callSheetHeading"),
-      sub = $("callSheetSub");
-    $("sheetToolbar").style.display =
-      !specialState && !tryState && possession === 0 ? "flex" : "none";
-    $("sheetFormation").value = selectedFormation;
-    if (isFreeKick(specialState)) {
-      heading.textContent =
-        (specialState.kind === "safety-kick" ? "SAFETY FREE KICK · " : "") +
-        (possession === 0 ? "RETURN KICKOFF" : "KICKOFF COVERAGE") +
-        " · " +
-        TEAM_NAMES[specialState.kickingTeam] +
-        " kicking";
-      sub.textContent =
-        "Kicker determines landing location · " +
-        TEAM_NAMES[possession] +
-        " receiving · " +
-        TEAM_STYLES[possession].identity;
-      list.innerHTML =
-        possession === 0
-          ? ["left", "middle", "right"]
-              .map(
-                (v) =>
-                  `<button type="button" class="sheetPick ${returnCall === v ? "active" : ""}" data-returncall="${v}"><b>RETURN ${v.toUpperCase()}</b><small>Blocking wedge attacks the ${v} return lane · kick location is not selectable</small></button>`,
-              )
-              .join("")
-          : '<button type="button" class="sheetPick special active" data-kickready="1"><b>KICKOFF COVERAGE</b><small>On-field kicker chooses spot from KPW / KAC · pursue the returner after landing</small></button>';
-    } else if (tryState && !tryState.mode) {
-      heading.textContent = "AFTER TOUCHDOWN · " + TEAM_NAMES[possession];
-      sub.textContent =
-        "Touchdown = 6 · choose a 33-yard extra-point kick or a 2-point play from the 2";
-      list.innerHTML =
-        '<button type="button" class="sheetPick" data-special="pat"><b>EXTRA POINT</b><small>Kick · 1 point</small></button><button type="button" class="sheetPick" data-special="two"><b>GO FOR TWO</b><small>Run or pass · 2 points</small></button>';
-    } else {
-      heading.textContent =
-        (possession === 0 ? "CALL A PLAY" : "CALL YOUR DEFENSE") +
-        " · " +
-        TEAM_NAMES[possession];
-      sub.textContent = `${TEAM_STYLES[possession].identity} · Q${quarter} ${clockText(quarterSeconds)} · ${down}${["", "st", "nd", "rd", "th"][down] || "th"} & ${Math.max(1, Math.ceil(togo))} · ${spotText()} · ${clockText(playSeconds)} play clock`;
-      if (possession === 1) {
-        sub.textContent +=
-          " · DEFENSE: " + defenseDesc[selectedFront] + " · LB/RB CHANGE FRONT";
-        list.innerHTML =
-          '<div class="callSheetGroup">COVERAGE</div>' +
-          ["mix", "cover1", "cover2", "cover3", "quarters"]
-            .map(
-              (v) =>
-                `<button type="button" class="sheetPick ${coveragePreference === v ? "active" : ""}" data-defense-coverage="${v}"><b>${v === "mix" ? "MIX COVERAGES" : v.toUpperCase()}</b><small>${v === "mix" ? "Adaptive mix of coverage calls" : coverageDesc[v]}</small></button>`,
-            )
-            .join("") +
-          '<div class="callSheetGroup">PRESSURE</div>' +
-          ["mix", "balanced", "contain", "spy", "blitz", "stunt"]
-            .map(
-              (v) =>
-                `<button type="button" class="sheetPick ${pressurePreference === v ? "active" : ""}" data-defense-pressure="${v}"><b>${v.toUpperCase()}</b><small>${v === "mix" ? "Vary rush lanes and calls" : pressureDesc[v]}</small></button>`,
-            )
-            .join("");
-      } else
-        list.innerHTML =
-          ["RUN", "PASS"]
-            .map(
-              (group) =>
-                '<div class="callSheetGroup">' +
-                group +
-                " CONCEPTS</div>" +
-                [...document.querySelectorAll(".play[data-play]")]
-                  .filter((btn) =>
-                    group === "RUN"
-                      ? RUNS.has(btn.dataset.play)
-                      : !RUNS.has(btn.dataset.play),
-                  )
-                  .map(
-                    (btn) =>
-                      `<button type="button" class="sheetPick ${selectedPlay === btn.dataset.play ? "active" : ""}" data-sheetplay="${btn.dataset.play}"><b>${btn.querySelector(".name")?.textContent || btn.dataset.play}</b><small>${btn.querySelector(".ptype")?.textContent || ""}</small></button>`,
-                  )
-                  .join(""),
-            )
-            .join("") +
-          (down === 4
-            ? `<button type="button" class="sheetPick special" data-special="punt"><b>PUNT</b><small>Fourth-down kick / live return</small></button><button type="button" class="sheetPick special" data-special="fg"><b>FIELD GOAL</b><small>${Math.round(110 - yard + 17)}-yard attempt · 3 points</small></button>`
-            : "");
-    }
-    box.classList.add("visible");
     playbookOpen = true;
-    focusSheetItem(sheetFocusIndex);
-  }
-  // Highlighting and invocation are independent of formation/coverage code.
-  function sheetOptions() {
-    return [...$("callSheetPlays").querySelectorAll("button.sheetPick")];
-  }
-  function focusSheetItem(index) {
-    const items = sheetOptions();
-    if (!items.length) {
-      sheetFocusIndex = 0;
-      return false;
-    }
-    if (sheetFocusKey) {
-      const saved = items.findIndex(
-        (el) =>
-          sheetFocusKey === el.dataset.sheetplay ||
-          sheetFocusKey === el.dataset.returncall ||
-          sheetFocusKey === el.dataset.defenseCoverage ||
-          sheetFocusKey === el.dataset.defensePressure,
-      );
-      if (saved >= 0) index = saved;
-    }
-    sheetFocusIndex = Math.max(0, Math.min(items.length - 1, index));
-    items.forEach((el, i) => {
-      el.classList.toggle("padFocus", i === sheetFocusIndex);
-      el.setAttribute("aria-current", i === sheetFocusIndex ? "true" : "false");
-    });
-    items[sheetFocusIndex].scrollIntoView?.({
-      block: "nearest",
-      inline: "nearest",
-    });
-    return true;
-  }
-  function moveSheetFocus(direction) {
-    const length = sheetOptions().length,
-      cols = window.innerWidth <= 620 ? 2 : 3;
-    sheetFocusKey = "";
-    return focusSheetItem(
-      PlaybookNavigation.move(sheetFocusIndex, length, cols, direction),
-    );
-  }
-  function chooseSheetFocused() {
-    const selected = sheetOptions()[sheetFocusIndex];
-    if (!selected) return false;
-    if (selected.classList.contains("active") && isFreeKick(specialState)) {
-      snap();
-      return true;
-    }
-    sheetFocusKey =
-      selected.dataset.sheetplay ||
-      selected.dataset.returncall ||
-      selected.dataset.defenseCoverage ||
-      selected.dataset.defensePressure ||
-      "";
-    selected.click();
-    return true;
+    emitPresentation({ type: "playbookShown" });
   }
   function cycleSheetFormation(direction) {
     if (phase !== "presnap" || specialState || tryState) return false;
@@ -1399,15 +1185,27 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         selectedFront,
         direction,
       );
-      $("front").value = selectedFront;
+      emitPresentation({
+        type: "selectionChanged",
+        key: "front",
+        value: selectedFront,
+      });
     } else {
       selectedFormation = PlaybookNavigation.cycle(
         ["spread", "trips", "ace", "iform", "bunch", "pistol"],
         selectedFormation,
         direction,
       );
-      $("formation").value = selectedFormation;
-      $("sheetFormation").value = selectedFormation;
+      emitPresentation({
+        type: "selectionChanged",
+        key: "formation",
+        value: selectedFormation,
+      });
+      emitPresentation({
+        type: "selectionChanged",
+        key: "sheetFormation",
+        value: selectedFormation,
+      });
     }
     const remaining = playSeconds,
       wasCalled = scrimmagePlayCalled;
@@ -1419,24 +1217,14 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   }
   function hidePlaybook() {
     playbookOpen = false;
-    $("callSheet").classList.remove("visible");
+    emitPresentation({ type: "playbookHidden" });
   }
   function tossScreen(title, description, buttons) {
-    const root = $("coinToss");
-    root.hidden = false;
-    $("coinTossTitle").textContent = title;
-    $("coinTossText").textContent = description;
-    const options = $("coinTossOptions");
-    options.replaceChildren();
-    buttons.forEach(({ label, choose }) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn";
-      button.textContent = label;
-      button.addEventListener("click", choose);
-      options.appendChild(button);
-    });
-    options.querySelector("button")?.focus({ preventScroll: true });
+    emitPresentation({ type: "coinTossShown", title, description, buttons });
+  }
+  function chooseCoinToss(value) {
+    if (tossStage === "call") flipCoin(value);
+    else if (tossStage === "decision") resolveToss(value);
   }
   function startCoinToss() {
     tossPadPrevious = [];
@@ -1447,8 +1235,8 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       "OPENING COIN TOSS",
       "HOME calls the coin. Choose heads or tails.",
       [
-        { label: "HEADS", choose: () => flipCoin("heads") },
-        { label: "TAILS", choose: () => flipCoin("tails") },
+        { label: "HEADS", value: "heads" },
+        { label: "TAILS", value: "tails" },
       ],
     );
   }
@@ -1463,9 +1251,9 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         "COIN: " + result.toUpperCase() + " · HOME WINS",
         "Choose to receive, kick, or defer the choice to the second half.",
         [
-          { label: "RECEIVE", choose: () => resolveToss("receive") },
-          { label: "KICK", choose: () => resolveToss("kick") },
-          { label: "DEFER", choose: () => resolveToss("defer") },
+          { label: "RECEIVE", value: "receive" },
+          { label: "KICK", value: "kick" },
+          { label: "DEFER", value: "defer" },
         ],
       );
     } else {
@@ -1476,7 +1264,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         "AWAY selects " +
           choice.toUpperCase() +
           ". The opening kickoff is determined.",
-        [{ label: "CONTINUE", choose: () => resolveToss(choice) }],
+        [{ label: "CONTINUE", value: choice }],
       );
     }
   }
@@ -1495,7 +1283,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     // controls the second-half choice and would normally elect to receive.
     secondHalfReceiver = choice === "kick" ? 1 - winner : 1 - firstHalfReceiver;
     tossStage = "complete";
-    $("coinToss").hidden = true;
+    emitPresentation({ type: "coinTossHidden" });
     beginOpeningKickoff(firstHalfReceiver);
   }
   function beginOpeningKickoff(receiver) {
@@ -1535,7 +1323,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     postWhistle = null;
     lastWhistleType = "";
     logs = [];
-    $("events").innerHTML = "";
+    emitPresentation({ type: "logChanged", logs });
     seed(Math.floor(Math.random() * 4294967296) >>> 0);
     returnCall = "middle";
     startCoinToss();
@@ -1562,7 +1350,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     playSeconds = 25;
     setup();
     organizeReturnUnit();
-    $("snap").textContent = "KICK OFF";
+    emitPresentation({ type: "snapControlChanged", text: "KICK OFF" });
     message(
       "<strong>" +
         (kind === "safety-kick" ? "SAFETY FREE KICK" : "KICKOFF") +
@@ -1653,8 +1441,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     ballCarrier = null;
     active = controlMode === "defense" ? P(selectedDefenderKey) : ret;
     ball = null;
-    $("receiverPins").style.display = "none";
-    $("targets").style.display = "none";
+    emitPresentation({ type: "receiverPromptsHidden" });
   }
 
   function chooseSpecial(kind) {
@@ -1817,9 +1604,8 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     k.backupReturnerKey = deep[1]?.key || "WR2";
     const ret = P(k.returnerKey);
     if (ret) ret.intent = "track-kick";
-    $("snap").disabled = true;
-    $("receiverPins").style.display = "none";
-    $("targets").style.display = "none";
+    emitPresentation({ type: "snapControlChanged", disabled: true });
+    emitPresentation({ type: "receiverPromptsHidden" });
     message(
       "<strong>" +
         k.kind.toUpperCase() +
@@ -2437,7 +2223,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         `${TEAM_NAMES[0]} ${teamPoints[0]} – ${teamPoints[1]} ${TEAM_NAMES[1]}`,
         "FINAL",
       );
-      $("snap").disabled = true;
+      emitPresentation({ type: "snapControlChanged", disabled: true });
       hud();
       return true;
     }
@@ -2456,7 +2242,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         `${TEAM_NAMES[0]} ${teamPoints[0]} – ${teamPoints[1]} ${TEAM_NAMES[1]} · ${TEAM_NAMES[secondHalfReceiver]} receives the second-half kickoff`,
         "START THIRD QUARTER",
       );
-      $("snap").disabled = false;
+      emitPresentation({ type: "snapControlChanged", disabled: false });
       hud();
       log("HALFTIME · third quarter requires continue");
       return true;
@@ -2665,11 +2451,11 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   function log(t) {
     logs.unshift(t);
     logs = logs.slice(0, 14);
-    $("events").innerHTML = logs.map((s) => "<span>" + s + "</span>").join("");
+    emitPresentation({ type: "logChanged", logs });
   }
   function message(t) {
     msg = t;
-    $("message").innerHTML = t;
+    emitPresentation({ type: "messageChanged", text: t });
   }
   function create(k, x, y) {
     const p = {
@@ -3291,114 +3077,9 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   }
   // Inspectable on-field matchups: see whom each receiver is facing, not just
   // the overall "separation" between WR1 and whichever CB happens to be closest.
-  function matchupHud() {
-    const panel = $("matchupReadout");
-    if (!panel) return;
-    if (RUNS.has(selectedPlay)) {
-      panel.textContent =
-        "PASS MATCHUPS · Select a pass play to inspect releases, cuts and coverage.";
-      return;
-    }
-    const lines = off
-      .filter((p) => ["WR", "TE"].includes(p.pos))
-      .slice(0, 4)
-      .map((p) => {
-        const db = def.find(
-          (d) => d.assignment?.kind === "man" && d.assignment.target === p.key,
-        );
-        if (!db)
-          return (
-            p.key +
-            " · zone coverage · RTE " +
-            Math.round(p.RTE) +
-            " / CUT " +
-            Math.round(p.CUT)
-          );
-        const gap =
-          phase === "presnap"
-            ? ""
-            : " · " + dist(p, db).toFixed(1) + " yd apart";
-        const released = p.pressResult
-          ? " · " + p.pressResult.replaceAll("-", " ")
-          : "";
-        return (
-          p.key +
-          " ↔ " +
-          db.key +
-          " · REL " +
-          Math.round(p.REL) +
-          "/PRS " +
-          Math.round(db.PRS) +
-          " · CUT " +
-          Math.round(p.CUT) +
-          "/MIR " +
-          Math.round(db.MIR) +
-          gap +
-          released
-        );
-      });
-    panel.textContent = "RECEIVER / DEFENDER MATCHUPS\n" + lines.join("\n");
-  }
+
   function schemeReport() {
-    const offLabel = formationDesc[selectedFormation],
-      dLabel = defenseDesc[selectedFront],
-      gap = RUNS.has(selectedPlay),
-      heavy = selectedFormation === "ace" || selectedFormation === "iform",
-      light = selectedFront === "nickel";
-    let note = gap
-      ? heavy && light
-        ? "Heavier offensive bodies face nickel: the offense may create extra blocking angles, but the run still has to beat the actual gap defenders."
-        : selectedPlay === "power"
-          ? "Power asks the back-side guard to pull. The defense can defeat it with penetration, pursuit and edge leverage."
-          : "Run success depends on combo-block displacement, defender gap fits and the runner choosing a crease."
-      : selectedCoverage === "cover1"
-        ? "Man coverage creates leverage and crossing-route battles; coverage and receiver ratings determine separation."
-        : "Zones defend space. Floods and layered routes can stress the underneath-to-deep handoffs, but defenders react to the routes.";
-    $("schemeReadout").innerHTML =
-      "<strong>" +
-      offLabel +
-      "</strong><small>Defense: " +
-      dLabel +
-      " · " +
-      selectedCoverage.toUpperCase() +
-      (coveragePreference === "mix" ? " (MIXED)" : "") +
-      " · " +
-      selectedPressure.toUpperCase() +
-      "</small><small>" +
-      coverageDesc[selectedCoverage] +
-      " · " +
-      pressureDesc[selectedPressure] +
-      "</small><small>" +
-      note +
-      "</small>";
-    $("targets")
-      .querySelectorAll("button")
-      .forEach((b, i) => {
-        const p = eligibleTargets()[i];
-        b.innerHTML =
-          '<span class="faceIcon icon' +
-          i +
-          '">' +
-          PASS_ICONS[i] +
-          '</span><span class="targetMeta"><strong>' +
-          (p?.key || "—") +
-          "</strong><small>KEY " +
-          (i + 1) +
-          "</small></span>";
-        b.setAttribute(
-          "aria-label",
-          "Throw to " + (p?.name || "receiver") + " — key " + (i + 1),
-        );
-      });
-    $("receiverPins")
-      .querySelectorAll("button")
-      .forEach((b, i) => {
-        const p = eligibleTargets()[i];
-        b.setAttribute(
-          "aria-label",
-          "Throw to " + (p?.name || "receiver") + " — key " + (i + 1),
-        );
-      });
+    emitPresentation({ type: "schemeChanged" });
   }
   function setup() {
     closeAudibles();
@@ -3606,17 +3287,17 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     if (controlMode === "defense" && !P(selectedDefenderKey))
       selectedDefenderKey = def[0]?.key || selectedDefenderKey;
     active = controlMode === "defense" ? P(selectedDefenderKey) : null;
-    $("snap").textContent =
-      gameStarted && possession === 1 ? "CPU WILL SNAP" : "SNAP THE BALL";
-    $("snap").disabled = gameStarted && possession === 1;
-    document
-      .querySelectorAll("[data-play]")
-      .forEach((b) => (b.disabled = false));
-    for (const id of ["formation", "front", "coverage", "pressure"])
-      $(id).disabled = false;
-    $("overlay").classList.remove("visible");
-    $("targets").style.display = "none";
-    $("receiverPins").style.display = "none";
+    emitPresentation({
+      type: "snapControlChanged",
+      text: gameStarted && possession === 1 ? "CPU WILL SNAP" : "SNAP THE BALL",
+    });
+    emitPresentation({
+      type: "snapControlChanged",
+      disabled: gameStarted && possession === 1,
+    });
+    emitPresentation({ type: "playControlsLocked", locked: false });
+    emitPresentation({ type: "resultHidden" });
+    emitPresentation({ type: "receiverPromptsHidden" });
     message(
       "<strong>Ready.</strong> " +
         selectedFormation.toUpperCase() +
@@ -3639,9 +3320,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     )
       return;
     selectedPlay = n;
-    document
-      .querySelectorAll(".play")
-      .forEach((b) => b.classList.toggle("selected", b.dataset.play === n));
+    emitPresentation({ type: "playSelectionChanged", play: n });
     setup();
     playSeconds = PRESNAP_PLAY_SECONDS;
     scrimmagePlayCalled = true;
@@ -3763,12 +3442,8 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
           ? "Find your lane, then burst through the hole."
           : "Choose a receiver icon or press 1–4 to throw. The QB automatically leads the route.";
     message("<strong>Ball snapped.</strong> " + snapHint);
-    $("snap").disabled = true;
-    document
-      .querySelectorAll("[data-play]")
-      .forEach((b) => (b.disabled = true));
-    for (const id of ["formation", "front", "coverage", "pressure"])
-      $(id).disabled = true;
+    emitPresentation({ type: "snapControlChanged", disabled: true });
+    emitPresentation({ type: "playControlsLocked", locked: true });
     log("SNAP · " + selectedPlay.toUpperCase());
     playTrace = [];
     traceAccum = 0;
@@ -3781,10 +3456,10 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       seed: seq,
       playStart,
     };
-    $("downloadTrace").disabled = false;
+    emitPresentation({ type: "traceReady" });
     traceSample();
     resolvePressMatchups();
-    canvas.focus({ preventScroll: true });
+    emitPresentation({ type: "fieldFocused" });
     hud();
   }
   function finish(type, x, detail) {
@@ -3880,18 +3555,17 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     }
     result = heading;
     message("<strong>" + heading + ".</strong> " + detail);
-    $("resultText").textContent = heading;
-    $("resultDetail").textContent =
-      detail +
-      " · " +
-      (type === "intercept"
-        ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109))
-        : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained");
-    $("overlay").classList.add("visible");
-    $("targets").style.display = "none";
-    $("receiverPins").style.display = "none";
-    $("snap").disabled = false;
-    $("snap").textContent = "NEXT SNAP";
+    emitPresentation({
+      type: "resultShown",
+      heading,
+      detail:
+        detail +
+        " · " +
+        (type === "intercept"
+          ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109))
+          : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained"),
+      action: "NEXT SNAP",
+    });
     log(
       heading +
         " · " +
@@ -3923,7 +3597,10 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         postWhistle = "safety-kick";
         clockRunning = false;
         heading = "SAFETY";
-        $("resultText").textContent = "SAFETY · +2";
+        emitPresentation({
+          type: "resultHeadingChanged",
+          heading: "SAFETY · +2",
+        });
         log("SAFETY · +2 to defense");
       } else if (yard >= first - 0.05) {
         down = 1;
@@ -3951,11 +3628,17 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       clockRunning = false;
       twoMinutePending = false;
     }
-    if (postWhistle === "try") $("snap").textContent = "CHOOSE TRY";
-    if (postWhistle === "kickoff") $("snap").textContent = "KICKOFF";
-    if (postWhistle === "scrimmage") $("snap").textContent = "NEXT DRIVE";
+    if (postWhistle === "try")
+      emitPresentation({ type: "snapControlChanged", text: "CHOOSE TRY" });
+    if (postWhistle === "kickoff")
+      emitPresentation({ type: "snapControlChanged", text: "KICKOFF" });
+    if (postWhistle === "scrimmage")
+      emitPresentation({ type: "snapControlChanged", text: "NEXT DRIVE" });
     if (postWhistle === "safety-kick")
-      $("snap").textContent = "SAFETY FREE KICK";
+      emitPresentation({
+        type: "snapControlChanged",
+        text: "SAFETY FREE KICK",
+      });
     hud();
   }
   function nextDown() {
@@ -4025,7 +3708,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     first = 40;
     totalClock = 0;
     logs = [];
-    $("events").innerHTML = "";
+    emitPresentation({ type: "logChanged", logs });
     seed(Math.floor(Math.random() * 4294967296) >>> 0);
     setup();
     log("New drive · ball on own 20");
@@ -4036,7 +3719,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
   // mapping (D / right = downfield, W / up = upper sideline).
   // Keep this transform in one place so QB, runner, defender, and OL controls
   // agree; juke-side selection remains tied to the field sidelines separately.
-  function fieldStickAxes(screenX, screenY, viewMode = visualMode) {
+  function fieldStickAxes(screenX, screenY, viewMode = getVisualMode()) {
     if (viewMode === "3d") return { x: -screenY, y: screenX };
     return { x: screenX, y: screenY };
   }
@@ -6660,15 +6343,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
             ? P(selectedLinemanKey)
             : ballCarrier || P("QB")
         : null;
-    const el = $("controlMode");
-    if (el)
-      el.textContent =
-        "CONTROL: " +
-        (mode === "defense"
-          ? "DEFENSE"
-          : mode === "line"
-            ? "O-LINE"
-            : "OFFENSE");
+    emitPresentation({ type: "controlModeChanged", mode });
     hud();
     return true;
   }
@@ -8678,8 +8353,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     }
     tackleLinks.clear();
     pileState = null;
-    $("targets").style.display = "none";
-    $("receiverPins").style.display = "none";
+    emitPresentation({ type: "receiverPromptsHidden" });
     message(
       "<strong>QB scramble!</strong> Beyond the line of scrimmage: forward passing is locked and the offense blocks.",
     );
@@ -8871,8 +8545,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         " · THA " +
         qb.THA,
     );
-    $("targets").style.display = "none";
-    $("receiverPins").style.display = "none";
+    emitPresentation({ type: "receiverPromptsHidden" });
     hud();
     return true;
   }
@@ -9946,784 +9619,9 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     log("CUT · " + p.name + " · AGI " + p.AGI);
   }
   function hud() {
-    if (phase === "live" || phase === "presnap" || phase === "dead") {
-      let suffix = ["", "ST", "ND", "RD", "TH"][down] || "TH";
-      $("down").textContent = specialState
-        ? specialState.kind === "punt"
-          ? "PUNT"
-          : specialState.returning
-            ? "RETURN"
-            : "KICKOFF"
-        : tryState
-          ? tryState.mode === "two"
-            ? "TWO-POINT TRY"
-            : "EXTRA-POINT TRY"
-          : down + suffix + " & " + Math.max(1, Math.round(togo));
-      $("yardline").textContent =
-        (yard < 60
-          ? "OWN " + Math.round(yard - 10)
-          : "OPP " + Math.round(110 - yard)) + " · BALL";
-      $("clock").textContent = clockText(quarterSeconds);
-      $("points").textContent = teamPoints[0];
-      $("awayPoints").textContent = teamPoints[1];
-      $("quarterRead").textContent =
-        phase === "halftime" ? "HALF" : "Q" + quarter;
-      $("playClockRead").textContent = clockText(playSeconds);
-      $("playClockRead").classList.toggle(
-        "urgent",
-        phase === "presnap" && scrimmagePlayCalled && playSeconds <= 5,
-      );
-      $("homePoss").textContent = possession === 0 ? "● " : "";
-      $("awayPoss").textContent = possession === 1 ? "● " : "";
-      $("timeoutsRead").textContent = "TO " + timeOuts[0] + " – " + timeOuts[1];
-      $("yardline").textContent = specialState
-        ? TEAM_NAMES[specialState.kickingTeam] + " TO " + TEAM_NAMES[possession]
-        : spotText() + " · " + TEAM_NAMES[possession];
-    }
-    const ballP =
-      controlMode === "defense"
-        ? P(selectedDefenderKey)
-        : controlMode === "line"
-          ? P(selectedLinemanKey)
-          : ballCarrier || (phase === "live" && !ball ? P("QB") : null);
-    $("speedReading").textContent = ballP
-      ? (speed(ballP) * YARD_M * MPS_TO_MPH).toFixed(1)
-      : "0.0";
-    $("impulseReading").textContent = lastContact + " ";
-    const a = P("WR1"),
-      b = P("CB1");
-    $("separationReading").textContent = a && b ? dist(a, b).toFixed(1) : "—";
-    const qb = P("QB");
-    $("pressureReading").textContent = qb
-      ? Math.round(clamp((5 - closestThreat(qb, def).d) / 5, 0, 1) * 100) + "%"
-      : "0%";
-    $("boost").textContent =
-      burstCool > 0 ? burstCool.toFixed(1) + "s" : "BURST";
-    $("dive").textContent =
-      moveCooldown > 0 ? moveCooldown.toFixed(1) + "s" : "JUKE";
-    const energy = $("staminaReading"),
-      bar = $("staminaFill");
-    const runner =
-      controlMode === "defense"
-        ? P(selectedDefenderKey)
-        : controlMode === "line"
-          ? P(selectedLinemanKey)
-          : ballCarrier || P("QB");
-    if (energy && bar && runner) {
-      const pct = Math.round(runner.stam * 100);
-      energy.textContent =
-        pct +
-        "% · " +
-        (runner.stam < 0.2
-          ? "EXHAUSTED"
-          : runner.stam < 0.45
-            ? "TIRED"
-            : runner.sprinting
-              ? "SPRINTING"
-              : "READY");
-      bar.style.width = pct + "%";
-      bar.style.background =
-        pct < 25 ? "#f28b75" : pct < 50 ? "#e9cf79" : "#bde76e";
-    }
-    const read = $("defenseRead");
-    if (read && phase === "live" && RUNS.has(selectedPlay)) {
-      const count = def.filter((d) => d.runRead).length;
-      read.textContent =
-        "DEFENSE · " +
-        count +
-        "/11 RECOGNIZED RUN · GAP FITS / CONTAIN / PURSUIT";
-    } else if (read) {
-      read.textContent =
-        "DEFENSE · " +
-        (phase === "presnap"
-          ? "ALIGNING"
-          : phase === "dead"
-            ? "WHISTLE"
-            : "COVERAGE ASSIGNMENTS");
-    }
-    const control = $("inputStatus");
-    if (control && specialState)
-      control.textContent = specialState.returning
-        ? "SPECIAL TEAMS · RETURN IN PROGRESS"
-        : specialState.kind === "punt"
-          ? "PUNT RETURN · WATCH FOR THE BALL · K FOR FAIR CATCH"
-          : "KICKOFF · " +
-            (possession === 0
-              ? "RETURN " + returnCall.toUpperCase()
-              : "COVER THE RETURN");
-    else if (control && phase === "halftime")
-      control.textContent =
-        "HALFTIME · " +
-        TEAM_NAMES[secondHalfReceiver] +
-        " RECEIVES NEXT · PRESS START THIRD QUARTER";
-    else if (control)
-      control.textContent = pendingPass
-        ? "PASS CHARGING · " +
-          (playClock - pendingPass.start < 0.2
-            ? "LOB"
-            : playClock - pendingPass.start < 0.45
-              ? "TOUCH"
-              : "BULLET") +
-          " · RELEASE RECEIVER BUTTON"
-        : pileState?.active
-          ? "STANDING PILE · " +
-            pileState.wrappers.length +
-            " DEFENDERS · " +
-            pileState.pushers.length +
-            " OFFENSIVE PUSHERS"
-          : paused
-            ? "PAUSED · MENU TO RESUME"
-            : phase === "presnap"
-              ? controlMode === "defense"
-                ? "DEFENSE · " +
-                  (P(selectedDefenderKey)?.key || "DEFENDER") +
-                  " · " +
-                  DefensivePresnap.description(P(selectedDefenderKey)) +
-                  " · LEFT STICK MOVE · B SWITCH · X AUDIBLE"
-                : "SNAP TO START · X AUDIBLE · A SNAP"
-              : phase === "dead"
-                ? "WHISTLE · NEXT SNAP"
-                : controlMode === "defense" && ball?.flying
-                  ? "PASS AIRBORNE · " +
-                    (defenderAirInteractionZone(P(selectedDefenderKey))
-                      ? "ON THE PLAY · X SWAT / A PLAY RECEIVER / Y BALL HAWK"
-                      : "NOT IN CONTEST · X DIVES / B SWITCH DEFENDER")
-                  : controlMode === "defense"
-                    ? "DEFENSE · YOU CONTROL " +
-                      (P(selectedDefenderKey)?.pos || "DEFENDER") +
-                      " · B SWITCH · A WRAP · X HIT/DIVE · RIGHT STICK HIT/CUT"
-                    : controlMode === "line"
-                      ? "O-LINE · YOU CONTROL " +
-                        selectedLinemanKey +
-                        " · RIGHT STICK UP IMPACT/PUSH"
-                      : ballCarrier && ballCarrier.team === 0
-                        ? manualDrive
-                          ? "YOU CONTROL " +
-                            ballCarrier.pos +
-                            " · GIVE AI CONTROL TO RELEASE"
-                          : "AUTO RUN " +
-                            ballCarrier.pos +
-                            " · STEER TO TAKE OVER"
-                        : ball
-                          ? manualReceiver
-                            ? "USER RECEIVER · LEFT STICK STEERS · X RAC / A POSSESSION / Y AGGRESSIVE"
-                            : "PASS AIRBORNE · B SWITCH RECEIVER · X RAC / A POSSESSION / Y AGGRESSIVE"
-                          : RUNS.has(selectedPlay)
-                            ? "HANDOFF COMING · MOVE TO TAKE CONTROL"
-                            : "QB CONTROL · WASD / ARROWS";
-    const airRow = $("airActions");
-    if (airRow) {
-      const show =
-        phase === "live" &&
-        !specialState &&
-        !!ball?.flying &&
-        !paused &&
-        controlMode !== "line" &&
-        (controlMode !== "defense" ||
-          defenderAirInteractionZone(P(selectedDefenderKey)));
-      airRow.style.display = show ? "flex" : "none";
-      if (show) {
-        const switchButton = $("receiverSwitch");
-        if (switchButton)
-          switchButton.style.display =
-            controlMode === "offense" ? "inline-flex" : "none";
-        const labels =
-          controlMode === "defense"
-            ? ["X · SWAT", "A · PLAY RECEIVER", "Y · BALL HAWK"]
-            : ["X · RAC CATCH", "A · POSSESSION", "Y · AGGRESSIVE"];
-        airRow.querySelectorAll("button[data-air]").forEach((b, i) => {
-          if (b.textContent !== labels[i]) b.textContent = labels[i];
-        });
-      }
-    }
-    $("fairCatchBtn").style.display =
-      phase === "live" && specialState?.kind === "punt" && !!ball?.flying
-        ? "inline-flex"
-        : "none";
-    const stateRead = $("gameStateRead");
-    if (stateRead) {
-      const status =
-        phase === "halftime"
-          ? "HALFTIME · CONTINUE"
-          : phase === "presnap"
-            ? specialState
-              ? "KICKOFF READY"
-              : scrimmagePlayCalled
-                ? possession === 1
-                  ? "CPU PRE-SNAP"
-                  : "YOUR PRE-SNAP"
-                : "PICK A PLAY"
-            : phase === "live"
-              ? specialState
-                ? "LIVE RETURN"
-                : "LIVE PLAY"
-              : phase === "dead"
-                ? "WHISTLE · NEXT"
-                : phase.toUpperCase();
-      stateRead.textContent = "STATE: " + status + " · " + gameFlowNote;
-      stateRead.dataset.phase = phase;
-    }
-    $("pause").disabled = phase !== "live";
-    $("pause").textContent = paused ? "RESUME" : "PAUSE";
-    const auto = $("autoRun");
-    if (auto)
-      auto.style.display =
-        phase === "live" && ballCarrier && manualDrive ? "inline-flex" : "none";
-    matchupHud();
+    emitPresentation({ type: "hudChanged" });
   }
 
-  function resize() {
-    const r = canvas.getBoundingClientRect();
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    canvas.width = Math.max(1, Math.round(r.width * dpr));
-    canvas.height = Math.max(1, Math.round(r.height * dpr));
-    fieldSize = { w: r.width, h: r.height, scale: dpr };
-    if (renderer3d) renderer3d.resize();
-  }
-  function setVisualMode(mode) {
-    visualMode = renderer3d && mode === "3d" ? "3d" : "2d";
-    const three = $("render3d");
-    if (three) three.style.display = visualMode === "3d" ? "block" : "none";
-    const b = $("viewMode");
-    if (b) {
-      b.textContent =
-        visualMode === "3d"
-          ? "VIEW: 3D · SWITCH TO 2D"
-          : renderer3d
-            ? "VIEW: 2D · SWITCH TO 3D"
-            : "VIEW: 2D · 3D UNAVAILABLE";
-      b.disabled = !renderer3d;
-    }
-    return visualMode;
-  }
-  function recoverFrom3DFailure(err) {
-    console.error("3D rendering failed; restoring visible 2D view", err);
-    renderer3d = null;
-    setVisualMode("2d");
-    const status = $("renderStatus3d");
-    if (status) {
-      status.textContent =
-        "3D display unavailable here. The game has switched back to the working 2D field.";
-      status.hidden = false;
-    }
-  }
-  function view() {
-    const ratio = fieldSize.w / fieldSize.h;
-    const xspan = H * ratio;
-    const scale = fieldSize.h / H;
-    const focus = ball?.flying ? ball : ballCarrier || P("QB") || active;
-    let desired =
-      phase === "presnap"
-        ? isFreeKick(specialState)
-          ? kickLineX(specialState)
-          : playStart
-        : focus
-          ? focus.x
-          : playStart;
-    camera += (desired - camera) * 0.09;
-    const cam = clamp(
-      camera,
-      Math.min(xspan / 2, W / 2),
-      Math.max(W - xspan / 2, W / 2),
-    );
-    return { span: xspan, left: cam - xspan / 2, px: scale };
-  }
-  function xy(x, y, v) {
-    return [(x - v.left) * v.px, y * v.px];
-  }
-  function drawField(v) {
-    const s = v.px,
-      from = Math.max(0, Math.floor(v.left / 5) * 5),
-      to = Math.min(120, v.left + v.span);
-    ctx.fillStyle = "#265b45";
-    ctx.fillRect(0, 0, fieldSize.w, fieldSize.h);
-    for (let x = 0; x < 120; x += 10) {
-      let [px] = xy(x, 0, v);
-      ctx.fillStyle = (x / 10) % 2 ? "#2a6548" : "#2a6045";
-      ctx.fillRect(px, 0, 10 * s, fieldSize.h);
-    }
-    for (let x of [0, 110]) {
-      let [px] = xy(x, 0, v);
-      ctx.fillStyle = "#1c3b52";
-      ctx.fillRect(px, 0, 10 * s, fieldSize.h);
-    }
-    ctx.fillStyle = "#f6f8e5";
-    ctx.globalAlpha = 0.7;
-    for (let x = 10; x <= 110; x += 5) {
-      let [px] = xy(x, 0, v);
-      ctx.fillRect(px - 0.06 * s, 0, 0.12 * s, fieldSize.h);
-      for (let y of [15, 38.3])
-        ctx.fillRect(px - 0.48 * s, y * s, 0.96 * s, 0.1 * s);
-    }
-    ctx.globalAlpha = 1;
-    ctx.save();
-    ctx.font = `bold ${Math.max(8, 2.25 * s)}px ui-sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ecfff5a3";
-    for (let x = 20; x < 110; x += 10) {
-      const yardLabel = 50 - Math.abs(60 - x);
-      let [px, py] = xy(x, 10, v);
-      ctx.fillText(yardLabel, px, py);
-      ctx.save();
-      ctx.translate(px, 43 * s);
-      ctx.rotate(Math.PI);
-      ctx.fillText(yardLabel, 0, 0);
-      ctx.restore();
-    }
-    ctx.restore();
-    for (let x of [playStart, first]) {
-      let [px] = xy(x, 0, v);
-      ctx.save();
-      ctx.strokeStyle = x === first ? "#f8e765" : "#88bdfd";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, fieldSize.h);
-      ctx.stroke();
-      ctx.restore();
-    }
-    for (let x of [0, 110]) {
-      let [px, py] = xy(x + 5, H / 2, v);
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(-Math.PI / 2);
-      ctx.font = `900 ${5 * s}px ui-sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#d3e5f270";
-      ctx.fillText(x === 110 ? "END ZONE" : "GRIDIRON LAB", 0, 0);
-      ctx.restore();
-    }
-  }
-  function drawAssignments(v) {
-    if (phase !== "presnap") return;
-    ctx.save();
-    ctx.font = "600 10px ui-sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    for (const d of def) {
-      if (d.rush || !d.assignment) {
-        if (controlMode === "defense" && d.key === selectedDefenderKey) {
-          const gap = DefensivePresnap.gapTarget(d, off, playStart);
-          const [dx, dy] = xy(d.x, d.y, v),
-            [px, py] = xy(
-              gap?.x ?? Math.min(109, playStart + 3),
-              gap?.y ?? d.fit?.lane ?? d.y,
-              v,
-            );
-          ctx.strokeStyle = "#eaff9b";
-          ctx.lineWidth = 2;
-          ctx.setLineDash([4, 3]);
-          ctx.beginPath();
-          ctx.moveTo(dx, dy);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-        continue;
-      }
-      const a = d.assignment;
-      const [dx, dy] = xy(d.x, d.y, v);
-      if (a.kind === "zone") {
-        const [px, py] = xy(a.baseX, a.baseY, v);
-        const rx = (a.depth >= 12 ? 6.5 : 4.5) * v.px,
-          ry = a.width * 0.65 * v.px;
-        ctx.beginPath();
-        ctx.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
-        ctx.fillStyle = "#7dcff117";
-        ctx.fill();
-        ctx.strokeStyle = "#9bdef15d";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 5]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        if (controlMode === "defense" && d.key === selectedDefenderKey) {
-          ctx.beginPath();
-          ctx.moveTo(dx, dy);
-          ctx.lineTo(px, py);
-          ctx.strokeStyle = "#eaff9b";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      } else {
-        const t = P(a.target);
-        if (!t) continue;
-        const [tx, ty] = xy(t.x, t.y, v);
-        ctx.beginPath();
-        ctx.moveTo(dx, dy);
-        ctx.lineTo(tx, ty);
-        ctx.strokeStyle = "#92e8f5a8";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-    ctx.restore();
-  }
-  function drawRoute(v) {
-    if (phase === "dead" || (gameStarted && controlMode === "defense")) return;
-    for (let p of off) {
-      if (!p.route || ballCarrier) continue;
-      ctx.strokeStyle =
-        p === intended ? "#e8ff91" : p.key === "TE" ? "#ffbf80" : "#d6f6f6";
-      ctx.globalAlpha = 0.45;
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([3, 5]);
-      ctx.beginPath();
-      let [px, py] = xy(p.x, p.y, v);
-      ctx.moveTo(px, py);
-      for (let j = p.routeIdx; j < p.route.length; j++) {
-        [px, py] = xy(...p.route[j], v);
-        ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
-    }
-  }
-  function drawPossessionRing(x, y, r) {
-    ctx.save();
-    ctx.strokeStyle = "#ffdc76";
-    ctx.lineWidth = 3.3;
-    ctx.beginPath();
-    ctx.arc(x, y, r + 8, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-  function playerShape(p, v, markerCarrier) {
-    const home = (p.team === 0 ? possession : 1 - possession) === 0;
-    const [x, y] = xy(p.x, p.y, v),
-      s = v.px,
-      r = Math.max(4, radius(p) * s);
-    if (x < -30 || x > fieldSize.w + 30) return;
-    ctx.save();
-    ctx.translate(x, y);
-    if (p.ground) {
-      const g = p.ground;
-      const settle = g.stage === "fall" ? clamp(g.age / g.fall, 0, 1) : 1;
-      const gettingUp =
-        g.stage === "rise" ? clamp(1 - g.time / g.rise, 0, 1) : 0;
-      const body = clamp(1 - settle * 0.3 + gettingUp * 0.3, 0.66, 1);
-      ctx.rotate(g.dir + (g.stage === "fall" ? 0.28 * settle : 0));
-      ctx.fillStyle = "#04151caa";
-      ctx.beginPath();
-      ctx.ellipse(2, 3, r * 1.38, r * 0.69, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = home ? "#a5cb5a" : "#4da6ce";
-      ctx.strokeStyle = home ? "#effbbd" : "#d2f7ff";
-      ctx.lineWidth = Math.max(1.3, r * 0.2);
-      ctx.beginPath();
-      ctx.moveTo(-r * 1.03, -r * 0.56);
-      ctx.lineTo(-r * 0.57, -r * 0.18);
-      ctx.lineTo(r * 0.45, -r * 0.7);
-      ctx.moveTo(-r * 1.03, r * 0.56);
-      ctx.lineTo(-r * 0.57, r * 0.18);
-      ctx.lineTo(r * 0.45, r * 0.7);
-      ctx.stroke();
-      ctx.save();
-      ctx.scale(body, 1);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 1.07, r * 0.58, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = home ? "#e6fba6" : "#caf5fc";
-      ctx.beginPath();
-      ctx.arc(r * 0.85, 0, r * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      if (g.stage === "winded") {
-        const breathing = 1 + 0.13 * Math.sin(totalClock * 8);
-        ctx.strokeStyle = home ? "#dffcba" : "#b6e8ff";
-        ctx.globalAlpha = 0.68;
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.arc(-r * 0.1, 0, r * 0.94 * breathing, 0.15, Math.PI * 1.08);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      if (g.stage === "rise") {
-        ctx.strokeStyle = "#f9f0b3";
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-      // Grounded players stay visible but cannot block, pursue, or catch until up.
-      ctx.save();
-      ctx.fillStyle = "#eaf7df";
-      ctx.font = `700 ${Math.max(8, 1.45 * s)}px ui-sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText(
-        g.stage === "winded" ? "•••" : g.stage === "rise" ? "↑" : "!",
-        x,
-        y - r - 7,
-      );
-      ctx.restore();
-      if (markerCarrier === p) drawPossessionRing(x, y, r);
-      return;
-    }
-    const pileMotion =
-      pileState?.active &&
-      (p === ballCarrier || p.pushing || tackleLinks.has(p.key));
-    const legRate = 12 + speed(p) * 0.9;
-    const stride = Math.sin(totalClock * legRate + (p.team ? 1.7 : 0));
-    const lean =
-      p.lean +
-      (pileMotion ? 0.09 * Math.sin(totalClock * 19) : 0) +
-      (p.action?.kind === "juke"
-        ? Math.sin(totalClock * 21) * 0.12
-        : p.action?.kind === "truck"
-          ? 0.16
-          : p.action?.kind === "stiff"
-            ? 0.06
-            : p.action?.kind === "hesi"
-              ? -0.2
-              : p.action?.kind === "dive"
-                ? 0.32
-                : 0);
-    ctx.rotate(
-      p.face +
-        lean +
-        (p.action?.kind === "spin" ? p.spin * 0.2 : p.spin * 0.035),
-    );
-    // Procedural original overhead contact animation: feet churn and forearms
-    // extend into the pile. Impact-induced lean / spin is derived from collisions.
-    if (pileMotion || speed(p) > 0.5 || p.action) {
-      ctx.strokeStyle = home ? "#e8f5ac" : "#aadbed";
-      ctx.lineWidth = Math.max(1.6, r * 0.29);
-      ctx.lineCap = "round";
-      const reach =
-        p.action?.kind === "stiff"
-          ? 1.85
-          : p.action?.kind === "truck"
-            ? 1.35
-            : p.action?.kind === "impact-block"
-              ? 1.7
-              : p.pushing
-                ? 1.43
-                : pileMotion
-                  ? 1.17
-                  : 0.73;
-      for (const side of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(-r * 0.46, side * r * 0.35);
-        ctx.lineTo(-r * (1.18 + stride * 0.23 * side), side * r * 0.5);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(r * 0.16, side * r * 0.7);
-        ctx.lineTo(r * reach, side * r * (0.58 + (p.pushing ? 0.13 : 0)));
-        ctx.stroke();
-      }
-    }
-    if (p.airState) {
-      ctx.save();
-      ctx.strokeStyle = "#eafda3";
-      ctx.setLineDash([3, 2]);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(
-        0,
-        0,
-        r * (1.35 + ChaosLowContact.height(p) * 0.9),
-        0,
-        Math.PI * 2,
-      );
-      ctx.stroke();
-      ctx.restore();
-    }
-    if (p.action) {
-      ctx.save();
-      ctx.strokeStyle = ["juke", "spin", "hesi"].includes(p.action.kind)
-        ? "#e9ff70"
-        : ["truck", "hit-stick", "impact-block"].includes(p.action.kind)
-          ? "#ff9c78"
-          : "#91f9ff";
-      ctx.lineWidth = Math.max(2, r * 0.23);
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 1.55, -Math.PI * 0.5, Math.PI * 0.5);
-      ctx.stroke();
-      ctx.restore();
-    }
-    ctx.fillStyle = "#001c1a99";
-    ctx.beginPath();
-    ctx.ellipse(1.3, 2.3, r * 1.1, r * 0.75, 0, 0, Math.PI * 2);
-    ctx.fill();
-    if (active === p) {
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = home ? "#d5f36b" : "#79cef1";
-    ctx.strokeStyle = home ? "#f1ffc0" : "#d5f8ff";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#17352b";
-    ctx.fillRect(r * 0.28, -r * 0.2, r * 0.33, r * 0.4);
-    if (p.covering) {
-      ctx.strokeStyle = "#e9ff8a";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, r + 6, -1.2, 1.2);
-      ctx.stroke();
-    }
-    if (p.shield > 0) {
-      ctx.strokeStyle = "#ffed8d";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.save();
-    ctx.fillStyle = "#082a2c";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = `900 ${Math.max(8, 1.55 * s)}px ui-sans-serif`;
-    ctx.fillText(
-      p.key === "WR1"
-        ? "X"
-        : p.key === "WR2"
-          ? "Z"
-          : p.pos === "EDGE"
-            ? "E"
-            : p.pos === "CB"
-              ? "C"
-              : p.pos === "OLB"
-                ? "O"
-                : p.pos === "MLB"
-                  ? "M"
-                  : p.pos === "FS"
-                    ? "F"
-                    : p.pos === "DT"
-                      ? "D"
-                      : p.pos === "NT"
-                        ? "N"
-                        : p.pos === "DE"
-                          ? "E"
-                          : p.pos === "FB"
-                            ? "B"
-                            : p.pos === "RB"
-                              ? "R"
-                              : p.pos === "QB"
-                                ? "Q"
-                                : p.pos === "TE"
-                                  ? "T"
-                                  : p.pos === "LT"
-                                    ? "L"
-                                    : p.pos === "RT"
-                                      ? "R"
-                                      : "C",
-      x,
-      y,
-    );
-    ctx.restore();
-    if (p === active && phase === "live") {
-      ctx.save();
-      ctx.strokeStyle = burstTime > 0 ? "#e9ff72" : "#d5f7f6aa";
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + p.vx * v.px * 0.47, y + p.vy * v.px * 0.47);
-      ctx.stroke();
-      ctx.restore();
-    }
-    if (p === active) {
-      ctx.save();
-      ctx.fillStyle = "#fff";
-      ctx.font = `800 ${Math.max(9, 1.75 * s)}px ui-sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText(p.name.split(" ").pop(), x, y - r - 8);
-      ctx.restore();
-    }
-    if (phase === "live" && p.pulse > 0) {
-      ctx.strokeStyle = "#ffee9a";
-      ctx.globalAlpha = p.pulse * 2;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r + 7, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-    if (markerCarrier === p) {
-      drawPossessionRing(x, y, r);
-      ctx.fillStyle = "#a56631";
-      ctx.strokeStyle = "#fff2cc";
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.ellipse(
-        x + r * 0.6,
-        y - r * 0.6,
-        r * 0.44,
-        r * 0.27,
-        Math.PI / 4,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-      ctx.stroke();
-    }
-  }
-  function drawBall(v) {
-    if (!ball || !ball.flying) return;
-    const spot = flightMarkers(),
-      [sx, sy] = xy(spot.catchX, spot.catchY, v);
-    const pulse = 1 + 0.1 * Math.sin(totalClock * 7),
-      r = Math.max(9, v.px * 0.92) * pulse;
-    ctx.save();
-    ctx.strokeStyle = "#f6e88e";
-    ctx.lineWidth = 2.6;
-    ctx.globalAlpha = 0.87;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([3, 5]);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r * 0.6, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font = "bold 10px ui-sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#fff8ba";
-    ctx.fillText("CATCH", sx, sy - r - 8);
-    ctx.restore();
-    const [x, y] = xy(ball.x, ball.y, v),
-      s = v.px;
-    const z = Math.max(0, ball.z * s);
-    ctx.fillStyle = "#020f1a90";
-    ctx.beginPath();
-    ctx.ellipse(x, y, 6, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#f9da91";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "#efb47b";
-    ctx.strokeStyle = "#fff0cc";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.ellipse(
-      x - z * 0.26,
-      y - z * 0.43,
-      Math.max(4, s * 0.4),
-      Math.max(2, s * 0.23),
-      Math.atan2(ball.vy, ball.vx),
-      0,
-      Math.PI * 2,
-    );
-    ctx.fill();
-    ctx.stroke();
-  }
   function receiverPromptTargets() {
     if (
       controlMode !== "offense" ||
@@ -10745,1221 +9643,420 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       return [];
     return eligibleTargets();
   }
-  function placeReceiverPins(v) {
-    const layer = $("receiverPins"),
-      targets = receiverPromptTargets();
-    layer.style.display = targets.length ? "block" : "none";
-    $("targets").style.display =
-      targets.length && phase === "live" ? "flex" : "none";
-    if (!targets.length) return;
-    layer.querySelectorAll("button").forEach((b, i) => {
-      const p = targets[i];
-      if (!p) {
-        b.style.display = "none";
-        return;
-      }
-      const projected =
-        visualMode === "3d" && renderer3d
-          ? renderer3d.project(p.x, (p.h / 74) * 2.5, p.y)
-          : null;
-      const [px, py] = projected ? [projected.x, projected.y] : xy(p.x, p.y, v),
-        visible =
-          (!projected || projected.visible) &&
-          px > 20 &&
-          px < fieldSize.w - 20 &&
-          py > 24 &&
-          py < fieldSize.h - 25;
-      b.style.display = visible ? "flex" : "none";
-      if (visible) {
-        b.style.left = px + "px";
-        b.style.top = Math.max(22, py - 18) + "px";
-      }
-    });
-  }
-  function placeActionCues(v) {
-    const layer = $("actionCueLayer");
-    if (!layer) return;
-    const activeCues = players
-      .filter((p) => p.actionCue?.time > 0 && !p.ground)
-      .slice(0, 5);
-    layer.replaceChildren();
-    for (const p of activeCues) {
-      const projected =
-        visualMode === "3d" && renderer3d
-          ? renderer3d.project(p.x, 3.1, p.y)
-          : null;
-      const [x, y] = projected ? [projected.x, projected.y] : xy(p.x, p.y, v);
-      if (
-        (projected && !projected.visible) ||
-        x < 6 ||
-        x > fieldSize.w - 6 ||
-        y < 9 ||
-        y > fieldSize.h - 10
-      )
-        continue;
-      const el = document.createElement("span");
-      el.className =
-        "actionCue " +
-        p.actionCue.kind +
-        (p.actionCue.result ? " confirmed" : "");
-      el.textContent = p.actionCue.label;
-      el.style.left = x + "px";
-      el.style.top = y - 12 + "px";
-      layer.appendChild(el);
-    }
-  }
-  // Thin amber links are active blocks; pink links are active tackle wraps.
-  function drawContactLinks(v) {
-    if (phase !== "live") return;
-    ctx.save();
-    ctx.lineCap = "round";
-    for (const e of blockLinks.values()) {
-      const a = P(e.blocker),
-        b = P(e.defender);
-      if (!a || !b) continue;
-      const [ax, ay] = xy(a.x, a.y, v),
-        [bx, by] = xy(b.x, b.y, v);
-      ctx.strokeStyle = "#ffb875";
-      ctx.globalAlpha = 0.3 + 0.4 * e.secured;
-      ctx.lineWidth = 1.8 + e.secured * 2.3;
-      ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(bx, by);
-      ctx.stroke();
-    }
-    for (const e of tackleLinks.values()) {
-      const a = P(e.defender),
-        b = ballCarrier;
-      if (!a || !b) continue;
-      const [ax, ay] = xy(a.x, a.y, v),
-        [bx, by] = xy(b.x, b.y, v);
-      ctx.strokeStyle = "#ff8295";
-      ctx.globalAlpha = 0.6;
-      ctx.lineWidth = 2 + e.grip * 3;
-      ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(bx, by);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-  function drawPileOverlay(v) {
-    if (!pileState?.active || !ballCarrier) return;
-    const a = ballCarrier,
-      [x, y] = xy(a.x, a.y, v),
-      s = v.px;
-    ctx.save();
-    ctx.strokeStyle = "#f4f4b4";
-    ctx.globalAlpha = 0.62;
-    ctx.setLineDash([5, 5]);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x, y, 1.45 * s, 1.2 * s, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "#f7ffdc";
-    ctx.textAlign = "center";
-    ctx.font = "bold 10px ui-sans-serif";
-    ctx.fillText(
-      "PILE  " +
-        pileState.wrappers.length +
-        " WRAP  ·  " +
-        pileState.pushers.length +
-        " PUSH",
-      x,
-      y - 1.7 * s,
-    );
-    for (const entry of pileState.pushers) {
-      const p = P(entry.key);
-      if (!p) continue;
-      const [px, py] = xy(p.x, p.y, v);
-      ctx.strokeStyle = "#dfff79";
-      ctx.globalAlpha = 0.48;
-      ctx.lineWidth = 2 + entry.output;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-  function render() {
-    if (!canvas.width || !canvas.height) return;
-    // Scrimmage models the QB's pre-release and pre-handoff possession implicitly.
-    // Keep the visual holder separate from the carrier used by physics and camera.
-    const markerCarrier =
-      phase === "live" && !ball?.flying
-        ? ballCarrier ||
-          (!specialState && controlMode === "defense" && !passThrown && !ball
-            ? P("QB")
-            : null)
-        : null;
-    const dpr = fieldSize.scale;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, fieldSize.w, fieldSize.h);
-    ctx.save();
-    if (shake > 0)
-      ctx.translate(
-        Math.sin(totalClock * 173) * shake * 7,
-        Math.cos(totalClock * 157) * shake * 6,
-      );
-    let v = view();
-    drawField(v);
-    if (!specialState) {
-      drawAssignments(v);
-      drawRoute(v);
-    }
-    drawContactLinks(v);
-    drawPileOverlay(v);
-    for (let p of players.filter((q) => q.team === 1))
-      playerShape(p, v, markerCarrier);
-    for (let p of players.filter((q) => q.team === 0))
-      playerShape(p, v, markerCarrier);
-    drawBall(v);
-    if (phase === "presnap" && !specialState) {
-      let [x, y] = xy(playStart, 26.6, v);
-      ctx.fillStyle = "#f8f1bf";
-      ctx.font = "bold 12px ui-sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText("LINE OF SCRIMMAGE", x, y - 31);
-    }
-    if (flash > 0) {
-      ctx.fillStyle = "rgba(226,255,142," + (0.16 * flash) / 2 + ")";
-      ctx.fillRect(0, 0, fieldSize.w, fieldSize.h);
-    }
-    ctx.restore();
-    if (visualMode === "3d" && renderer3d) {
-      try {
-        renderer3d.draw({
-          players,
-          carrier: ballCarrier,
-          markerCarrier,
-          active,
-          intended,
-          ball,
-          blocks: [...blockLinks.values()],
-          tackles: [...tackleLinks.values()],
-          possession,
-          clock: totalClock,
-          special: !!specialState,
-          los:
-            specialState?.kind === "punt"
-              ? 120 - specialState.puntFrom
-              : isFreeKick(specialState)
-                ? kickLineX(specialState)
-                : playStart,
-          first,
-          phase,
-          play: selectedPlay,
-          passThrown,
-          playStart,
-          defenseArt:
-            phase === "presnap" && !specialState && controlMode === "defense"
-              ? def.map((d) => ({
-                  key: d.key,
-                  x: d.x,
-                  y: d.y,
-                  selected: d.key === selectedDefenderKey,
-                  assignment: d.assignment ? { ...d.assignment } : null,
-                  rush: d.rush,
-                  spy: d.spy,
-                  blitz: d.blitz,
-                  gapTarget: DefensivePresnap.gapTarget(d, off, playStart),
-                }))
-              : [],
-          art:
-            phase === "presnap" &&
-            !specialState &&
-            !(gameStarted && controlMode === "defense")
-              ? off
-                  .filter((p) => p.route?.length)
-                  .map((p) => ({
-                    key: p.key,
-                    start: [p.x, p.y],
-                    points: p.route,
-                  }))
-              : [],
-        });
-      } catch (err) {
-        recoverFrom3DFailure(err);
-      }
-    }
-    placeReceiverPins(v);
-    placeActionCues(v);
-  }
-  // Controllers are sampled once per animation frame (not on keydown).
-  // Polling also discovers controllers already connected before the page loads.
-  function deadZone(x, y, cutoff = 0.18) {
-    const mag = Math.hypot(x, y);
-    if (!Number.isFinite(mag) || mag <= cutoff) return { x: 0, y: 0 };
-    const scaled = clamp((Math.min(1, mag) - cutoff) / (1 - cutoff), 0, 1);
-    return { x: (x / mag) * scaled, y: (y / mag) * scaled };
-  }
-  function buttonValue(p, index) {
-    const b = p?.buttons?.[index];
-    return b ? Math.max(b.pressed ? 1 : 0, Number(b.value) || 0) : 0;
-  }
-  function refreshControllerStatus() {
-    const el = $("controllerStatus");
-    if (!el) return;
-    const status = padState.connected
-      ? "● " +
-        (padState.standard
-          ? /xbox|xinput|microsoft/i.test(padState.id)
-            ? "XBOX ONE CONTROLLER CONNECTED"
-            : "STANDARD GAMEPAD CONNECTED"
-          : "CONTROLLER FOUND · UNSUPPORTED BUTTON MAP") +
-        " · " +
-        (padState.id || "Gamepad").slice(0, 66) +
-        (padState.standard
-          ? " · RT " + Math.round(padState.rt * 100) + "%"
-          : "")
-      : typeof navigator.getGamepads === "function"
-        ? "○ Xbox One controller not detected · Connect via USB/Bluetooth, then press a button."
-        : "○ This browser does not expose gamepad controls. Try Chrome or Edge.";
-    if (status !== gamepadStatusLast) {
-      el.textContent = status;
-      el.classList.toggle("detected", padState.connected && padState.standard);
-      el.classList.toggle(
-        "unsupported",
-        padState.connected && !padState.standard,
-      );
-      gamepadStatusLast = status;
-    }
+  function emitPresentation(event) {
+    presentation?.emit(event);
+    onEvent?.(event);
   }
   function refreshPauseUI() {
-    const curtain = $("pauseCurtain");
-    if (curtain) curtain.style.display = paused ? "grid" : "none";
-    const btn = $("pause");
-    if (btn) {
-      btn.textContent = paused ? "RESUME" : "PAUSE";
-      btn.disabled = phase !== "live";
-    }
+    presentation?.refreshPauseUI();
   }
-  function togglePause() {
-    if (phase !== "live") return false;
-    paused = !paused;
-    refreshPauseUI();
-    hud();
-    return paused;
+  function render() {
+    presentation?.render();
   }
-  function cyclePlay(delta) {
-    if (phase !== "presnap" || controlMode === "defense" || scrimmagePlayCalled)
-      return;
-    const i = plays.indexOf(selectedPlay);
-    choosePlay(plays[(i + delta + plays.length) % plays.length]);
+  function getVisual() {
+    return presentation?.getVisual() ?? null;
   }
-  function cycleScheme(kind, delta) {
-    if (phase !== "presnap") return;
-    const keys =
-      kind === "formation"
-        ? ["spread", "trips", "ace", "iform"]
-        : ["mix", "cover1", "cover2", "cover3", "quarters"];
-    const old = kind === "formation" ? selectedFormation : coveragePreference;
-    const next = keys[(keys.indexOf(old) + delta + keys.length) % keys.length];
-    if (kind === "formation") {
-      selectedFormation = next;
-      $("formation").value = next;
-    } else {
-      coveragePreference = next;
-      $("coverage").value = next;
-    }
-    setup();
+  function getVisualMode() {
+    return presentation?.getVisualMode() ?? "3d";
   }
-  function clearPad() {
-    protectBall(false);
-    holdStiffArm(false);
-    padState.connected = false;
-    padState.standard = false;
-    padState.index = -1;
-    padState.id = "";
-    padState.lx = 0;
-    padState.ly = 0;
-    padState.rx = 0;
-    padState.ry = 0;
-    padState.lt = 0;
-    padState.rt = 0;
-    padState.previous = [];
-    rightStickLatched = false;
-    rightStickDirection = "";
-    queuedCarrierMove = null;
-    xHoldStart = null;
-    refreshControllerStatus();
+  function setVisualMode(mode) {
+    return presentation?.setVisualMode(mode) ?? mode;
   }
-  function pollGamepad() {
-    if (tossStage === "call" || tossStage === "decision") {
-      // Coin toss is controller accessible without leaking pre-snap game inputs.
-      let pads = [];
-      try {
-        pads = Array.from(navigator.getGamepads?.() || []);
-      } catch (_) {}
-      const pad = pads.find((p) => p?.connected && p.mapping === "standard");
-      if (!pad) {
-        tossPadPrevious = [];
-        return;
-      }
-      const held = Array.from(
-        { length: 4 },
-        (_, i) => !!pad.buttons?.[i]?.pressed,
-      );
-      const chosen = held.findIndex((v, i) => v && !tossPadPrevious[i]);
-      tossPadPrevious = held;
-      if (chosen >= 0) {
-        const options = Array.from(
-          document.querySelectorAll("#coinTossOptions button"),
-        );
-        // A/B/X map in order to heads/tails or receive/kick/defer.
-        if (options[chosen]) options[chosen].click();
-      }
-      return;
-    }
-    if (typeof navigator.getGamepads !== "function") {
-      if (padState.connected) clearPad();
-      else refreshControllerStatus();
-      return;
-    }
-    let pads;
-    try {
-      pads = navigator.getGamepads() || [];
-    } catch (e) {
-      clearPad();
-      return;
-    }
-    // Keep the selected Xbox controller while it remains connected; otherwise use
-    // the first controller with a standard layout, preferably an Xbox device.
-    let pad =
-      padState.index >= 0 && pads[padState.index]?.connected
-        ? pads[padState.index]
-        : null;
-    if (!pad) {
-      const available = Array.from(pads)
-        .filter(Boolean)
-        .filter((p) => p.connected);
-      pad =
-        available.find(
-          (p) =>
-            p.mapping === "standard" && /xbox|xinput|microsoft/i.test(p.id),
-        ) ||
-        available.find((p) => p.mapping === "standard") ||
-        available[0] ||
-        null;
-    }
-    if (!pad) {
-      if (padState.connected) clearPad();
-      else refreshControllerStatus();
-      return;
-    }
-    const standard = pad.mapping === "standard";
-    if (
-      pad.index !== padState.index ||
-      pad.id !== padState.id ||
-      standard !== padState.standard
-    ) {
-      padState.previous = [];
-      padState.index = pad.index;
-      padState.id = pad.id;
-      padState.standard = standard;
-    }
-    padState.connected = true;
-    if (!standard) {
-      padState.lx = 0;
-      padState.ly = 0;
-      padState.rx = 0;
-      padState.ry = 0;
-      padState.lt = 0;
-      padState.rt = 0;
-      refreshControllerStatus();
-      return;
-    }
-    const axis = deadZone(
-      Number(pad.axes?.[0]) || 0,
-      Number(pad.axes?.[1]) || 0,
-    );
-    padState.lx = axis.x;
-    padState.ly = axis.y;
-    padState.rx = Number(pad.axes?.[2]) || 0;
-    padState.ry = Number(pad.axes?.[3]) || 0;
-    padState.lt = buttonValue(pad, XBOX.LT);
-    padState.rt = buttonValue(pad, XBOX.RT);
-    // One action per actual button-down transition; never repeat a held pass or cut.
-    const next = Array.from(
-      { length: 16 },
-      (_, i) => buttonValue(pad, i) > 0.5,
-    );
-    const was = padState.previous;
-    const pressed = (i) => !!next[i] && !was[i];
-    const released = (i) => !next[i] && !!was[i];
-    padState.previous = next;
-    if (phase === "halftime") {
-      if (pressed(XBOX.A)) startThirdQuarter();
-      refreshControllerStatus();
-      return;
-    }
-    if (pressed(XBOX.MENU)) {
-      togglePause();
-      refreshControllerStatus();
-      return;
-    }
-    if (paused) {
-      refreshControllerStatus();
-      return;
-    }
-    if (phase === "presnap") {
-      if (audibleOpen) {
-        for (const [button, index] of [
-          [XBOX.A, 0],
-          [XBOX.B, 1],
-          [XBOX.X, 2],
-          [XBOX.Y, 3],
-        ])
-          if (pressed(button)) {
-            applyAudible(index);
-            refreshControllerStatus();
-            return;
-          }
-        if (pressed(XBOX.VIEW)) {
-          closeAudibles();
-          refreshControllerStatus();
-          return;
-        }
-        refreshControllerStatus();
-        return;
-      }
-      if (
-        pressed(XBOX.X) &&
-        !playbookOpen &&
-        !specialState &&
-        (!tryState || tryState.mode === "two")
-      ) {
-        openAudibles();
-        refreshControllerStatus();
-        return;
-      }
-      if (pressed(XBOX.VIEW)) {
-        playbookOpen ? hidePlaybook() : showPlaybook();
-        refreshControllerStatus();
-        return;
-      }
-      if (controlMode === "defense" && pressed(XBOX.B) && !playbookOpen) {
-        switchDefender();
-        refreshControllerStatus();
-        return;
-      }
-      if (playbookOpen) {
-        for (const [button, direction] of [
-          [XBOX.UP, "up"],
-          [XBOX.DOWN, "down"],
-          [XBOX.LEFT, "left"],
-          [XBOX.RIGHT, "right"],
-        ])
-          if (pressed(button)) moveSheetFocus(direction);
-        if (pressed(XBOX.LB)) cycleSheetFormation(-1);
-        if (pressed(XBOX.RB)) cycleSheetFormation(1);
-        if (pressed(XBOX.A)) chooseSheetFocused();
-        if (pressed(XBOX.X) && specialState) snap(); // Preserve existing kickoff controls; scrimmage X is reserved for audibles.
-      } else {
-        // Pre-snap D-pad never silently changes offensive calls.
-        // Formation changes belong to the explicit playbook.
-        if (pressed(XBOX.A)) snap();
-      }
-    } else if (phase === "dead") {
-      if (pressed(XBOX.A)) nextDown();
-    } else if (phase === "live") {
-      if (specialState?.kind === "punt" && ball?.flying && pressed(XBOX.Y))
-        returnFairCatch = true;
-      if (ball?.flying && !specialState) {
-        if (pressed(XBOX.B)) {
-          if (controlMode === "offense") switchToIntendedReceiver();
-          else if (controlMode === "defense") switchDefender();
-        }
-        if (pressed(XBOX.X))
-          chooseAirAction(controlMode === "offense" ? "rac" : "swat");
-        if (pressed(XBOX.A))
-          chooseAirAction(
-            controlMode === "offense" ? "possession" : "receiver",
-          );
-        if (pressed(XBOX.Y))
-          chooseAirAction(controlMode === "offense" ? "aggressive" : "ball");
-        // A held Y/A is not lost when it was pressed before this defender could
-        // read or realistically reach the pass. Once eligible, queue it exactly
-        // once, without repeated animations, popups, or remote catch attempts.
-        if (controlMode === "defense") {
-          const queuedHere = airSelection.defenderKey === selectedDefenderKey;
-          if (
-            next[XBOX.Y] &&
-            (!queuedHere || airSelection.defense !== "ball") &&
-            defenderAirInteractionZone(P(selectedDefenderKey))
-          )
-            chooseAirAction("ball", "held-gamepad");
-          else if (
-            next[XBOX.A] &&
-            (!queuedHere || !airSelection.defense) &&
-            defenderAirInteractionZone(P(selectedDefenderKey))
-          )
-            chooseAirAction("receiver", "held-gamepad");
-        }
-      }
-      const qbMoveMode =
-        !specialState &&
-        padState.lt > 0.48 &&
-        !RUNS.has(selectedPlay) &&
-        !passThrown &&
-        !ballCarrier;
-      if (
-        !specialState &&
-        controlMode === "offense" &&
-        !RUNS.has(selectedPlay) &&
-        !passThrown &&
-        !ballCarrier &&
-        !qbMoveMode
-      ) {
-        for (const [btn, idx] of [
-          [XBOX.X, 0],
-          [XBOX.Y, 1],
-          [XBOX.A, 2],
-          [XBOX.B, 3],
-        ]) {
-          if (pressed(btn)) startPass(idx, "gamepad");
-          if (
-            released(btn) &&
-            pendingPass?.source === "gamepad" &&
-            pendingPass.index === idx
-          )
-            releasePass();
-        }
-      }
-      if (
-        controlMode === "offense" &&
-        (ballCarrier?.team === 0 || qbMoveMode)
-      ) {
-        if (pressed(XBOX.B)) carrierMove("spin");
-        if (pressed(XBOX.Y) && !specialState?.kind) carrierMove("hurdle");
-        holdStiffArm(next[XBOX.A]);
-        protectBall(next[XBOX.RB]);
-        if (pressed(XBOX.X)) {
-          xHoldStart = playClock;
-          xDiveFired = false;
-        }
-        if (released(XBOX.X) && xHoldStart !== null) {
-          if (!xDiveFired) downSafe();
-          xHoldStart = null;
-          xDiveFired = false;
-        }
-        if (pressed(XBOX.LB)) {
-          manualDrive = false;
-          suppressManualUntilNeutral = true;
-          hud();
-        }
-      } else {
-        holdStiffArm(false);
-        protectBall(false);
-        xHoldStart = null;
-      }
-      if (controlMode === "defense" && pressed(XBOX.B) && !ball?.flying)
-        switchDefender();
-      if (controlMode === "defense" && !ball?.flying) {
-        const selected = P(selectedDefenderKey);
-        if (selected) {
-          selected.conservativeHeld = !!next[XBOX.A];
-          if (next[XBOX.A]) selected.conservativeUntil = playClock + 0.12;
-        }
-        if (pressed(XBOX.X)) defensiveFaceButton("X");
-      }
-      // Distinct flicks must be recognized even when the stick returns only
-      // partway to center. Reversing left<->right also counts as a new flick.
-      // Holding the same direction never auto-spams an action.
-      const stickMag = Math.hypot(padState.rx, padState.ry);
-      if (stickMag < 0.53) {
-        rightStickLatched = false;
-        rightStickDirection = "";
-      } else if (stickMag > 0.68) {
-        const horizontal = Math.abs(padState.rx) > Math.abs(padState.ry) * 1.12;
-        const direction = horizontal
-          ? padState.rx < 0
-            ? "left"
-            : "right"
-          : padState.ry < 0
-            ? "up"
-            : "down";
-        const opposite =
-          (rightStickDirection === "left" && direction === "right") ||
-          (rightStickDirection === "right" && direction === "left");
-        if (!rightStickLatched || opposite) {
-          rightStickLatched = true;
-          rightStickDirection = direction;
-          if (controlMode === "defense") {
-            if (!horizontal)
-              defensiveStick(direction === "up" ? "hit-stick" : "cut-stick");
-          } else if (controlMode === "line") {
-            if (direction === "up") lineImpact();
-          } else if (ballCarrier?.team === 0 || qbMoveMode) {
-            if (horizontal) carrierMove("juke", direction === "left" ? -1 : 1);
-            else if (direction === "up") carrierMove("truck");
-            else carrierMove("hesi");
-          }
-        }
-      }
-      if (controlMode === "offense" && pressed(XBOX.RT)) burst();
-    }
-    refreshControllerStatus();
-  }
-  window.addEventListener("gamepadconnected", () => refreshControllerStatus());
-  window.addEventListener("gamepaddisconnected", () => pollGamepad());
-  function frame(timestamp) {
-    if (!frame.prev) frame.prev = timestamp;
-    let elapsed = Math.min((timestamp - frame.prev) / 1000, 0.05);
-    frame.prev = timestamp;
-    pollGamepad();
-
-    if (phase === "dead" && !paused) {
-      for (const p of players) {
-        if (p.ground?.kind === "tackle") tickGround(p, elapsed);
-      }
-    }
-
-    if (!paused) gameTick(elapsed);
-    if (phase === "live" && !paused) {
-      frame.acc = (frame.acc || 0) + elapsed;
-      let cycles = 0;
-      while (frame.acc >= 1 / 60 && cycles++ < 5 && phase === "live") {
-        update(1 / 60);
-        frame.acc -= 1 / 60;
-      }
-    } else {
-      frame.acc = 0;
-      if (flash > 0) flash = Math.max(0, flash - elapsed);
-    }
-    if (phase === "presnap" && !paused) positionSelectedDefender(elapsed);
-    if (phase === "presnap") hud();
-    // A paused game was still rendering its 3D field 60 times per second. That
-    // kept the GPU busy while the user watched video in another browser window.
-    // Keep controls responsive but reduce GPU uploads/draw calls while paused.
-    if (
-      !paused ||
-      (!document.hidden && timestamp - (frame.lastIdleRender || 0) >= 350)
-    ) {
-      render();
-      if (paused) frame.lastIdleRender = timestamp;
-    }
-    requestAnimationFrame(frame);
-  }
-  function summary() {
-    const p = custom[$("athlete").value];
-    $("physicsSummary").textContent =
-      "Calculated: " +
-      (maxSpeed({ ...p, stam: 1 }) * YARD_M * MPS_TO_MPH).toFixed(1) +
-      " mph top speed · " +
-      (acceleration(p) * YARD_M).toFixed(2) +
-      " m/s² initial drive · " +
-      mass(p).toFixed(1) +
-      " kg mass · " +
-      (catchReach(p) * YARD_M).toFixed(2) +
-      " m modeled catch reach. Burst changes acceleration and velocity, not just the display.";
-  }
-  function sliders() {
-    const k = $("athlete").value,
-      p = custom[k];
-    $("meta").innerHTML =
-      `<div><span>POSITION</span>${p.pos}</div><div><span>HEIGHT</span>${Math.floor(p.h / 12)}′${p.h % 12}″</div><div><span>WEIGHT</span>${p.w} lb</div>`;
-    let list = [
-      "SPD",
-      "ACC",
-      "AGI",
-      "STR",
-      "TRK",
-      "TAK",
-      "BLO",
-      "CAT",
-      "JMP",
-      "AWR",
-    ];
-    if (k === "K") list = ["KPW", "KAC", "PUNT", "SPD", "ACC", "AGI", "AWR"];
-    if (k === "QB")
-      list = [
-        "SPD",
-        "ACC",
-        "AGI",
-        "THP",
-        "THA",
-        "TOR",
-        "VIS",
-        "DEC",
-        "BSK",
-        "AWR",
-        "STR",
-      ];
-    if (k.startsWith("WR"))
-      list = [
-        "SPD",
-        "ACC",
-        "AGI",
-        "JUK",
-        "SFA",
-        "CAT",
-        "RTE",
-        "CUT",
-        "DBL",
-        "REL",
-        "HND",
-        "STA",
-      ];
-    if (k.startsWith("CB"))
-      list = ["SPD", "ACC", "AGI", "COV", "CAT", "JMP", "TAK"];
-    if (k === "MLB" || k === "EDGE1")
-      list = ["SPD", "ACC", "AGI", "STR", "TAK", "AWR", "COV"];
-    if (k === "TE")
-      list = [
-        "SPD",
-        "ACC",
-        "STR",
-        "BLO",
-        "IBL",
-        "CAT",
-        "RTE",
-        "CUT",
-        "REL",
-        "HND",
-      ];
-    if (k === "RB")
-      list = ["SPD", "ACC", "AGI", "JUK", "SFA", "TRK", "STR", "CAT", "STA"];
-    if (["LT", "LG", "C", "RG", "RT", "FB", "TE2"].includes(k))
-      list = ["SPD", "ACC", "AGI", "STR", "BLO", "IBL", "AWR"];
-    if (k === "MLB" || k === "EDGE1" || k === "NT" || k === "SAM")
-      list = ["SPD", "ACC", "AGI", "TAK", "HIT", "PRC", "PUR", "STA", "AWR"];
-    if (k.startsWith("CB"))
-      list = [
-        "SPD",
-        "ACC",
-        "AGI",
-        "COV",
-        "PRS",
-        "JAM",
-        "MIR",
-        "RCR",
-        "DIS",
-        "PRC",
-        "PUR",
-        "STA",
-      ];
-    $("sliders").innerHTML =
-      `<div class="sliderRow"><label>WEIGHT</label><input data-attr="w" type="range" min="155" max="365" step="5" value="${p.w}"><strong class="rating">${p.w}</strong></div><div class="sliderRow"><label>HEIGHT</label><input data-attr="h" type="range" min="65" max="82" step="1" value="${p.h}"><strong class="rating">${p.h}</strong></div>` +
-      list
-        .map(
-          (a) =>
-            `<div class="sliderRow"><label>${a}</label><input data-attr="${a}" type="range" min="30" max="99" step="1" value="${p[a]}"><strong class="rating">${p[a]}</strong></div>`,
-        )
-        .join("");
-    $("sliders")
-      .querySelectorAll("input")
-      .forEach((inp) =>
-        inp.addEventListener("input", () => {
-          p[inp.dataset.attr] = Number(inp.value);
-          inp.nextElementSibling.textContent = inp.value;
-          summary();
-          const live = P(k);
-          if (live) live[inp.dataset.attr] = p[inp.dataset.attr];
-          if (inp.dataset.attr === "h" || inp.dataset.attr === "w")
-            $("meta").innerHTML =
-              `<div><span>POSITION</span>${p.pos}</div><div><span>HEIGHT</span>${Math.floor(p.h / 12)}′${p.h % 12}″</div><div><span>WEIGHT</span>${p.w} lb</div>`;
-        }),
-      );
-    summary();
-  }
-  function screenToField(e) {
-    const r = canvas.getBoundingClientRect(),
-      v = view();
-    return {
-      x: v.left + (e.clientX - r.left) / v.px,
-      y: (e.clientY - r.top) / v.px,
-    };
-  }
-  function useTap(e) {
-    if (paused || phase !== "live" || RUNS.has(selectedPlay) || passThrown)
-      return;
-    const at = screenToField(e),
-      rec = eligibleTargets();
-    let choices = rec
-      .map((p, i) => ({ i, d: Math.hypot(p.x - at.x, p.y - at.y) }))
-      .sort((a, b) => a.d - b.d);
-    if (choices[0].d < 6) passTo(choices[0].i, 0.27);
-  }
-  function resizeStick(e) {
-    const r = $("joystick").getBoundingClientRect();
-    const x = e.clientX - (r.left + r.width / 2),
-      y = e.clientY - (r.top + r.height / 2),
-      m = Math.hypot(x, y),
-      max = r.width * 0.33;
-    joystick.x = clamp(x / max, -1, 1);
-    joystick.y = clamp(y / max, -1, 1);
-    if (m > max) {
-      joystick.x = x / m;
-      joystick.y = y / m;
-    }
-    $("knob").style.transform =
-      `translate(${joystick.x * max}px,${joystick.y * max}px)`;
-  }
-  $("joystick").addEventListener("pointerdown", (e) => {
-    joystick.active = true;
-    joystick.pointer = e.pointerId;
-    $("joystick").setPointerCapture(e.pointerId);
-    resizeStick(e);
-    e.preventDefault();
+  const presentation = attach?.({
+    chooseCoinToss,
+    get sheetFocusKey() {
+      return sheetFocusKey;
+    },
+    set sheetFocusKey(value) {
+      sheetFocusKey = value;
+    },
+    set sheetFocusIndex(value) {
+      sheetFocusIndex = value;
+    },
+    get sheetFocusIndex() {
+      return sheetFocusIndex;
+    },
+    get TEAM_STYLES() {
+      return TEAM_STYLES;
+    },
+    get active() {
+      return active;
+    },
+    get airSelection() {
+      return airSelection;
+    },
+    get AUDIBLE_BUTTONS() {
+      return AUDIBLE_BUTTONS;
+    },
+    get audibleOpen() {
+      return audibleOpen;
+    },
+    get ball() {
+      return ball;
+    },
+    get ballCarrier() {
+      return ballCarrier;
+    },
+    get blockLinks() {
+      return blockLinks;
+    },
+    get burstCool() {
+      return burstCool;
+    },
+    get burstTime() {
+      return burstTime;
+    },
+    get controlMode() {
+      return controlMode;
+    },
+    get coverageDesc() {
+      return coverageDesc;
+    },
+    get coveragePreference() {
+      return coveragePreference;
+    },
+    set coveragePreference(value) {
+      coveragePreference = value;
+    },
+    get custom() {
+      return custom;
+    },
+    get def() {
+      return def;
+    },
+    get defenseDesc() {
+      return defenseDesc;
+    },
+    get down() {
+      return down;
+    },
+    get first() {
+      return first;
+    },
+    get flash() {
+      return flash;
+    },
+    set flash(value) {
+      flash = value;
+    },
+    get formationDesc() {
+      return formationDesc;
+    },
+    get gameFlowNote() {
+      return gameFlowNote;
+    },
+    get gamepadStatusLast() {
+      return gamepadStatusLast;
+    },
+    set gamepadStatusLast(value) {
+      gamepadStatusLast = value;
+    },
+    get gameStarted() {
+      return gameStarted;
+    },
+    get H() {
+      return H;
+    },
+    get intended() {
+      return intended;
+    },
+    get joystick() {
+      return joystick;
+    },
+    get keys() {
+      return keys;
+    },
+    get lastContact() {
+      return lastContact;
+    },
+    get lastTraceMeta() {
+      return lastTraceMeta;
+    },
+    get logs() {
+      return logs;
+    },
+    get manualDrive() {
+      return manualDrive;
+    },
+    set manualDrive(value) {
+      manualDrive = value;
+    },
+    get manualReceiver() {
+      return manualReceiver;
+    },
+    get moveCooldown() {
+      return moveCooldown;
+    },
+    get MPS_TO_MPH() {
+      return MPS_TO_MPH;
+    },
+    get off() {
+      return off;
+    },
+    get padState() {
+      return padState;
+    },
+    get PASS_ICONS() {
+      return PASS_ICONS;
+    },
+    get passThrown() {
+      return passThrown;
+    },
+    get paused() {
+      return paused;
+    },
+    set paused(value) {
+      paused = value;
+    },
+    get pendingPass() {
+      return pendingPass;
+    },
+    set pendingPass(value) {
+      pendingPass = value;
+    },
+    get phase() {
+      return phase;
+    },
+    get pileState() {
+      return pileState;
+    },
+    get playbookOpen() {
+      return playbookOpen;
+    },
+    get playClock() {
+      return playClock;
+    },
+    get players() {
+      return players;
+    },
+    get plays() {
+      return plays;
+    },
+    get playSeconds() {
+      return playSeconds;
+    },
+    set playSeconds(value) {
+      playSeconds = value;
+    },
+    get playStart() {
+      return playStart;
+    },
+    get playTrace() {
+      return playTrace;
+    },
+    get possession() {
+      return possession;
+    },
+    get pressureDesc() {
+      return pressureDesc;
+    },
+    get pressurePreference() {
+      return pressurePreference;
+    },
+    set pressurePreference(value) {
+      pressurePreference = value;
+    },
+    get quarter() {
+      return quarter;
+    },
+    get quarterSeconds() {
+      return quarterSeconds;
+    },
+    get queuedCarrierMove() {
+      return queuedCarrierMove;
+    },
+    set queuedCarrierMove(value) {
+      queuedCarrierMove = value;
+    },
+    get returnCall() {
+      return returnCall;
+    },
+    set returnCall(value) {
+      returnCall = value;
+    },
+    get returnFairCatch() {
+      return returnFairCatch;
+    },
+    set returnFairCatch(value) {
+      returnFairCatch = value;
+    },
+    get rightStickDirection() {
+      return rightStickDirection;
+    },
+    set rightStickDirection(value) {
+      rightStickDirection = value;
+    },
+    get rightStickLatched() {
+      return rightStickLatched;
+    },
+    set rightStickLatched(value) {
+      rightStickLatched = value;
+    },
+    get RUNS() {
+      return RUNS;
+    },
+    get scrimmagePlayCalled() {
+      return scrimmagePlayCalled;
+    },
+    set scrimmagePlayCalled(value) {
+      scrimmagePlayCalled = value;
+    },
+    get secondHalfReceiver() {
+      return secondHalfReceiver;
+    },
+    get selectedCoverage() {
+      return selectedCoverage;
+    },
+    get selectedDefenderKey() {
+      return selectedDefenderKey;
+    },
+    get selectedFormation() {
+      return selectedFormation;
+    },
+    set selectedFormation(value) {
+      selectedFormation = value;
+    },
+    get selectedFront() {
+      return selectedFront;
+    },
+    set selectedFront(value) {
+      selectedFront = value;
+    },
+    get selectedLinemanKey() {
+      return selectedLinemanKey;
+    },
+    get selectedPlay() {
+      return selectedPlay;
+    },
+    get selectedPressure() {
+      return selectedPressure;
+    },
+    get shake() {
+      return shake;
+    },
+    get specialState() {
+      return specialState;
+    },
+    get suppressManualUntilNeutral() {
+      return suppressManualUntilNeutral;
+    },
+    set suppressManualUntilNeutral(value) {
+      suppressManualUntilNeutral = value;
+    },
+    get tackleLinks() {
+      return tackleLinks;
+    },
+    get TEAM_NAMES() {
+      return TEAM_NAMES;
+    },
+    get teamPoints() {
+      return teamPoints;
+    },
+    get timeOuts() {
+      return timeOuts;
+    },
+    get togo() {
+      return togo;
+    },
+    get tossPadPrevious() {
+      return tossPadPrevious;
+    },
+    set tossPadPrevious(value) {
+      tossPadPrevious = value;
+    },
+    get tossStage() {
+      return tossStage;
+    },
+    get totalClock() {
+      return totalClock;
+    },
+    get tryState() {
+      return tryState;
+    },
+    get W() {
+      return W;
+    },
+    get XBOX() {
+      return XBOX;
+    },
+    get xDiveFired() {
+      return xDiveFired;
+    },
+    set xDiveFired(value) {
+      xDiveFired = value;
+    },
+    get xHoldStart() {
+      return xHoldStart;
+    },
+    set xHoldStart(value) {
+      xHoldStart = value;
+    },
+    get yard() {
+      return yard;
+    },
+    get YARD_M() {
+      return YARD_M;
+    },
+    P,
+    acceleration,
+    applyAudible,
+    audibleChoices,
+    availableRunner,
+    burst,
+    carrierMove,
+    catchReach,
+    chooseAirAction,
+    choosePlay,
+    chooseSpecial,
+    clockText,
+    closeAudibles,
+    closestThreat,
+    cycleControlMode,
+    cycleSheetFormation,
+    defenderAirInteractionZone,
+    defensiveFaceButton,
+    defensiveStick,
+    downSafe,
+    eligibleTargets,
+    evade,
+    flightMarkers,
+    gameTick,
+    hidePlaybook,
+    holdStiffArm,
+    hud,
+    isFreeKick,
+    kickLineX,
+    lineImpact,
+    mass,
+    maxSpeed,
+    message,
+    nextDown,
+    openAudibles,
+    organizeReturnUnit,
+    passTo,
+    positionSelectedDefender,
+    protectBall,
+    radius,
+    receiverPromptTargets,
+    releasePass,
+    requestTimeout,
+    reset,
+    setup,
+    showPlaybook,
+    snap,
+    speed,
+    spotText,
+    startNewMatch,
+    startPass,
+    startThirdQuarter,
+    switchDefender,
+    switchToIntendedReceiver,
+    tickGround,
+    update,
   });
-  $("joystick").addEventListener("pointermove", (e) => {
-    if (joystick.active && e.pointerId === joystick.pointer) {
-      resizeStick(e);
-      e.preventDefault();
-    }
-  });
-  function stickReset() {
-    joystick.active = false;
-    joystick.pointer = null;
-    joystick.x = 0;
-    joystick.y = 0;
-    $("knob").style.transform = "translate(0,0)";
-  }
-  $("joystick").addEventListener("pointerup", stickReset);
-  $("joystick").addEventListener("pointercancel", stickReset);
-  function typingTarget(e) {
-    return (
-      ["INPUT", "SELECT", "TEXTAREA"].includes(e.target?.tagName) ||
-      e.target?.isContentEditable
-    );
-  }
-  window.addEventListener("keydown", (e) => {
-    if (typingTarget(e)) return;
-    const key = e.key.toLowerCase();
-    if (key === "p") {
-      togglePause();
-      e.preventDefault();
-      return;
-    }
-    if (
-      key === "k" &&
-      specialState?.kind === "punt" &&
-      phase === "live" &&
-      ball?.flying
-    ) {
-      returnFairCatch = true;
-      message(
-        "<strong>FAIR CATCH SIGNALED.</strong> Returner will down the punt at the catch point.",
-      );
-      e.preventDefault();
-      return;
-    }
-    if (paused) {
-      if ([" ", "shift", "enter"].includes(key)) e.preventDefault();
-      return;
-    }
-    if (phase === "presnap" && audibleOpen) {
-      if (["a", "b", "x", "y"].includes(key)) {
-        applyAudible(["a", "b", "x", "y"].indexOf(key));
-        e.preventDefault();
-        return;
-      }
-      if (key === "escape") {
-        closeAudibles();
-        e.preventDefault();
-        return;
-      }
-      return;
-    }
-    if (phase === "presnap" && key === "x" && !playbookOpen) {
-      openAudibles();
-      e.preventDefault();
-      return;
-    }
-    if (
-      phase === "presnap" &&
-      key === "a" &&
-      controlMode !== "defense" &&
-      !playbookOpen
-    ) {
-      snap();
-      e.preventDefault();
-      return;
-    }
-    if (
-      (phase === "live" ||
-        (phase === "presnap" && controlMode === "defense")) &&
-      [
-        "w",
-        "a",
-        "s",
-        "d",
-        "arrowup",
-        "arrowdown",
-        "arrowleft",
-        "arrowright",
-        " ",
-        "shift",
-      ].includes(key)
-    )
-      e.preventDefault();
-    keys[key] = true;
-    if (e.repeat) return;
-    if (["1", "2", "3", "4"].includes(key))
-      startPass(Number(key) - 1, "keyboard");
-    if (key === " ") evade();
-    if (key === "t") carrierMove("truck");
-    if (
-      (key === "g" || key === "y") &&
-      controlMode === "offense" &&
-      availableRunner()
-    )
-      carrierMove("hurdle");
-    if (key === "f" && !e.repeat) holdStiffArm(true);
-    if (key === "b" && controlMode === "defense") switchDefender();
-    if (key === "b" && controlMode === "offense" && ball?.flying)
-      switchToIntendedReceiver();
-    if (ball?.flying) {
-      if (key === "j")
-        chooseAirAction(controlMode === "offense" ? "rac" : "swat", "keyboard");
-      if (key === "k")
-        chooseAirAction(
-          controlMode === "offense" ? "possession" : "receiver",
-          "keyboard",
-        );
-      if (key === "l")
-        chooseAirAction(
-          controlMode === "offense" ? "aggressive" : "ball",
-          "keyboard",
-        );
-    }
-    if (key === "v" && controlMode === "offense") carrierMove("spin");
-    if (key === "c" && controlMode === "offense") protectBall(true);
-    if (key === "x" && controlMode === "offense" && (ballCarrier || keys.alt)) {
-      xHoldStart = playClock;
-      xDiveFired = false;
-    }
-    if (key === "q" && controlMode === "line") lineImpact();
-    if (key === "z" && controlMode === "defense") defensiveFaceButton("A");
-    if (key === "x" && controlMode === "defense") {
-      if (ball?.flying) chooseAirAction("swat", "keyboard");
-      else defensiveFaceButton("X");
-    }
-    if (key === "h" && controlMode === "defense") defensiveStick("hit-stick");
-    if (key === "n" && controlMode === "defense") defensiveStick("cut-stick");
-    if (key === "shift") burst();
-    if (key === "r") reset();
-    if (key === "enter") {
-      phase === "halftime"
-        ? startThirdQuarter()
-        : phase === "dead"
-          ? nextDown()
-          : snap();
-      e.preventDefault();
-    }
-  });
-  window.addEventListener("keyup", (e) => {
-    const key = e.key.toLowerCase();
-    keys[key] = false;
-    if (key === "c") protectBall(false);
-    if (key === "f") holdStiffArm(false);
-    if (key === "z" && controlMode === "defense") {
-      const d = P(selectedDefenderKey);
-      if (d) d.conservativeHeld = false;
-    }
-    if (key === "x" && xHoldStart !== null) {
-      if (!xDiveFired) downSafe();
-      xHoldStart = null;
-      xDiveFired = false;
-    }
-    if (
-      ["1", "2", "3", "4"].includes(key) &&
-      pendingPass?.source === "keyboard" &&
-      pendingPass.index === Number(key) - 1
-    )
-      releasePass();
-  });
-  window.addEventListener("blur", () => {
-    for (const key of Object.keys(keys)) keys[key] = false;
-    pendingPass = null;
-    protectBall(false);
-    holdStiffArm(false);
-    xHoldStart = null;
-    stickReset();
-  });
-  $("airActions")
-    .querySelectorAll("button[data-air]")
-    .forEach((b, i) =>
-      b.addEventListener("click", () =>
-        chooseAirAction(
-          controlMode === "defense"
-            ? ["swat", "receiver", "ball"][i]
-            : ["rac", "possession", "aggressive"][i],
-          "pointer",
-        ),
-      ),
-    );
-  $("audibleOptions").addEventListener("click", (e) => {
-    const button = e.target.closest("[data-audible]");
-    if (button) applyAudible(Number(button.dataset.audible));
-  });
-  $("audibleClose").addEventListener("click", closeAudibles);
-  $("callSheet").addEventListener("click", (e) => {
-    const ret = e.target.closest("[data-returncall]");
-    if (ret) {
-      returnCall = ret.dataset.returncall;
-      organizeReturnUnit();
-      showPlaybook();
-      return;
-    }
-    const dc = e.target.closest("[data-defense-coverage]");
-    if (dc && possession === 1 && phase === "presnap") {
-      coveragePreference = dc.dataset.defenseCoverage;
-      $("coverage").value = coveragePreference;
-      const remaining = playSeconds,
-        wasCalled = scrimmagePlayCalled;
-      setup();
-      playSeconds = remaining;
-      scrimmagePlayCalled = wasCalled;
-      showPlaybook();
-      return;
-    }
-    const dp = e.target.closest("[data-defense-pressure]");
-    if (dp && possession === 1 && phase === "presnap") {
-      pressurePreference = dp.dataset.defensePressure;
-      $("pressure").value = pressurePreference;
-      const remaining = playSeconds,
-        wasCalled = scrimmagePlayCalled;
-      setup();
-      playSeconds = remaining;
-      scrimmagePlayCalled = wasCalled;
-      showPlaybook();
-      return;
-    }
-    const play = e.target.closest("[data-sheetplay]");
-    if (play) {
-      if (controlMode === "offense") choosePlay(play.dataset.sheetplay);
-      return;
-    }
-    const special = e.target.closest("[data-special]");
-    if (special) {
-      chooseSpecial(special.dataset.special);
-      return;
-    }
-  });
-  $("closeSheet").addEventListener("click", hidePlaybook);
-  $("sheetFormation").addEventListener("change", () => {
-    if (phase !== "presnap" || specialState) return;
-    selectedFormation = $("sheetFormation").value;
-    $("formation").value = selectedFormation;
-    setup();
-    showPlaybook();
-  });
-  $("sheetSnap").addEventListener("click", () => {
-    if (tryState && !tryState.mode) {
-      showPlaybook();
-      return;
-    }
-    snap();
-  });
-  $("playbookBtn").addEventListener("click", () =>
-    phase === "presnap"
-      ? playbookOpen
-        ? hidePlaybook()
-        : showPlaybook()
-      : null,
-  );
-  $("timeoutBtn").addEventListener("click", requestTimeout);
-  $("fairCatchBtn").addEventListener("click", () => {
-    if (phase === "live" && specialState?.kind === "punt" && ball?.flying) {
-      returnFairCatch = true;
-      message(
-        "<strong>FAIR CATCH SIGNALED.</strong> The returner will down the punt.",
-      );
-    }
-  });
-  $("receiverSwitch").addEventListener("click", switchToIntendedReceiver);
-  $("viewMode").addEventListener("click", () =>
-    setVisualMode(visualMode === "3d" ? "2d" : "3d"),
-  );
-  $("controlMode").addEventListener("click", cycleControlMode);
-  $("jukeAction").addEventListener("click", () => carrierMove("juke"));
-  $("truckAction").addEventListener("click", () => carrierMove("truck"));
-  $("hurdleAction").addEventListener("click", () => carrierMove("hurdle"));
-  $("stiffAction").addEventListener("pointerdown", (e) => {
-    holdStiffArm(true);
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch (_) {}
-  });
-  $("stiffAction").addEventListener("pointerup", () => holdStiffArm(false));
-  $("stiffAction").addEventListener("pointercancel", () => holdStiffArm(false));
-  $("pause").addEventListener("click", togglePause);
-  $("boost").addEventListener("click", burst);
-  $("dive").addEventListener("click", evade);
-  $("snap").addEventListener("click", () =>
-    phase === "halftime"
-      ? startThirdQuarter()
-      : phase === "dead"
-        ? nextDown()
-        : snap(),
-  );
-  $("autoRun").addEventListener("click", () => {
-    if (phase === "live" && ballCarrier) {
-      manualDrive = false;
-      hud();
-      canvas.focus({ preventScroll: true });
-    }
-  });
-  $("reset").addEventListener("click", () => startNewMatch());
-  $("downloadTrace").addEventListener("click", downloadTrace);
-  $("athlete").addEventListener("change", sliders);
-  for (let el of document.querySelectorAll("[data-play]"))
-    el.addEventListener("click", () => choosePlay(el.dataset.play));
-  for (const [id, key] of [
-    ["formation", "formation"],
-    ["front", "front"],
-    ["coverage", "coverage"],
-    ["pressure", "pressure"],
-  ])
-    $(id).addEventListener("change", () => {
-      if (phase === "live") return;
-      if (id === "formation") selectedFormation = $(id).value;
-      if (id === "front") selectedFront = $(id).value;
-      if (id === "coverage") coveragePreference = $(id).value;
-      if (id === "pressure") pressurePreference = $(id).value;
-      setup();
-    });
-  for (let el of document.querySelectorAll("[data-target]")) {
-    el.addEventListener("pointerdown", (e) => {
-      startPass(Number(el.dataset.target), "pointer");
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {}
-    });
-    el.addEventListener("pointerup", () => {
-      if (pendingPass?.source === "pointer") releasePass();
-    });
-    el.addEventListener("pointercancel", () => {
-      if (pendingPass?.source === "pointer") pendingPass = null;
-    });
-    // Keyboard accessibility: Enter/Space activate a medium touch pass.
-    el.addEventListener("click", (e) => {
-      if (e.detail === 0) passTo(Number(el.dataset.target), 0.27);
-    });
-  }
-  canvas.addEventListener("click", useTap);
-  window.addEventListener("resize", resize);
-  if (window.ResizeObserver) new ResizeObserver(resize).observe($("canvasbox"));
-  try {
-    renderer3d = createGridironRenderer($("render3d"));
-  } catch (e) {
-    console.warn("WebGL view unavailable; using 2D", e);
-  }
-  $("render3d").addEventListener("webglcontextlost", (e) => {
-    e.preventDefault();
-    recoverFrom3DFailure(new Error("WebGL context lost"));
-  });
-  setVisualMode(renderer3d ? "3d" : "2d");
-  resize();
-  sliders();
   startNewMatch();
-  requestAnimationFrame(frame);
-  window.GRIDIRON_DEBUG = {
+  presentation?.startFrames();
+  const debug = {
     policies: Object.freeze({
       AnimationPolicy,
       BlockingPolicy,
@@ -12027,8 +10124,9 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         defenderY,
       ),
     defensiveFaceButton,
-    moveSheetFocus,
-    chooseSheetFocused,
+    moveSheetFocus: (direction) =>
+      presentation?.moveSheetFocus?.(direction) ?? false,
+    chooseSheetFocused: () => presentation?.chooseSheetFocused?.() ?? false,
     cycleSheetFormation,
     debugDefensePresnap: () => {
       possession = 1;
@@ -12048,11 +10146,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
     getSheet: () => ({
       open: playbookOpen,
       index: sheetFocusIndex,
-      items: sheetOptions().map((b) => ({
-        label: b.innerText,
-        focused: b.classList.contains("padFocus"),
-        selected: b.classList.contains("active"),
-      })),
+      items: presentation?.getSheetItems() ?? [],
     }),
     debugCpuTiming: () =>
       CpuQBPolicy.minimumSettle(
@@ -12139,7 +10233,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       samples: playTrace.length,
       last: playTrace.at(-1) || null,
     }),
-    getVisual: () => renderer3d?.getDebugState?.() || null,
+    getVisual,
     getController: () => ({
       connected: padState.connected,
       index: padState.index,
@@ -12153,7 +10247,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
       rt: padState.rt,
       paused,
     }),
-    getSteering: () => ({ viewMode: visualMode, ...stickInput() }),
+    getSteering: () => ({ viewMode: getVisualMode(), ...stickInput() }),
     getState: () => ({
       paused,
       manualDrive,
@@ -12197,7 +10291,7 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
           target: p.intentTarget,
         })),
       cpuQB: { ...cpuQB, choice: cpuQB.choice?.key || null },
-      viewMode: visualMode,
+      viewMode: getVisualMode(),
       flightMarkers: flightMarkers(),
       ball: ball
         ? {
@@ -12899,8 +10993,9 @@ import { PlaybookNavigation } from "./ui/playbook_navigation.js";
         ["coverage", coveragePreference],
         ["pressure", pressurePreference],
       ])
-        $(id).value = v;
+        emitPresentation({ type: "selectionChanged", key: id, value: v });
       setup();
     },
   };
-})();
+  return debug;
+}
