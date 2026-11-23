@@ -49,10 +49,20 @@ def test_kickoff_control_returns(browser_session, standalone_html):
       page.evaluate(f'{d}.step(78)');aft=state()
       assert aft['phase'] in ('live','dead')
       # TD -> try -> opposing kickoff. "Away" receives and home controls the defense.
-      page.evaluate(f'{d}.newGame();{d}.debugFinishCoinToss();{d}.startKick();{d}.step(149)')
-      if state()['phase']=='live':
-       page.evaluate(f"{d}.debugSetContactEnabled(false);{d}.debugMovePlayer('RB',45,0);{d}.step(2)")
-      if state()['phase']=='dead':page.evaluate(f'{d}.nextDown()')
+      page.evaluate(f'{d}.newGame();{d}.debugFinishCoinToss();{d}.debugSeed(3);{d}.startKick()')
+      finish_return = """() => {
+       const g = GRIDIRON_DEBUG;
+       for (let i = 0; i < 240 && g.getState().phase === 'live' && !g.getState().ballCarrier; i++) g.step(1);
+       const carrier = g.getState().ballCarrier;
+       if (g.getState().phase === 'live' && carrier) {
+        g.debugSetContactEnabled(false);
+        g.debugMovePlayer(carrier, 45, 0);
+        g.step(2);
+       }
+       return g.getState().phase;
+      }"""
+      assert page.evaluate(finish_return)=='dead',state()
+      page.evaluate(f'{d}.nextDown()')
       assert state()['phase']=='presnap',state()['phase']
       page.evaluate(f"{d}.select('inside');{d}.snap();{d}.debugSetContactEnabled(false);{d}.debugWhistle('touchdown')")
       assert get()['teamPoints']==[6,0],get()
@@ -62,13 +72,14 @@ def test_kickoff_control_returns(browser_session, standalone_html):
       assert page.locator('[data-returncall]').count()==0
       assert page.locator('[data-kickready]').count()==1
       assert page.locator('#inputStatus').inner_text()!=''
-      page.evaluate(f'{d}.debugSeed(431);{d}.startKick();{d}.step(180)')
-      # Force the return to finish with no touchdown, then user's defensive calls
-      if state()['phase']=='live':
-       page.evaluate(f"{d}.debugSetContactEnabled(false);{d}.debugMovePlayer('RB',34,0);{d}.step(2)")
-      if state()['phase']=='dead':page.evaluate(f'{d}.nextDown()')
+      page.evaluate(f'{d}.debugSeed(431);{d}.startKick()')
+      # Finish the return using the player who actually fielded the kick.
+      assert page.evaluate(finish_return)=='dead',state()
+      page.evaluate(f'{d}.nextDown()')
       m=get();s=state()
       assert m['possession']==1 and m['controlMode']=='defense',(m,s['phase'])
+      if not get()['playbookOpen']:
+       page.locator('#playbookBtn').click()
       assert page.locator('[data-defense-coverage]').count()==5
       assert page.locator('[data-defense-pressure]').count()==6
       assert 'Multiple & Power' in page.locator('#callSheetSub').inner_text()

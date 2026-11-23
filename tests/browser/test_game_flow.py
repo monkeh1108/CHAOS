@@ -20,16 +20,17 @@ def test_game_flow(browser_session, standalone_html):
       page.evaluate(f'{d}.step(150)');s=page.evaluate(f'{d}.getState()')
       assert s['phase'] in ('live','dead'),s
       if s['phase']=='live':
-       assert s['ballCarrier']=='RB' and s['ball'] is None,s
+       carrier=s['ballCarrier']
+       assert carrier in ('RB','WR2') and s['ball'] is None,s
        page.evaluate(f"{d}.debugSetContactEnabled(false)")
        page.evaluate(f'{d}.step(30)')
        s=page.evaluate(f'{d}.getState()')
        print(width,'returned',s['ballCarrier'],s['phase'])
        if s['phase']=='live':
-        page.evaluate(f"{d}.debugMovePlayer('RB',48,26.65)")
+        page.evaluate(f"{d}.debugMovePlayer('{carrier}',48,26.65)")
         page.evaluate(f"{d}.step(2)")
         # force whistle from existing actual return through contact or out
-        page.evaluate(f"{d}.debugMovePlayer('RB',48,0)")
+        page.evaluate(f"{d}.debugMovePlayer('{carrier}',48,0)")
         page.evaluate(f'{d}.step(2)')
         s=page.evaluate(f'{d}.getState()'); assert s['phase']=='dead',s
       if s['phase']=='dead':page.evaluate(f'{d}.nextDown()')

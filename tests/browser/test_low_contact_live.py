@@ -2,7 +2,11 @@
 
 
 def test_low_contact_live(browser_session, standalone_html):
-    html=standalone_html
+    # Every fixture below advances motion explicitly. Stop the browser's frame
+    # loop so it cannot move players or consume the contact between assertions.
+    html=standalone_html.replace(
+        '<script>', '<script>window.requestAnimationFrame = () => 0;</script><script>', 1,
+    )
     with browser_session(headless=True, args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-angle=swiftshader']) as b:
         for width in (1120,390):
             page=b.new_page(viewport={'width':width,'height':800})

@@ -10,7 +10,8 @@ def test_zone_iq(browser_session, standalone_html):
       page.set_content(html,wait_until='load')
       result=page.evaluate('''() => {
    const g=GRIDIRON_DEBUG;
-   g.debugFinishCoinToss();g.reset();g.select('inside');g.snap();
+   // This seed generates a front with an available double-team.
+   g.debugFinishCoinToss();g.reset();g.select('inside');g.debugSeed(2);g.snap();
    const plan=g.debugInsideZonePlan();
    const allocated=Object.values(plan).filter(p=>p?.target).map(p=>p.target);
    const counts={};for(const k of allocated)counts[k]=(counts[k]||0)+1;

@@ -28,7 +28,7 @@ def test_protection_switch(browser_session, standalone_html):
         print('PASS',size,front,pressure,'blocks',len(state['contacts']['blocks']), 'QB', [(round(p['x'],1),round(p['y'],1)) for p in state['players'] if p['key']=='QB'])
       # B switch during pass, moving receiver when stick goes right.
       a=page.evaluate('''()=>{let d=GRIDIRON_DEBUG;d.reset();d.setScheme('spread','nickel','cover1','balanced');d.select('verticals');d.snap();d.debugSetContactEnabled(false);d.step(25);d.passTo(1,.21);return d.getState()}''')
-      assert a['ball'] and a['target']=='WR2' and a['active']==None,a
+      assert a['ball'] and a['target']=='WR2' and a.get('active') is None,a
       page.evaluate('''()=>{window.fakePad={connected:true,index:0,id:'Xbox One test',mapping:'standard',axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,value:0}))};Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.fakePad]});window.fakePad.buttons[1]={pressed:true,value:1};}''')
       page.wait_for_function("GRIDIRON_DEBUG.getState().manualReceiver")
       s=page.evaluate('GRIDIRON_DEBUG.getState()');assert s['manualReceiver'] and s['active']=='WR2',(size,s['active'],s['manualReceiver'])

@@ -10,6 +10,7 @@ def test_protection_quickgame(browser_session, standalone_html):
       page.set_content(HTML,wait_until='load')
       assert page.evaluate('GRIDIRON_DEBUG.getQuarterDuration()')==60
       assert page.evaluate('GRIDIRON_DEBUG.getMatch().quarterSeconds')==60
+      page.evaluate('GRIDIRON_DEBUG.debugFinishCoinToss()')
       page.evaluate('GRIDIRON_DEBUG.reset();GRIDIRON_DEBUG.debugDefensePresnap()')
       # Clean defensive look: far safety should not trigger a protection alert.
       page.evaluate('GRIDIRON_DEBUG.snap(true)')
