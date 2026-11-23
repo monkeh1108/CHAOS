@@ -877,7 +877,7 @@
     const blockMode = contact2 && p.blockMode ? p.blockMode : null;
     const blockArms = !!contact2 && !!blockMode;
     const plant = action === "juke" || action === "hesi" || !!(p.jukeDrive?.remaining > 0);
-    const sidestep = p.intent === "carry-auto" ? p.carrierObstacle?.bank || 0 : 0;
+    const sidestep = p.intent === "carry-auto" && !air && !ground && !action ? p.runnerCutBank || p.carrierObstacle?.bank || 0 : 0;
     const stance = preSnap && speed < 0.55 && !contact2 && !ground && !action && !air ? preSnapStance(p) : null;
     let state2 = "idle";
     if (ground)
@@ -7962,6 +7962,31 @@
     };
   }
 
+  // src/physics/runner_cut.js
+  function runnerCut(player, vx, vy, targetAngle, mass2, dt) {
+    const speed = Math.hypot(vx, vy);
+    const difference = targetAngle - Math.atan2(vy, vx);
+    const turn = Math.atan2(Math.sin(difference), Math.cos(difference));
+    const magnitude = Math.abs(turn);
+    if (speed < 2.4 || magnitude < 0.17 || magnitude > 2.15) return null;
+    const skill = clamp(
+      (player.AGI * 0.55 + (player.JUK ?? 65) * 0.3 + (player.CUT ?? 65) * 0.15 - 25) / 74,
+      0,
+      1
+    );
+    const balance = clamp(player.balance, 0.4, 1);
+    const plantRate = (1.35 + 2.55 * skill) * balance * Math.pow(95 / mass2, 0.14);
+    const angle2 = clamp(turn, -plantRate * dt, plantRate * dt) / (1 + Math.max(0, speed - 5) * 0.1);
+    const retained = 1 - Math.abs(angle2) * (0.44 - 0.32 * skill) * (1 + magnitude * 0.2);
+    const c = Math.cos(angle2);
+    const s = Math.sin(angle2);
+    return {
+      vx: (vx * c - vy * s) * retained,
+      vy: (vy * c + vx * s) * retained,
+      bank: clamp(turn * 0.34, -0.24, 0.24) * balance
+    };
+  }
+
   // src/physics/player_movement.js
   function createPlayerMovement() {
     let acceleration, launchAssist, mass2, matchState, maxSpeed, speed, sprintHeld;
@@ -8088,6 +8113,16 @@
           const rotatedX = vx * c - vy * t, rotatedY = vx * t + vy * c;
           vx = rotatedX * preserved;
           vy = rotatedY * preserved;
+        }
+        if (p.intent === "carry-auto" && p === matchState.ballCarrier && RUNS.has(matchState.selectedPlay) && !matchState.specialState && !p.stumbleTime && !p.ground && !p.airState && !p.action) {
+          const cut = runnerCut(p, vx, vy, targetAngle, mass2(p), dt);
+          if (cut) {
+            vx = cut.vx;
+            vy = cut.vy;
+          }
+          p.runnerCutBank = (p.runnerCutBank || 0) + clamp((cut?.bank || 0) - (p.runnerCutBank || 0), -dt * 2.8, dt * 2.8);
+        } else if (p.runnerCutBank) {
+          p.runnerCutBank = 0;
         }
         const alignment = spd > 0.15 ? (vx * dx + vy * dy) / (Math.hypot(vx, vy) * norm) : 1;
         const traction = clamp(0.9 + (p.AGI - 70) * 27e-4, 0.74, 1);
@@ -11733,6 +11768,7 @@
           doubleMoveWins: p.doubleMoveWins,
           intent: p.intent,
           intentTarget: p.intentTarget,
+          runnerCutBank: p.runnerCutBank || 0,
           supportTarget: p.supportTarget,
           supportUntil: p.supportUntil,
           closePursuitRead: p.closePursuitRead ? { ...p.closePursuitRead } : null,

@@ -195,6 +195,7 @@ export function createMatchView({
         doubleMoveWins: p.doubleMoveWins,
         intent: p.intent,
         intentTarget: p.intentTarget,
+        runnerCutBank: p.runnerCutBank || 0,
         supportTarget: p.supportTarget,
         supportUntil: p.supportUntil,
         closePursuitRead: p.closePursuitRead ? { ...p.closePursuitRead } : null,

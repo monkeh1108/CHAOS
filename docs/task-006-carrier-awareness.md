@@ -65,3 +65,15 @@ With neutral movement, the seeded Counter reaches the right tackle and
 starts turning before contact. The clear-lane check can reject a sidestep
 when teammates or defenders occupy the exits. This revision leaves that
 choice to the existing awareness and gap checks.
+
+## Ordinary running cuts
+
+An automatically controlled back can plant at any rating when his intended
+lane differs from his current direction of travel. This includes the transition
+from the handoff to the called lane and the change from an outside sweep to
+an upfield run. Agility, juke technique, and cut ability govern the turn rate
+and speed retention. Body mass, speed and balance still limit the plant.
+Straight running and deliberate reversals use ordinary movement.
+
+Avoiding a particular blocker still needs a clear exit. Ordinary turns can
+be seen without setting up that particular collision.

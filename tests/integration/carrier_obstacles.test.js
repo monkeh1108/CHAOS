@@ -37,12 +37,12 @@ function runner(game, carrier = "RB") {
 function sample(
   game,
   frames,
-  { blocked = false, far = false, stick, oneSide = false, carrier = "RB" } = {},
+  { blocked = false, far = false, stick, oneSide = false, carrier = "RB", blockerX = 60.6 } = {},
 ) {
   const history = [];
   for (let i = 0; i < frames; i++) {
     // A deliberately planted blocker isolates the recognition and collision timings.
-    const x = far ? 73 : 60.6;
+    const x = far ? 73 : blockerX;
     game.debugMovePlayer("LG", x, 26);
     if (blocked || oneSide) game.debugMovePlayer("C", x, 24.85);
     if (blocked) game.debugMovePlayer("RG", x, 27.15);
@@ -90,16 +90,16 @@ test("awareness needs a real gap and has a bounded recognition distance", () => 
 
 test("slow and fast approaches leave time to react with different outcomes", () => {
   const slow = arrange({ speed: 2 });
-  const fast = arrange({ speed: 9 });
-  const slowFrames = sample(slow, 72);
-  const fastFrames = sample(fast, 44);
+  const fast = arrange({ speed: 10 });
+  const slowFrames = sample(slow, 72, { blockerX: 59.8 });
+  const fastFrames = sample(fast, 44, { blockerX: 59.8 });
   assert.ok(
     slowFrames.findIndex((p) => p.intentTarget === "LG") >
       fastFrames.findIndex((p) => p.intentTarget === "LG"),
   );
   const fastImpact = fast.debugIndirectContact();
   assert.equal(slow.debugIndirectContact(), null);
-  assert.ok(slowFrames.at(-1).x > 60.6);
+  assert.ok(slowFrames.at(-1).x > 59.8);
   assert.equal(fastImpact.kind, "teammate-bump");
   // The first recognition tick changes the steering target, not the velocity directly.
   const index = fastFrames.findIndex((p) => p.intentTarget === "LG");

@@ -92,7 +92,9 @@ function sample(p, contact = false, preSnap = false) {
   const blockArms = !!contact && !!blockMode;
   const plant =
     action === "juke" || action === "hesi" || !!(p.jukeDrive?.remaining > 0);
-  const sidestep = p.intent === "carry-auto" ? p.carrierObstacle?.bank || 0 : 0;
+  const sidestep = p.intent === "carry-auto" && !air && !ground && !action
+    ? p.runnerCutBank || p.carrierObstacle?.bank || 0
+    : 0;
   const stance =
     preSnap && speed < 0.55 && !contact && !ground && !action && !air
       ? preSnapStance(p)
