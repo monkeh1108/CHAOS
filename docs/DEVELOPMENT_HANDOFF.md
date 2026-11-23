@@ -9,7 +9,7 @@ Reviewed November 23, 2026. This is a record of decisions and review status.
 | --- | --- | --- |
 | Juke animation appearance | Owner accepted for the current phase. Preserve the tested left/right plants, weight transfer, push-off and recovery, plus existing timing, responsiveness and gameplay behavior. | Draft [#22](https://github.com/monkeh1108/CHAOS/pull/22), head `d55a6ca`, build SHA-256 prefix `661b52e5a350c83e`. |
 | Running, foot planting and full-body articulation | Combined owner acceptance remains open. Earlier approval to integrate individual model, elbow and lower-body changes still stands. | [#18](https://github.com/monkeh1108/CHAOS/pull/18), [#19](https://github.com/monkeh1108/CHAOS/pull/19), [#20](https://github.com/monkeh1108/CHAOS/pull/20), [#22](https://github.com/monkeh1108/CHAOS/pull/22). |
-| Recurring multi-defender rear-tackle regression | Open. The older rear-contact improvement and recent passing checks establish reference behavior; the current recurrence needs independent live reproduction and verification. | [#1](https://github.com/monkeh1108/CHAOS/pull/1), [Task 001 reproduction draft](../tasks/drafts/001-rear-pile-repro.md), [Task 002 neutral-runner draft](../tasks/drafts/002-neutral-runner-rear-push-refinement.md). |
+| Recurring multi-defender rear-tackle regression | Open. The older rear-contact improvement and recent passing checks establish reference behavior; the owner subsequently saw a group push the carrier around the field indefinitely without completing the rear tackle. Exact build and setup still need confirmation. | [#1](https://github.com/monkeh1108/CHAOS/pull/1), [Task 001 reproduction draft](../tasks/drafts/001-rear-pile-repro.md), [Task 002 neutral-runner draft](../tasks/drafts/002-neutral-runner-rear-push-refinement.md). |
 | Final Player Model & Animation Update | Awaiting combined build playtest, green checks on that candidate and explicit approval. The owner performs the merge. | Integration tip `c9979fa`; GitHub `main` at `df40a18` at review. |
 
 Paste the corresponding path into File Explorer.
@@ -53,8 +53,8 @@ ref for character work and preserve those local edits.
   77 passing Node checks and four exact Chromium replays. A controlled
   22-player WebGL comparison held at 532 draw calls with median CPU
   submission around 0.9 to 1.1 ms. GPU timing and live-play review beyond the
-  accepted juke appearance remain open. Check current CI before asking for
-  any merge. Legacy proposals [#3](https://github.com/monkeh1108/CHAOS/pull/3)
+  accepted juke appearance remain open. The [GitHub build-and-test check](https://github.com/monkeh1108/CHAOS/actions/runs/45262365427/job/138000208128)
+  passed on the draft head; recheck the exact candidate before any merge. Legacy proposals [#3](https://github.com/monkeh1108/CHAOS/pull/3)
   and [#5](https://github.com/monkeh1108/CHAOS/pull/5) were still open at review.
   Check their scope against current gameplay before reusing anything.
 
@@ -103,7 +103,10 @@ ref for character work and preserve those local edits.
   update paths, with controlled rear and mixed approaches as supplements.
   Track active grips, contact eligibility, recovery, collisions and yards
   moved. Distinguish defender-transferred momentum from the runner's own
-  leg drive before changing physics. Keep historic draft issues, including
+  leg drive before changing physics. A separate earlier report describes a
+  breakaway receiver who could not be tackled again after breaking one
+  attempt during a long rear pursuit. Preserve it as a separate repro lead
+  unless evidence connects the cases. Keep historic draft issues, including
   dive recovery and interception eligibility, subject to reproduction and
   current scope approval.
 
@@ -134,6 +137,8 @@ Reviewed the visible turns of the [shared development conversation](https://chat
 the recovered `CHAOS IDEAS.txt` and development/refactor prompts, current
 repository instructions and docs, the task and known-issue records, and
 relevant PR descriptions, review/comment records and branch history.
+Recovered prior owner feedback supplied the rear-pile symptom and confirmed
+that automated checks cannot substitute for the owner playtest.
 The shared snapshot does not expose every turn or the contents of all
 original attachments. Some file-only turns have no identifying content.
 Repository history was used to verify actual merge state when a historical
