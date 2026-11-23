@@ -298,7 +298,74 @@ export function createPursuit() {
       : ChaosPursuitReaction.aim(d, a, angle, matchState.playClock);
   }
 
+  function escapeRecoveryAim(d, a) {
+    const recovery = d.reengage;
+    if (recovery?.carrier !== a.key || recovery.hasSeparated || d.blocked >= 0.25)
+      return null;
+
+    const sep = dist(d, a);
+    if (sep >= recovery.requiredGap || sep < 0.001) return null;
+    const fx = (a.x - d.x) / sep;
+    const fy = (a.y - d.y) / sep;
+    if (!recovery.peel) {
+      // A trailing defender can screen the runner from his own teammates
+      // while still ineligible to re-grip. Only reset his lane if another
+      // available tackler is actually approaching through that lane.
+      const heading =
+        Math.hypot(a.vx, a.vy) > 1 ? Math.atan2(a.vy, a.vx) : a.face;
+      const hx = Math.cos(heading);
+      const hy = Math.sin(heading);
+      if (fx * hx + fy * hy < 0.6) return null;
+      const crowd = matchState.def.find((other) => {
+        if (
+          other === d ||
+          other.ground ||
+          other.stun > 0 ||
+          other.blocked >= 0.25 ||
+          other.tackleCooldown > 0 ||
+          other.reengage?.carrier === a.key
+        )
+          return false;
+        const x = d.x - other.x;
+        const y = d.y - other.y;
+        return (
+          x * fx + y * fy > 0.25 &&
+          Math.hypot(x, y) < 1.65 &&
+          Math.abs(y * fx - x * fy) < 0.65
+        );
+      });
+      if (!crowd) return null;
+
+      const lateral = -(d.x - a.x) * hy + (d.y - a.y) * hx;
+      const crowdSide = -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx;
+      let side =
+        Math.abs(lateral) > 0.08
+          ? Math.sign(lateral)
+          : -Math.sign(crowdSide) || 1;
+      const width = recovery.requiredGap + 0.15;
+      const lane = d.y + side * hx * width;
+      if (lane < 0.65 || lane > H - 0.65) side *= -1;
+      // Commit to the chosen flank until separated. Replanning at every
+      // jostle would turn him back in before he could clear the lane.
+      recovery.peel = { x: -side * hy * width, y: side * hx * width };
+    }
+    return {
+      x: clamp(d.x - fx * 0.35 + recovery.peel.x, 10, 110),
+      y: clamp(d.y - fy * 0.35 + recovery.peel.y, 0.65, H - 0.65),
+      mode: "escape-recovery",
+      role: a.key,
+    };
+  }
+
   function pursuitAI(d, a, dt) {
+    const recovery = escapeRecoveryAim(d, a);
+    if (recovery) {
+      d.pursuitPoint = recovery;
+      d.intent = "recover";
+      d.intentTarget = a.key;
+      steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
+      return;
+    }
     const aim = pursuitAim(d, a);
     d.pursuitPoint = aim;
     const rating = clamp(0.95 + (d.PUR - 70) * 0.0032, 0.82, 1.11);
