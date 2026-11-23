@@ -35,13 +35,55 @@ const thighLength = Math.hypot(0.03, 0.48);
 const thighOffset = Math.atan2(0.03, 0.48);
 const shinLength = 0.405;
 const strideEffort = (speed) => ease((speed - 2.5) / 4.8);
-export function runningCycle(travel, speed, scale, previous) {
-  const stride = (1.4 + 0.68 * strideEffort(speed)) * scale;
-  const phase =
-    previous && travel >= previous.travel
-      ? previous.phase + (travel - previous.travel) / stride
-      : travel / stride;
-  return { travel, phase: phase % 1, stride };
+export function runningCycle(travel, speed, scale, previous, clock) {
+  if (
+    clock !== undefined &&
+    clock === previous?.clock &&
+    travel === previous.travel
+  )
+    return previous;
+  const continues = previous && travel >= previous.travel;
+  const dt = continues ? clock - previous.clock : 0;
+  const track = dt > 0 && dt <= 0.12;
+  // Integrate phase from authoritative travel. Filter pose intensity and
+  // acceleration separately so changing speeds never resets the stride.
+  const pace = track
+    ? previous.pace + (speed - previous.pace) * limit(dt * 12, 0, 1)
+    : speed;
+  const acceleration = track
+    ? previous.acceleration +
+      ((speed - previous.speed) / dt - previous.acceleration) *
+        limit(dt * 7, 0, 1)
+    : 0;
+  const stride = (1.4 + 0.68 * strideEffort(pace)) * scale;
+  const phase = continues
+    ? previous.phase + (travel - previous.travel) / stride
+    : travel / stride;
+  return { travel, phase: phase % 1, stride, speed, pace, acceleration, clock };
+}
+
+export function runningBody(cycle) {
+  const effort = strideEffort(cycle.pace);
+  const drive = ease((cycle.acceleration - 0.4) / 6);
+  const braking = ease((-cycle.acceleration - 0.5) / 7);
+  // A leg reaches forward at contact. The opposite arm and shoulder lead it.
+  const opposition = Math.cos(2 * Math.PI * (cycle.phase + 0.055));
+  return {
+    lean: limit(
+      0.025 + 0.095 * effort + 0.12 * drive - 0.1 * braking,
+      -0.045,
+      0.19,
+    ),
+    pelvisYaw: opposition * (0.046 + 0.053 * effort),
+    bob:
+      (0.012 + 0.009 * effort) *
+      (0.5 + 0.5 * Math.cos(4 * Math.PI * (cycle.phase + 0.08))),
+    armDrive:
+      opposition *
+      (0.26 + 0.37 * effort + 0.085 * drive) *
+      (1 - 0.23 * braking),
+    elbow: 0.84 + 0.39 * effort + 0.08 * drive,
+  };
 }
 
 export function runningWeight(p, pose) {
@@ -53,6 +95,8 @@ export function runningWeight(p, pose) {
     pose.stance ||
     pose.plant ||
     p.airState ||
+    (p.wrapReach || 0) > 0.01 ||
+    p.intent === "wrap" ||
     p.stumbleTime > 0 ||
     pose.standUp > 0.05 ||
     pose.escapePulse > 0 ||
@@ -73,7 +117,7 @@ export function runningLeg(cycle, speed, side, scale, hip) {
   const support = 0.56 - 0.11 * effort;
   const phase = (cycle.phase + (side > 0 ? 0.5 : 0)) % 1;
   const swing = limit((phase - support) / (1 - support), 0, 1);
-  const rollOff = 0.36 + 0.26 * effort;
+  const rollOff = 0.36 + 0.21 * effort + 0.05 * ease(cycle.acceleration / 6);
   const pitch =
     phase < support
       ? 0.12 * (1 - ease(phase / 0.13)) -
@@ -83,7 +127,7 @@ export function runningLeg(cycle, speed, side, scale, hip) {
     (cycle.stride / scale) * (support * 0.5 - phase + ease(swing)) -
     (0.025 + 0.035 * effort);
   const lift =
-    (0.145 + 0.17 * effort) *
+    (0.145 + 0.145 * effort) *
     Math.sin(Math.PI * swing) ** 2 *
     (1.17 - 0.34 * swing);
   // Match the cleat's ellipsoid sole at the requested pitch, including toe-off.

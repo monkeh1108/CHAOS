@@ -3,6 +3,7 @@ import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
 import {
   AnimationPolicy,
+  runningBody,
   runningCycle,
   runningLeg,
   runningWeight,
@@ -614,9 +615,11 @@ export function createGridironRenderer(canvas) {
     const previousCycle = strideCycles.get(p);
     const cycle =
       gait > 0 || previousCycle
-        ? runningCycle(p.travel || 0, pose.speed, s, previousCycle)
+        ? runningCycle(p.travel || 0, pose.speed, s, previousCycle, clock)
         : null;
-    if (cycle) strideCycles.set(p, cycle);
+    if (cycle && cycle.clock !== previousCycle?.clock)
+      strideCycles.set(p, cycle);
+    const running = gait > 0 ? runningBody(cycle) : null;
     // The same physical contact and knocked-down states drive the pose.
     if (ground) {
       const fall =
@@ -637,7 +640,12 @@ export function createGridironRenderer(canvas) {
       root = mul(root, rotZ(tilt));
       root = at(root, 0, ground.stage === "rise" ? 0.31 : 0.2, 0);
     } else {
-      root = at(root, 0, bob - pose.crouch - gait * (0.067 * s + bob), 0);
+      root = at(
+        root,
+        0,
+        bob - pose.crouch + gait * (((running?.bob || 0) - 0.067) * s - bob),
+        0,
+      );
       root = mul(root, rotZ(pose.lean + pose.stanceLean - pose.impactAccent));
       root = mul(root, rotX(pose.bank));
       root = mul(root, rotY(pose.yaw));
@@ -743,29 +751,52 @@ export function createGridironRenderer(canvas) {
           : 0.58
       : 0;
     const shift = winded ? 0.05 : 0;
+    // Counter-rotate about the waist and keep the original attachment points.
+    const pelvis = running
+      ? at(
+          mul(at(root, 0, 0.87, 0), rotY(running.pelvisYaw * gait)),
+          0,
+          -0.87,
+          0,
+        )
+      : root;
+    const chest = running
+      ? at(
+          mul(
+            at(root, 0, 1.02, 0),
+            mul(
+              rotY(-running.pelvisYaw * 0.8 * gait),
+              rotZ(-running.lean * gait),
+            ),
+          ),
+          0,
+          -1.02,
+          0,
+        )
+      : root;
     // Keep the established root and joint centers. Build the uniform around
     // them so pads sit over the upper arms and the helmet sits on a neck.
     sphere(
-      root,
+      pelvis,
       [0, 0.94 + shift, 0],
       [0.44 * breadth, 0.37, 0.57 * breadth],
       C.pants,
     );
     paint(
       "torso",
-      root,
+      chest,
       [0, 1.35 + shift, 0],
       [0.54 * breadth, 0.78, 0.75 * breadth],
       jersey,
     );
-    sphere(root, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
-    sphere(root, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
-    sphere(root, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
-    box(root, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
-    box(root, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
+    sphere(chest, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
+    sphere(chest, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
+    sphere(chest, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
+    box(chest, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
+    box(chest, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
-      let hip = at(root, 0, 0.87, side * 0.2 * breadth);
-      const leg = gait > 0 ? runningLeg(cycle, pose.speed, side, s, hip) : null;
+      let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
+      const leg = gait > 0 ? runningLeg(cycle, cycle.pace, side, s, hip) : null;
       const hipSwing =
         (run ? side * legAmp * step : 0) +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
@@ -810,7 +841,7 @@ export function createGridironRenderer(canvas) {
         [0.37, 0.145, 0.225 * breadth],
         C.shoe,
       );
-      let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
+      let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
       // free to carry/balance the football. Animation reflects an actual move.
@@ -912,7 +943,8 @@ export function createGridironRenderer(canvas) {
                                 : run
                                   ? -side * step * legAmp * 0.8 * pose.armDrive
                                   : 0.1);
-      shoulder = mul(shoulder, rotZ(swing));
+      const pump = running ? 0.21 + side * running.armDrive : swing;
+      shoulder = mul(shoulder, rotZ(swing + (pump - swing) * gait));
       sphere(
         shoulder,
         [0.005, -0.026, -side * 0.029 * breadth],
@@ -922,9 +954,10 @@ export function createGridironRenderer(canvas) {
       // Retain the contact arm pivots and bend from ChaosDiveReach so the
       // redesigned sleeves and gloves still follow the same reaching hands.
       const reachPose = ground ? null : divePose || standingWrapPose;
-      const bend =
+      const baseBend =
         reachPose?.elbow ??
         (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
+      const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
       const pivot = at(shoulder, 0, -0.43, 0);
       const twist = side * (reachPose?.inward || 0);
       const extension = reachPose ? 0.43 : 0.34;
@@ -943,7 +976,7 @@ export function createGridironRenderer(canvas) {
       sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
     }
     if (carrier === p)
-      sphere(root, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
+      sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
     if (selected === p) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);

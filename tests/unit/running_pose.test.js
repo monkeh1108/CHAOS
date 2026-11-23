@@ -3,6 +3,7 @@ const { test } = require("node:test");
 const {
   AnimationPolicy,
   runningLeg,
+  runningBody,
   runningCycle,
   runningWeight,
 } = require("../../src/render/animation_policy.js");
@@ -83,5 +84,41 @@ test("sprinting increases stride reach and speed changes preserve phase", () => 
   const slower = runningCycle(0.35, 3.2, 1, acceleration);
   assert.ok(
     Math.abs(slower.phase - acceleration.phase - 0.15 / jog.stride) < 1e-9,
+  );
+});
+
+test("the arm pump follows the opposite leg without changing stride phase", () => {
+  const jog = { ...runningCycle(0, 3.2, 1), phase: 0.1 };
+  const sprint = { ...runningCycle(0, 7.8, 1), phase: jog.phase };
+  assert.ok(runningBody(sprint).armDrive > runningBody(jog).armDrive * 1.5);
+  assert.ok(runningBody(sprint).lean > runningBody(jog).lean + 0.05);
+  assert.ok(runningBody(sprint).elbow > runningBody(jog).elbow);
+  const opposite = runningBody({ ...sprint, phase: sprint.phase + 0.5 });
+  assert.ok(opposite.armDrive < 0 && opposite.pelvisYaw < 0);
+  assert.ok(Math.abs(opposite.armDrive + runningBody(sprint).armDrive) < 1e-9);
+});
+
+test("acceleration adds forward lean and braking straightens the running pose", () => {
+  const start = runningCycle(0, 4.5, 1, undefined, 1);
+  const drive = runningCycle(0.25, 5, 1, start, 1.05);
+  const slowing = runningCycle(0.25, 4, 1, start, 1.05);
+  assert.ok(
+    runningBody(drive).lean > runningBody({ ...drive, acceleration: 0 }).lean,
+  );
+  assert.ok(
+    runningBody(slowing).lean <
+      runningBody({ ...slowing, acceleration: 0 }).lean,
+  );
+  assert.ok(drive.pace > start.speed && drive.pace < drive.speed);
+  assert.equal(
+    runningCycle(drive.travel, drive.speed, 1, drive, drive.clock),
+    drive,
+  );
+  assert.equal(
+    runningWeight(
+      { ...runner(7.8), wrapReach: 0.4 },
+      AnimationPolicy.sample(runner(7.8)),
+    ),
+    0,
   );
 });
