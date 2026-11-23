@@ -13509,12 +13509,22 @@
         [0.46, 0.34],
         [0.5, 0]
       ]),
-      limb: profileMesh([
+      upperLimb: profileMesh([
         [-0.5, 0],
-        [-0.42, 0.31],
-        [-0.24, 0.37],
-        [0.25, 0.5],
-        [0.41, 0.41],
+        [-0.43, 0.25],
+        [-0.22, 0.33],
+        [0.13, 0.5],
+        [0.36, 0.46],
+        [0.5, 0]
+      ]),
+      // Keep the narrow end over the hinge and the muscle belly below it.
+      lowerLimb: profileMesh([
+        [-0.5, 0],
+        [-0.43, 0.27],
+        [-0.21, 0.34],
+        [0.02, 0.5],
+        [0.23, 0.46],
+        [0.38, 0.35],
         [0.5, 0]
       ])
     };
@@ -13822,10 +13832,10 @@
           )
         );
         paint(
-          "limb",
+          "upperLimb",
           hip,
-          [0.02, -0.21, 0],
-          [0.32, 0.65, 0.3 * breadth],
+          [0.02, -0.22, 0],
+          [0.31, 0.65, 0.3 * breadth],
           C.pants
         );
         const knee = mul(
@@ -13835,13 +13845,13 @@
           )
         );
         paint(
-          "limb",
+          "lowerLimb",
           knee,
-          [0.04, -0.18, 0],
-          [0.23, 0.55, 0.23 * breadth],
+          [0.015, -0.205, 0],
+          [0.203, 0.56, 0.209 * breadth],
           C.pants
         );
-        sphere(knee, [0.14, -0.4, 0], [0.4, 0.17, 0.25 * breadth], C.shoe);
+        sphere(knee, [0.12, -0.405, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
         let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
         const stiffExtended = action === "stiff" && side < 0;
         const overhead = ["aggressive", "ball", "swat"].includes(aKind);
@@ -13853,15 +13863,15 @@
         shoulder = mul(shoulder, rotZ(swing));
         sphere(
           shoulder,
-          [5e-3, -0.045, 0],
-          [0.37 * breadth, 0.29, 0.34 * breadth],
+          [5e-3, -0.026, -side * 0.029 * breadth],
+          [0.33 * breadth, 0.233, 0.29 * breadth],
           jersey
         );
         paint(
-          "limb",
+          "upperLimb",
           shoulder,
-          [0, -0.197, 0],
-          [0.23, 0.55, 0.22 * breadth],
+          [0, -0.22, 0],
+          [0.217, 0.58, 0.21 * breadth],
           jersey
         );
         const reachPose = ground ? null : divePose || standingWrapPose;
@@ -13872,10 +13882,10 @@
         );
         const extension = reachPose ? 0.43 : 0.34;
         paint(
-          "limb",
+          "lowerLimb",
           elbow,
-          [0, -extension * 0.4, 0],
-          [0.16, extension * 1.16, 0.17 * breadth],
+          [0, -extension * 0.42, 0],
+          [0.155, extension * 1.22, 0.157 * breadth],
           C.skin
         );
         sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
