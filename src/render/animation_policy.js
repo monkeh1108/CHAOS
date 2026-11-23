@@ -111,6 +111,62 @@ export function upperBodyArticulation(pose, running, gait, cutWeight) {
   };
 }
 
+// Add small, mirrored equipment-side rotations to existing ready and reach
+// poses. Contact reach, the running arm pump and juke balance keep their
+// original shoulder and elbow angles.
+export function armArticulation(side, catchKind, blockMode, quarterbackReady) {
+  if (blockMode) {
+    return {
+      lift: 0.016,
+      advance: 0.022,
+      yaw: side * 0.09,
+      flex: -0.16,
+      roll: side * 0.18,
+    };
+  }
+  switch (catchKind) {
+    case "aggressive":
+    case "ball":
+      return {
+        lift: 0.038,
+        advance: 0,
+        yaw: side * 0.13,
+        flex: -0.09,
+        roll: side * 0.24,
+      };
+    case "possession":
+      return {
+        lift: 0.012,
+        advance: 0.01,
+        yaw: side * (side > 0 ? 0.52 : 0.14),
+        flex: -0.2,
+        roll: side * 0.33,
+      };
+    case "receiver":
+    case "rac":
+      return {
+        lift: 0.008,
+        advance: 0.012,
+        yaw: side * 0.11,
+        flex: -0.11,
+        roll: side * 0.22,
+      };
+    case "swat":
+      if (side < 0)
+        return {
+          lift: 0.032,
+          advance: 0,
+          yaw: -0.07,
+          flex: -0.09,
+          roll: -0.14,
+        };
+      break;
+  }
+  return quarterbackReady
+    ? { lift: 0, advance: 0, yaw: side * 0.12, flex: 0.12, roll: side * 0.25 }
+    : null;
+}
+
 export function runningWeight(p, pose, cutting = false) {
   // Keep the established poses for a plant, contact, or special action.
   if (

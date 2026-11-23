@@ -899,6 +899,56 @@
       neckPitch: limit(stanceLean * 0.48, 0, 0.18)
     };
   }
+  function armArticulation(side, catchKind, blockMode, quarterbackReady) {
+    if (blockMode) {
+      return {
+        lift: 0.016,
+        advance: 0.022,
+        yaw: side * 0.09,
+        flex: -0.16,
+        roll: side * 0.18
+      };
+    }
+    switch (catchKind) {
+      case "aggressive":
+      case "ball":
+        return {
+          lift: 0.038,
+          advance: 0,
+          yaw: side * 0.13,
+          flex: -0.09,
+          roll: side * 0.24
+        };
+      case "possession":
+        return {
+          lift: 0.012,
+          advance: 0.01,
+          yaw: side * (side > 0 ? 0.52 : 0.14),
+          flex: -0.2,
+          roll: side * 0.33
+        };
+      case "receiver":
+      case "rac":
+        return {
+          lift: 8e-3,
+          advance: 0.012,
+          yaw: side * 0.11,
+          flex: -0.11,
+          roll: side * 0.22
+        };
+      case "swat":
+        if (side < 0)
+          return {
+            lift: 0.032,
+            advance: 0,
+            yaw: -0.07,
+            flex: -0.09,
+            roll: -0.14
+          };
+        break;
+    }
+    return quarterbackReady ? { lift: 0, advance: 0, yaw: side * 0.12, flex: 0.12, roll: side * 0.25 } : null;
+  }
   function runningWeight(p, pose2, cutting = false) {
     if (pose2.action && !(cutting && pose2.action === "juke") || pose2.air || pose2.ground || pose2.stance || pose2.plant && !cutting || p.airState || (p.wrapReach || 0) > 0.01 || p.intent === "wrap" || p.stumbleTime > 0 || pose2.standUp > 0.05 || pose2.escapePulse > 0 || pose2.blockArms || pose2.escapeStrain > 0.12)
       return 0;
@@ -13749,12 +13799,22 @@
           [0.12, 0.074],
           [0.19, 0.084],
           [0.32, 0.102],
-          [0.43, 0.065]
+          [0.39, 0.094],
+          [0.43, 0.075]
         ],
         8
       ),
       // The jersey tapers into the waist and overlaps the pants through the
       // waist pivot. The chest retains the width needed for the shoulder pads.
+      glove: profileMesh([
+        [-0.56, 0],
+        [-0.49, 0.32],
+        [-0.31, 0.49],
+        [-0.03, 0.5],
+        [0.2, 0.41],
+        [0.37, 0.33],
+        [0.43, 0]
+      ]),
       torso: profileMesh([
         [-0.6, 0],
         [-0.55, 0.3],
@@ -14204,7 +14264,19 @@
           foot[10] = s * (sy * sp * sb + cy * cb);
         }
         sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
-        let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
+        const reachPose = ground ? null : divePose || standingWrapPose;
+        const arm = ground || reachPose || cut || gait > 0 ? null : armArticulation(
+          side,
+          aKind,
+          pose2.blockArms,
+          pose2.stance === "quarterback"
+        );
+        const clavicle = at(
+          chest,
+          arm?.advance || 0,
+          1.57 + shift + (arm?.lift || 0),
+          side * 0.36 * breadth
+        );
         const stiffExtended = action === "stiff" && side < 0;
         const overhead = ["aggressive", "ball", "swat"].includes(aKind);
         const highpoint = aKind === "aggressive" ? 2.45 + side * 0.08 : aKind === "ball" ? side < 0 ? 2.48 : 2.15 : aKind === "swat" ? side < 0 ? 2.5 : 0.55 : 0;
@@ -14214,21 +14286,22 @@
         const swing = getUpArm !== null ? getUpArm : standingWrapPose ? standingWrapPose.shoulder : freeHandEscape ? (p.team === 0 ? side < 0 ? 0.58 : 0.22 : 0.68) + pose2.escapePulse * (p.team === 0 ? side < 0 ? 0.52 : -0.12 : 0.45) : pose2.stance ? stanceSwing : kick ? side < 0 ? -0.86 : 0.3 : stiffExtended ? 1.3 : hurdle ? side < 0 ? 1.28 : 0.86 : dive ? divePose.shoulder : overhead ? highpoint : catchArm || (pose2.blockArms ? (pose2.blockMode === "drive" ? 1.16 : pose2.blockMode === "seal" ? 0.96 : pose2.blockMode === "double-team" ? 1.12 : 1.02) + side * 0.07 : armsOut ? 0.62 - side * 0.1 : run ? -side * step3 * legAmp * 0.8 * pose2.armDrive : 0.1);
         const pump = running ? 0.21 + side * running.armDrive : swing;
         const cutBalance = cut ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort : 0;
-        shoulder = mul(
-          shoulder,
-          rotZ(swing + (pump - swing) * gait + cutBalance)
+        const elevation = swing + (pump - swing) * gait + cutBalance;
+        const shoulder = mul(
+          clavicle,
+          arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation)
         );
+        const pad = arm ? mul(clavicle, rotZ(elevation * 0.3)) : shoulder;
         sphere(
-          shoulder,
+          pad,
           [5e-3, -0.026, -side * 0.029 * breadth],
           [0.33 * breadth, 0.233, 0.29 * breadth],
           jersey
         );
-        const reachPose = ground ? null : divePose || standingWrapPose;
         const baseBend = reachPose?.elbow ?? (ground ? 0.28 : pose2.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
         const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
         const pivot = at(shoulder, 0, -0.43, 0);
-        const twist = side * (reachPose?.inward || 0);
+        const twist = reachPose ? side * reachPose.inward : (arm?.roll || 0) * 0.35;
         const extension = reachPose ? 0.43 : 0.34;
         const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
         drawLimb(
@@ -14242,7 +14315,9 @@
           C.skin,
           jersey
         );
-        sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
+        const wrist = at(elbow, 0, -extension, 0);
+        const palm = arm ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll))) : wrist;
+        paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
       }
       if (carrier === p)
         sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);

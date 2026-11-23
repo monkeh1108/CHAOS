@@ -3,6 +3,7 @@ import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
 import {
   AnimationPolicy,
+  armArticulation,
   jukeBody,
   jukeLegTarget,
   runningBody,
@@ -323,12 +324,22 @@ export function createGridironRenderer(canvas) {
         [0.12, 0.074],
         [0.19, 0.084],
         [0.32, 0.102],
-        [0.43, 0.065],
+        [0.39, 0.094],
+        [0.43, 0.075],
       ],
       8,
     ),
     // The jersey tapers into the waist and overlaps the pants through the
     // waist pivot. The chest retains the width needed for the shoulder pads.
+    glove: profileMesh([
+      [-0.56, 0],
+      [-0.49, 0.32],
+      [-0.31, 0.49],
+      [-0.03, 0.5],
+      [0.2, 0.41],
+      [0.37, 0.33],
+      [0.43, 0],
+    ]),
     torso: profileMesh([
       [-0.6, 0],
       [-0.55, 0.3],
@@ -932,7 +943,22 @@ export function createGridironRenderer(canvas) {
         foot[10] = s * (sy * sp * sb + cy * cb);
       }
       sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
-      let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
+      const reachPose = ground ? null : divePose || standingWrapPose;
+      const arm =
+        ground || reachPose || cut || gait > 0
+          ? null
+          : armArticulation(
+              side,
+              aKind,
+              pose.blockArms,
+              pose.stance === "quarterback",
+            );
+      const clavicle = at(
+        chest,
+        arm?.advance || 0,
+        1.57 + shift + (arm?.lift || 0),
+        side * 0.36 * breadth,
+      );
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
       // free to carry/balance the football. Animation reflects an actual move.
@@ -1038,25 +1064,29 @@ export function createGridironRenderer(canvas) {
       const cutBalance = cut
         ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
         : 0;
-      shoulder = mul(
-        shoulder,
-        rotZ(swing + (pump - swing) * gait + cutBalance),
+      const elevation = swing + (pump - swing) * gait + cutBalance;
+      const shoulder = mul(
+        clavicle,
+        arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation),
       );
+      // Pads ride with the shoulder girdle while the reaching upper arm
+      // rotates beneath them. Locomotion and contact keep their original pad pose.
+      const pad = arm ? mul(clavicle, rotZ(elevation * 0.3)) : shoulder;
       sphere(
-        shoulder,
+        pad,
         [0.005, -0.026, -side * 0.029 * breadth],
         [0.33 * breadth, 0.233, 0.29 * breadth],
         jersey,
       );
-      // Retain the contact arm pivots and bend from ChaosDiveReach so the
-      // redesigned sleeves and gloves still follow the same reaching hands.
-      const reachPose = ground ? null : divePose || standingWrapPose;
+      // The shared contact reach still owns dive and standing-wrap elbow angles.
       const baseBend =
         reachPose?.elbow ??
         (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
       const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
       const pivot = at(shoulder, 0, -0.43, 0);
-      const twist = side * (reachPose?.inward || 0);
+      const twist = reachPose
+        ? side * reachPose.inward
+        : (arm?.roll || 0) * 0.35;
       const extension = reachPose ? 0.43 : 0.34;
       const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
       drawLimb(
@@ -1070,7 +1100,11 @@ export function createGridironRenderer(canvas) {
         C.skin,
         jersey,
       );
-      sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
+      const wrist = at(elbow, 0, -extension, 0);
+      const palm = arm
+        ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
+        : wrist;
+      paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
     }
     if (carrier === p)
       sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
