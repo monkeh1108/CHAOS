@@ -14,9 +14,9 @@
 | Standalone consistency | Passed. SHA-256 `9d2026b812fa00c839d1afb0298109baaf741625af154bfc6e1c0d2896921db8`. |
 | Node and focused rear-pile reproduction | 86 passed. In the seeded post-break pile, the lead tackler could not re-grip during cooldown. A teammate made the next grip and the play ended in a tackle after 158 ticks and 6.4 yards. A real gap during cooldown counted as separation, with no early re-grip. |
 | Chromium gameplay replays | Run, pass, kickoff and contact lab each exactly matched the accepted combined build. |
-| Browser checks | Animation/camera, pause/rendering and run distribution passed using the installed Playwright Chromium. |
+| Browser checks | Animation/camera and run distribution passed. At 390 px the pause test recorded 11 draws during the concurrent run against a limit of 7. A serial rerun passed both widths, with 5 paused draws at 390 px. Earlier Playwright launch failures were resolved by using the bundled headless Chromium executable. |
 | Visual motion review | 581 rendered fixture frames across 12 sequences, with 36 sampled frames matching the accepted combined build. Covered neutral and ready stances, a DL crouch, block engagement, jog and sprint, both juke transitions, high and possession reaches, caught-ball tuck, wrap, fall and get-up. Sampled varied player proportions and both kits. Controlled poses supplement live replays and the owner's live playtest. |
-| 22-player WebGL | 532 draw calls on both builds without page errors in the controlled software-WebGL fixture. Recorded CPU submission separately from GPU time and live frame rate. |
+| 22-player WebGL | 532 draw calls on both builds without page errors in the controlled software-WebGL fixture. Five 90-frame repetitions reported median CPU submission of about 1.4 ms for Step 3 and 0.9 ms for the byte-identical reference. The timings vary with the run and do not measure GPU frame time or live frame rate. |
 | Lint | Zero errors, 150 warnings. This review changes documentation only. |
 
 Paste this into File Explorer to open the Step 3 playtest.
