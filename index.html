@@ -9771,6 +9771,8 @@
         defenderY
       ),
       defensiveFaceButton,
+      moveSheetFocus: (direction2) => presentation?.moveSheetFocus?.(direction2) ?? false,
+      chooseSheetFocused: () => presentation?.chooseSheetFocused?.() ?? false,
       cycleSheetFormation,
       debugDefensePresnap: () => {
         possession = 1;
@@ -13491,6 +13493,8 @@
         else emitHudEvent(event);
       },
       getSheetItems: playbook.getSheetItems,
+      moveSheetFocus,
+      chooseSheetFocused,
       refreshPauseUI,
       render,
       getVisual,

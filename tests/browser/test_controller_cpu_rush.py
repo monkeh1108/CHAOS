@@ -60,8 +60,10 @@ def test_controller_cpu_rush(browser_session, standalone_html):
       assert sheet()['open'] and len(sheet()['items'])>=13,(width,sheet())
       old=state()['formation'];page.evaluate(f'{D}.cycleSheetFormation(1)');new=state()['formation']
       assert new!=old,(width,old,new)
-      page.evaluate(f"{D}.moveSheetFocus('right')")
+      assert page.evaluate(f"{D}.moveSheetFocus('right')")
       assert sum(1 for item in sheet()['items'] if item['focused'])==1
+      assert page.evaluate(f'{D}.chooseSheetFocused()')
+      assert not sheet()['open'],sheet()
       assert not errors,(width,errors)
       print('PASS',width,'D-pad menu A select X snap, CPU timing, edge rollout, defensive A/X, formation LB/RB')
       page.close()

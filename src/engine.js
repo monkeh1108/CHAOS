@@ -10124,6 +10124,9 @@ export function createGame({ attach, onEvent } = {}) {
         defenderY,
       ),
     defensiveFaceButton,
+    moveSheetFocus: (direction) =>
+      presentation?.moveSheetFocus?.(direction) ?? false,
+    chooseSheetFocused: () => presentation?.chooseSheetFocused?.() ?? false,
     cycleSheetFormation,
     debugDefensePresnap: () => {
       possession = 1;
