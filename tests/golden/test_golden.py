@@ -84,6 +84,29 @@ def canonical(data):
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
 
 
+def fixture_difference(actual, expected, path="$"):
+    """Match the Node replay check's absolute tolerance for floating-point fields."""
+    if type(actual) in (int, float) and type(expected) in (int, float):
+        if abs(actual - expected) <= 1e-10:
+            return None
+    elif type(actual) is type(expected):
+        if isinstance(actual, dict) and actual.keys() == expected.keys():
+            for key in actual:
+                difference = fixture_difference(actual[key], expected[key], f"{path}.{key}")
+                if difference:
+                    return difference
+            return None
+        if isinstance(actual, list) and len(actual) == len(expected):
+            for i, (observed, recorded) in enumerate(zip(actual, expected)):
+                difference = fixture_difference(observed, recorded, f"{path}[{i}]")
+                if difference:
+                    return difference
+            return None
+        if actual == expected:
+            return None
+    return f"{path}: {repr(actual)[:160]} != {repr(expected)[:160]}"
+
+
 def capture_repeatable(browser, html, scenario, label):
     first = canonical(capture(browser, html, scenario))
     second = canonical(capture(browser, html, scenario))
@@ -139,8 +162,11 @@ def main():
             expected = (capture_repeatable(browser, reference, scenario, "baseline")
                         if use_reference else path.read_text(encoding="utf-8"))
             if snapshot != expected:
-                failures.append(scenario)
-                continue
+                observed, recorded = json.loads(snapshot), json.loads(expected)
+                difference = fixture_difference(observed, recorded)
+                if use_reference or difference:
+                    failures.append(f"{scenario}: {difference or 'exact replay mismatch'}")
+                    continue
         digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:12]
         label = "exact match to two baseline runs" if use_reference else "two identical runs"
         print(f"PASS {scenario}: {label} ({digest})")
