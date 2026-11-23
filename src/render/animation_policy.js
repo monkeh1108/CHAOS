@@ -31,6 +31,142 @@ const ease = (t) => {
   t = limit(t, 0, 1);
   return t * t * (3 - 2 * t);
 };
+const thighLength = Math.hypot(0.03, 0.48);
+const thighOffset = Math.atan2(0.03, 0.48);
+const shinLength = 0.405;
+const strideEffort = (speed) => ease((speed - 2.5) / 4.8);
+export function runningCycle(travel, speed, scale, previous, clock) {
+  if (
+    clock !== undefined &&
+    clock === previous?.clock &&
+    travel === previous.travel
+  )
+    return previous;
+  const continues = previous && travel >= previous.travel;
+  const dt = continues ? clock - previous.clock : 0;
+  const track = dt > 0 && dt <= 0.12;
+  // Integrate phase from authoritative travel. Filter pose intensity and
+  // acceleration separately so changing speeds never resets the stride.
+  const pace = track
+    ? previous.pace + (speed - previous.pace) * limit(dt * 12, 0, 1)
+    : speed;
+  const acceleration = track
+    ? previous.acceleration +
+      ((speed - previous.speed) / dt - previous.acceleration) *
+        limit(dt * 7, 0, 1)
+    : 0;
+  const stride = (1.4 + 0.68 * strideEffort(pace)) * scale;
+  const phase = continues
+    ? previous.phase + (travel - previous.travel) / stride
+    : travel / stride;
+  return { travel, phase: phase % 1, stride, speed, pace, acceleration, clock };
+}
+
+export function runningBody(cycle) {
+  const effort = strideEffort(cycle.pace);
+  const drive = ease((cycle.acceleration - 0.4) / 6);
+  const braking = ease((-cycle.acceleration - 0.5) / 7);
+  // A leg reaches forward at contact. The opposite arm and shoulder lead it.
+  const opposition = Math.cos(2 * Math.PI * (cycle.phase + 0.055));
+  return {
+    lean: limit(
+      0.025 + 0.095 * effort + 0.12 * drive - 0.1 * braking,
+      -0.045,
+      0.19,
+    ),
+    pelvisYaw: opposition * (0.046 + 0.053 * effort),
+    bob:
+      (0.012 + 0.009 * effort) *
+      (0.5 + 0.5 * Math.cos(4 * Math.PI * (cycle.phase + 0.08))),
+    armDrive:
+      opposition *
+      (0.26 + 0.37 * effort + 0.085 * drive) *
+      (1 - 0.23 * braking),
+    elbow: 0.84 + 0.39 * effort + 0.08 * drive,
+  };
+}
+
+export function runningWeight(p, pose) {
+  // Keep the established poses for a plant, contact, or special action.
+  if (
+    pose.action ||
+    pose.air ||
+    pose.ground ||
+    pose.stance ||
+    pose.plant ||
+    p.airState ||
+    (p.wrapReach || 0) > 0.01 ||
+    p.intent === "wrap" ||
+    p.stumbleTime > 0 ||
+    pose.standUp > 0.05 ||
+    pose.escapePulse > 0 ||
+    pose.blockArms ||
+    pose.escapeStrain > 0.12
+  )
+    return 0;
+  const forward =
+    (p.vx || 0) * Math.cos(p.face) + (p.vy || 0) * Math.sin(p.face);
+  return (
+    ease((pose.speed - 0.7) / 2.4) *
+    ease((forward / Math.max(0.01, pose.speed) - 0.28) / 0.54)
+  );
+}
+
+export function runningLeg(cycle, speed, side, scale, hip) {
+  const effort = strideEffort(speed);
+  const support = 0.56 - 0.11 * effort;
+  const phase = (cycle.phase + (side > 0 ? 0.5 : 0)) % 1;
+  const swing = limit((phase - support) / (1 - support), 0, 1);
+  const rollOff = 0.36 + 0.21 * effort + 0.05 * ease(cycle.acceleration / 6);
+  const pitch =
+    phase < support
+      ? 0.12 * (1 - ease(phase / 0.13)) -
+        rollOff * ease((phase / support - 0.57) / 0.43)
+      : -rollOff + (rollOff + 0.12) * ease(swing);
+  const x =
+    (cycle.stride / scale) * (support * 0.5 - phase + ease(swing)) -
+    (0.025 + 0.035 * effort);
+  const lift =
+    (0.145 + 0.145 * effort) *
+    Math.sin(Math.PI * swing) ** 2 *
+    (1.17 - 0.34 * swing);
+  // Match the cleat's ellipsoid sole at the requested pitch, including toe-off.
+  const sole =
+    Math.hypot(0.185 * Math.sin(pitch), 0.0725 * Math.cos(pitch)) -
+    0.12 * Math.sin(pitch);
+  const y = ((sole + lift) * scale - hip[13] - hip[1] * x) / hip[5];
+  const distance = limit(
+    Math.hypot(x, y),
+    0.21,
+    thighLength + shinLength - 0.002,
+  );
+  const hipAngle =
+    Math.atan2(x, -y) +
+    Math.acos(
+      limit(
+        (thighLength ** 2 + distance ** 2 - shinLength ** 2) /
+          (2 * thighLength * distance),
+        -1,
+        1,
+      ),
+    ) -
+    thighOffset;
+  const knee =
+    -Math.acos(
+      limit(
+        (distance ** 2 - thighLength ** 2 - shinLength ** 2) /
+          (2 * thighLength * shinLength),
+        -1,
+        1,
+      ),
+    ) + thighOffset;
+  return {
+    hip: hipAngle,
+    knee,
+    ankle: pitch - hipAngle - knee - Math.atan2(hip[1], hip[5]),
+  };
+}
+
 function preSnapStance(p) {
   const pos = p.pos || "";
   if (
@@ -92,9 +228,10 @@ function sample(p, contact = false, preSnap = false) {
   const blockArms = !!contact && !!blockMode;
   const plant =
     action === "juke" || action === "hesi" || !!(p.jukeDrive?.remaining > 0);
-  const sidestep = p.intent === "carry-auto" && !air && !ground && !action
-    ? p.runnerCutBank || p.carrierObstacle?.bank || 0
-    : 0;
+  const sidestep =
+    p.intent === "carry-auto" && !air && !ground && !action
+      ? p.runnerCutBank || p.carrierObstacle?.bank || 0
+      : 0;
   const stance =
     preSnap && speed < 0.55 && !contact && !ground && !action && !air
       ? preSnapStance(p)

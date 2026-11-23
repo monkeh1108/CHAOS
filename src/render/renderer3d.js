@@ -1,7 +1,13 @@
 import { RUN_LANDMARKS } from "../sim/match_config.js";
 import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
-import { AnimationPolicy } from "./animation_policy.js";
+import {
+  AnimationPolicy,
+  runningBody,
+  runningCycle,
+  runningLeg,
+  runningWeight,
+} from "./animation_policy.js";
 
 // Original lightweight WebGL renderer. No network, textures, assets, or
 // third-party packages. It only reads simulation state; never resolves contact.
@@ -19,14 +25,15 @@ export function createGridironRenderer(canvas) {
     uniform mat4 uMVP;
     uniform mat4 uModel;
     // Bend, inward twist, lateral build, and forearm length.
-    uniform vec4 uArm;
+    uniform vec4 uLimb;
+    uniform float uBendSpan;
     varying float vShade;
 
-    vec3 armTurn(vec3 v, float weight) {
-      float twist = uArm.y * weight;
+    vec3 turnLimb(vec3 v, float weight) {
+      float twist = uLimb.y * weight;
       float ct = cos(twist), st = sin(twist);
       v = vec3(ct * v.x + st * v.z, v.y, ct * v.z - st * v.x);
-      float bend = uArm.x * weight;
+      float bend = uLimb.x * weight;
       float cb = cos(bend), sb = sin(bend);
       return vec3(cb * v.x - sb * v.y, sb * v.x + cb * v.y, v.z);
     }
@@ -34,26 +41,25 @@ export function createGridironRenderer(canvas) {
     void main() {
       vec3 point = aPos;
       vec3 normal = aNormal;
-      if (uArm.w > 0.0) {
-        // Use the same rings on both sides of the sleeve seam. Through the
-        // elbow, rotate each cross-section without shrinking its radius.
-        const float span = 0.12;
+      if (uLimb.w > 0.0) {
+        // Rotate the cross-sections through the bend without shrinking them.
+        float span = uBendSpan;
         float y = aPos.y;
         if (y < -span) {
-          y = -span + (y + span) * (uArm.w - span) / (0.34 - span);
+          y = -span + (y + span) * (uLimb.w - span) / (0.34 - span);
         }
         float blend = clamp((span - y) / (2.0 * span), 0.0, 1.0);
-        vec3 radial = vec3(aPos.x, 0.0, aPos.z * uArm.z);
+        vec3 radial = vec3(aPos.x, 0.0, aPos.z * uLimb.z);
         vec3 center = vec3(0.0, y, 0.0);
         if (y < -span) {
-          center = armTurn(center, 1.0);
+          center = turnLimb(center, 1.0);
         } else if (y < span) {
           float before = 1.0 - blend;
           center = before * before * vec3(0.0, span, 0.0) +
-                   blend * blend * armTurn(vec3(0.0, -span, 0.0), 1.0);
+                   blend * blend * turnLimb(vec3(0.0, -span, 0.0), 1.0);
         }
-        point = center + armTurn(radial, blend);
-        normal = armTurn(vec3(normal.x, normal.y, normal.z / uArm.z), blend);
+        point = center + turnLimb(radial, blend);
+        normal = turnLimb(vec3(normal.x, normal.y, normal.z / uLimb.z), blend);
       }
       mat3 axes = mat3(uModel);
       vec3 mag2 = vec3(dot(axes[0], axes[0]), dot(axes[1], axes[1]), dot(axes[2], axes[2]));
@@ -84,7 +90,8 @@ export function createGridironRenderer(canvas) {
   const uMVP = gl.getUniformLocation(prog, "uMVP"),
     uModel = gl.getUniformLocation(prog, "uModel"),
     uColor = gl.getUniformLocation(prog, "uColor");
-  const uArm = gl.getUniformLocation(prog, "uArm");
+  const uLimb = gl.getUniformLocation(prog, "uLimb"),
+    uBendSpan = gl.getUniformLocation(prog, "uBendSpan");
   // WebGL vertex arrays start disabled. Without enabling them, all mesh triangles
   // collapse to one point and only the flat background clear color is visible.
   if (attrPos < 0 || attrNormal < 0)
@@ -317,23 +324,21 @@ export function createGridironRenderer(canvas) {
       [0.46, 0.34],
       [0.5, 0],
     ]),
-    upperLimb: profileMesh([
-      [-0.5, 0],
-      [-0.43, 0.25],
-      [-0.22, 0.33],
-      [0.13, 0.5],
-      [0.36, 0.46],
-      [0.5, 0],
-    ]),
-    // Keep the narrow end over the hinge and the muscle belly below it.
-    lowerLimb: profileMesh([
-      [-0.5, 0],
-      [-0.43, 0.27],
-      [-0.21, 0.34],
-      [0.02, 0.5],
-      [0.23, 0.46],
-      [0.38, 0.35],
-      [0.5, 0],
+    leg: profileMesh([
+      [-0.34, 0.056],
+      [-0.3, 0.061],
+      [-0.24, 0.079],
+      [-0.18, 0.093],
+      [-0.11, 0.084],
+      [-0.055, 0.075],
+      [0, 0.079],
+      [0.055, 0.083],
+      [0.11, 0.095],
+      [0.18, 0.118],
+      [0.3, 0.148],
+      [0.42, 0.145],
+      [0.54, 0.105],
+      [0.58, 0.064],
     ]),
   };
   let markerDebug = {
@@ -404,16 +409,29 @@ export function createGridironRenderer(canvas) {
     gl.drawArrays(gl.TRIANGLES, 0, msh.n);
     drawCalls++;
   }
-  function drawArm(pivot, bend, twist, breadth, length, jersey) {
-    const arm = meshes.arm;
-    bindMesh(arm, pivot);
-    gl.uniform4f(uArm, bend, twist, breadth, length);
-    gl.uniform3fv(uColor, C.skin);
-    gl.drawArrays(gl.TRIANGLES, 0, arm.seam);
-    gl.uniform3fv(uColor, jersey);
-    gl.drawArrays(gl.TRIANGLES, arm.seam, arm.n - arm.seam);
-    gl.uniform4f(uArm, 0, 0, 0, 0);
-    drawCalls += 2;
+  function drawLimb(
+    msh,
+    pivot,
+    bend,
+    twist,
+    breadth,
+    length,
+    span,
+    color,
+    sleeve,
+  ) {
+    bindMesh(msh, pivot);
+    gl.uniform4f(uLimb, bend, twist, breadth, length);
+    gl.uniform1f(uBendSpan, span);
+    gl.uniform3fv(uColor, color);
+    gl.drawArrays(gl.TRIANGLES, 0, msh.seam || msh.n);
+    drawCalls++;
+    if (sleeve) {
+      gl.uniform3fv(uColor, sleeve);
+      gl.drawArrays(gl.TRIANGLES, msh.seam, msh.n - msh.seam);
+      drawCalls++;
+    }
+    gl.uniform4f(uLimb, 0, 0, 0, 0);
   }
   const box = (m, pos, size, c) => paint("box", m, pos, size, c),
     sphere = (m, pos, size, c) => paint("sphere", m, pos, size, c);
@@ -564,6 +582,7 @@ export function createGridironRenderer(canvas) {
     if (rec && rec !== selected)
       groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
   }
+  const strideCycles = new WeakMap();
   function player(
     p,
     clock,
@@ -592,6 +611,15 @@ export function createGridironRenderer(canvas) {
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
+    const gait = involved || presnap ? 0 : runningWeight(p, pose);
+    const previousCycle = strideCycles.get(p);
+    const cycle =
+      gait > 0 || previousCycle
+        ? runningCycle(p.travel || 0, pose.speed, s, previousCycle, clock)
+        : null;
+    if (cycle && cycle.clock !== previousCycle?.clock)
+      strideCycles.set(p, cycle);
+    const running = gait > 0 ? runningBody(cycle) : null;
     // The same physical contact and knocked-down states drive the pose.
     if (ground) {
       const fall =
@@ -612,7 +640,12 @@ export function createGridironRenderer(canvas) {
       root = mul(root, rotZ(tilt));
       root = at(root, 0, ground.stage === "rise" ? 0.31 : 0.2, 0);
     } else {
-      root = at(root, 0, bob - pose.crouch, 0);
+      root = at(
+        root,
+        0,
+        bob - pose.crouch + gait * (((running?.bob || 0) - 0.067) * s - bob),
+        0,
+      );
       root = mul(root, rotZ(pose.lean + pose.stanceLean - pose.impactAccent));
       root = mul(root, rotX(pose.bank));
       root = mul(root, rotY(pose.yaw));
@@ -718,74 +751,97 @@ export function createGridironRenderer(canvas) {
           : 0.58
       : 0;
     const shift = winded ? 0.05 : 0;
+    // Counter-rotate about the waist and keep the original attachment points.
+    const pelvis = running
+      ? at(
+          mul(at(root, 0, 0.87, 0), rotY(running.pelvisYaw * gait)),
+          0,
+          -0.87,
+          0,
+        )
+      : root;
+    const chest = running
+      ? at(
+          mul(
+            at(root, 0, 1.02, 0),
+            mul(
+              rotY(-running.pelvisYaw * 0.8 * gait),
+              rotZ(-running.lean * gait),
+            ),
+          ),
+          0,
+          -1.02,
+          0,
+        )
+      : root;
     // Keep the established root and joint centers. Build the uniform around
     // them so pads sit over the upper arms and the helmet sits on a neck.
     sphere(
-      root,
+      pelvis,
       [0, 0.94 + shift, 0],
       [0.44 * breadth, 0.37, 0.57 * breadth],
       C.pants,
     );
     paint(
       "torso",
-      root,
+      chest,
       [0, 1.35 + shift, 0],
       [0.54 * breadth, 0.78, 0.75 * breadth],
       jersey,
     );
-    sphere(root, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
-    sphere(root, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
-    sphere(root, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
-    box(root, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
-    box(root, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
+    sphere(chest, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
+    sphere(chest, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
+    sphere(chest, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
+    box(chest, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
+    box(chest, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
-      let hip = at(root, 0, 0.87, side * 0.2 * breadth);
-      hip = mul(
-        hip,
-        rotZ(
-          (run ? side * legAmp * step : 0) +
-            (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
-            (pose.stance === "three-point"
-              ? 0.26
-              : pose.stance === "coverage-ready"
-                ? 0.13
-                : pose.stance === "receiver"
-                  ? 0.16
-                  : 0) +
-            (hurdle || dive
-              ? (0.6 + side * 0.22) *
-                Math.sin(Math.PI * (hurdle ? hurdleT : diveT))
+      let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
+      const leg = gait > 0 ? runningLeg(cycle, cycle.pace, side, s, hip) : null;
+      const hipSwing =
+        (run ? side * legAmp * step : 0) +
+        (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
+        (pose.stance === "three-point"
+          ? 0.26
+          : pose.stance === "coverage-ready"
+            ? 0.13
+            : pose.stance === "receiver"
+              ? 0.16
               : 0) +
-            (rise > 0 ? -0.22 * arc : 0) +
-            (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0),
-        ),
-      );
-      paint(
-        "upperLimb",
-        hip,
-        [0.02, -0.22, 0],
-        [0.31, 0.65, 0.3 * breadth],
+        (hurdle || dive
+          ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT))
+          : 0) +
+        (rise > 0 ? -0.22 * arc : 0) +
+        (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
+      hip = mul(hip, rotZ(hipSwing * (1 - gait) + (leg?.hip || 0) * gait));
+      const kneePivot = at(hip, 0.03, -0.48, 0);
+      const baseKnee =
+        (run ? Math.abs(step * legAmp) * 0.5 : 0) +
+        (pose.stance ? 0.2 : 0) +
+        (ground ? groundFold * 0.72 : 0) +
+        (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) +
+        (rise > 0 ? 0.3 * arc : 0);
+      const kneeBend = baseKnee * (1 - gait) + (leg?.knee || 0) * gait;
+      // A wider blend gives the knee room to fold while the ankle and the
+      // portion of the calf below the bend still follow the original hinge.
+      drawLimb(
+        meshes.leg,
+        kneePivot,
+        kneeBend,
+        0,
+        breadth,
+        0.415,
+        0.18,
         C.pants,
       );
-      const knee = mul(
-        at(hip, 0.03, -0.48, 0),
-        rotZ(
-          (run ? Math.abs(step * legAmp) * 0.5 : 0) +
-            (pose.stance ? 0.2 : 0) +
-            (ground ? groundFold * 0.72 : 0) +
-            (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) +
-            (rise > 0 ? 0.3 * arc : 0),
-        ),
+      const knee = mul(kneePivot, rotZ(kneeBend));
+      const foot = at(knee, 0, -0.405, 0);
+      sphere(
+        leg ? mul(foot, rotZ(leg.ankle * gait)) : foot,
+        [0.12, 0, 0],
+        [0.37, 0.145, 0.225 * breadth],
+        C.shoe,
       );
-      paint(
-        "lowerLimb",
-        knee,
-        [0.015, -0.205, 0],
-        [0.203, 0.56, 0.209 * breadth],
-        C.pants,
-      );
-      sphere(knee, [0.12, -0.405, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
-      let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
+      let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
       // free to carry/balance the football. Animation reflects an actual move.
@@ -887,7 +943,8 @@ export function createGridironRenderer(canvas) {
                                 : run
                                   ? -side * step * legAmp * 0.8 * pose.armDrive
                                   : 0.1);
-      shoulder = mul(shoulder, rotZ(swing));
+      const pump = running ? 0.21 + side * running.armDrive : swing;
+      shoulder = mul(shoulder, rotZ(swing + (pump - swing) * gait));
       sphere(
         shoulder,
         [0.005, -0.026, -side * 0.029 * breadth],
@@ -897,18 +954,29 @@ export function createGridironRenderer(canvas) {
       // Retain the contact arm pivots and bend from ChaosDiveReach so the
       // redesigned sleeves and gloves still follow the same reaching hands.
       const reachPose = ground ? null : divePose || standingWrapPose;
-      const bend =
+      const baseBend =
         reachPose?.elbow ??
         (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
+      const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
       const pivot = at(shoulder, 0, -0.43, 0);
       const twist = side * (reachPose?.inward || 0);
       const extension = reachPose ? 0.43 : 0.34;
       const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
-      drawArm(pivot, bend, twist, breadth, extension, jersey);
+      drawLimb(
+        meshes.arm,
+        pivot,
+        bend,
+        twist,
+        breadth,
+        extension,
+        0.12,
+        C.skin,
+        jersey,
+      );
       sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
     }
     if (carrier === p)
-      sphere(root, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
+      sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
     if (selected === p) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
