@@ -3,6 +3,8 @@ import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
 import {
   AnimationPolicy,
+  armArticulation,
+  idleArmWeight,
   jukeBody,
   jukeLegTarget,
   runningBody,
@@ -323,12 +325,22 @@ export function createGridironRenderer(canvas) {
         [0.12, 0.074],
         [0.19, 0.084],
         [0.32, 0.102],
-        [0.43, 0.065],
+        [0.39, 0.094],
+        [0.43, 0.075],
       ],
       8,
     ),
     // The jersey tapers into the waist and overlaps the pants through the
     // waist pivot. The chest retains the width needed for the shoulder pads.
+    glove: profileMesh([
+      [-0.56, 0],
+      [-0.49, 0.32],
+      [-0.31, 0.49],
+      [-0.03, 0.5],
+      [0.2, 0.41],
+      [0.37, 0.33],
+      [0.43, 0],
+    ]),
     torso: profileMesh([
       [-0.6, 0],
       [-0.55, 0.3],
@@ -932,7 +944,38 @@ export function createGridironRenderer(canvas) {
         foot[10] = s * (sy * sp * sb + cy * cb);
       }
       sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
-      let shoulder = at(chest, 0, 1.57 + shift, side * 0.36 * breadth);
+      const reachPose = ground ? null : divePose || standingWrapPose;
+      // The left arm remains available for the existing stiff-arm animation.
+      const carriesBall = carrier === p && side > 0;
+      const carryWeight =
+        carriesBall &&
+        !ground &&
+        !aKind &&
+        !reachPose &&
+        !p.airState &&
+        !pose.brace &&
+        (!pose.action || pose.action === "juke" || pose.action === "stiff")
+          ? 0.66
+          : 0;
+      const relax =
+        reachPose || armsOut || airPose || p.stumbleTime > 0
+          ? 0
+          : idleArmWeight(pose);
+      const arm =
+        ground || reachPose || cut || gait > 0
+          ? null
+          : armArticulation(
+              side,
+              aKind,
+              pose.blockArms,
+              pose.stance === "quarterback",
+            );
+      const clavicle = at(
+        chest,
+        arm?.advance || 0,
+        1.57 + shift + (arm?.lift || 0),
+        side * 0.36 * breadth,
+      );
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
       // free to carry/balance the football. Animation reflects an actual move.
@@ -1038,25 +1081,38 @@ export function createGridironRenderer(canvas) {
       const cutBalance = cut
         ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
         : 0;
-      shoulder = mul(
-        shoulder,
-        rotZ(swing + (pump - swing) * gait + cutBalance),
+      const swingAngle = swing + (pump - swing) * gait + cutBalance;
+      const elevation = swingAngle + (0.18 - swingAngle) * carryWeight;
+      const shoulder = mul(
+        clavicle,
+        arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation),
       );
+      // Pads ride with the shoulder girdle while the reaching upper arm
+      // rotates beneath them. Locomotion and contact keep their original pad pose.
+      const pad = arm ? mul(clavicle, rotZ(elevation * 0.3)) : shoulder;
       sphere(
-        shoulder,
+        pad,
         [0.005, -0.026, -side * 0.029 * breadth],
         [0.33 * breadth, 0.233, 0.29 * breadth],
         jersey,
       );
-      // Retain the contact arm pivots and bend from ChaosDiveReach so the
-      // redesigned sleeves and gloves still follow the same reaching hands.
-      const reachPose = ground ? null : divePose || standingWrapPose;
+      // The shared contact reach still owns dive and standing-wrap elbow angles.
       const baseBend =
         reachPose?.elbow ??
-        (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
-      const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+        (ground
+          ? 0.28
+          : pose.blockArms
+            ? 0.33
+            : overhead
+              ? -0.15
+              : 0.48 - 0.34 * relax);
+      const swingBend =
+        baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+      const bend = swingBend + (1.24 - swingBend) * carryWeight;
       const pivot = at(shoulder, 0, -0.43, 0);
-      const twist = side * (reachPose?.inward || 0);
+      const twist = reachPose
+        ? side * reachPose.inward
+        : (arm?.roll || 0) * 0.35;
       const extension = reachPose ? 0.43 : 0.34;
       const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
       drawLimb(
@@ -1070,10 +1126,21 @@ export function createGridironRenderer(canvas) {
         C.skin,
         jersey,
       );
-      sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
+      const wrist = at(elbow, 0, -extension, 0);
+      const palm = arm
+        ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
+        : wrist;
+      paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
+      if (carriesBall) {
+        // Keep the near end cupped in the palm. When the arm cradles the
+        // ball, tip the far end inward toward the forearm and ribs.
+        const grip = at(palm, 0.078, -0.058, -0.074);
+        const football = carryWeight
+          ? mul(grip, rotX(-0.4 * carryWeight))
+          : grip;
+        sphere(football, [0, 0.122, 0], [0.18, 0.32, 0.21], C.ball);
+      }
     }
-    if (carrier === p)
-      sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
     if (selected === p) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
@@ -1212,7 +1279,7 @@ export function createGridironRenderer(canvas) {
         p,
         sim.clock,
         sim.active,
-        sim.markerCarrier || sim.carrier,
+        inFlight ? null : sim.markerCarrier || sim.carrier,
         contacts,
         sim.possession ?? 0,
         presnap,
