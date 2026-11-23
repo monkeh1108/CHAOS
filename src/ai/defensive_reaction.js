@@ -255,7 +255,7 @@ export function createDefensiveReaction() {
         RushAwareness.assess(qb, matchState.playStart, matchState.playClock)
           .escape) &&
       d.assignment?.kind === "zone" &&
-      d.assignment.depth < 12 &&
+      !CoverageRoutePolicy.isDeepZone(d.assignment) &&
       dist(d, qb) < 12
     ) {
       d.intent = "scramble-alert";
@@ -325,16 +325,17 @@ export function createDefensiveReaction() {
     }
     let tx = as.baseX,
       ty = as.baseY;
+    const deep = CoverageRoutePolicy.isDeepZone(as);
+    const deepEntry = Math.min(7, Math.max(2, (110 - matchState.playStart) * 0.55));
     const candidates = skillOffense().filter(
       (o) =>
         o.x > matchState.playStart - 0.5 &&
         Math.abs(o.y - as.baseY) < as.width &&
-        (as.depth < 12
+        (!deep
           ? o.x < matchState.playStart + 18
-          : o.x >= matchState.playStart + 7),
+          : o.x >= matchState.playStart + deepEntry),
     );
     if (candidates.length) {
-      const deep = as.depth >= 12;
       // Deep defenders prioritize deep threats instead of abandoning a streak
       // for the nearest short receiver. They can carry routes beyond 40 yards.
       const t = CoverageRoutePolicy.zoneThreat(
@@ -364,6 +365,7 @@ export function createDefensiveReaction() {
         as.baseY - as.width * 0.76,
         as.baseY + as.width * 0.76,
       );
+      if (deep) tx = Math.max(tx, as.baseX - 1.4);
       d.deepRead = !!predicted;
     } else d.deepRead = false;
     d.intent = "cover-zone";

@@ -1,13 +1,16 @@
 // Isolated read-only decisions for passing lanes and crossing routes.
 // This module does not change blocking, tackling, stamina or special teams.
 export const CoverageRoutePolicy = {
+  isDeepZone(assignment) {
+    return (assignment.originalDepth ?? assignment.depth) >= 12;
+  },
   isVerticalThreat(p, los) {
     // Only count a receiver moving downfield with meaningful separation from LOS.
     const neededDepth = Math.min(8, Math.max(1.5, (110 - los) * 0.65));
     return p.x > los + neededDepth && p.vx > 1.6 && p.route && !p.routeComplete;
   },
   zoneThreat(candidates, assignment, los) {
-    const deep = assignment.depth >= 12;
+    const deep = this.isDeepZone(assignment);
     const ranked = [...candidates].sort((a, b) => {
       const score = (p) => {
         const lateral = Math.abs(p.y - assignment.baseY);

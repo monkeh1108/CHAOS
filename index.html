@@ -5674,12 +5674,15 @@
 
   // src/ai/coverage_route_policy.js
   var CoverageRoutePolicy = {
+    isDeepZone(assignment) {
+      return (assignment.originalDepth ?? assignment.depth) >= 12;
+    },
     isVerticalThreat(p, los) {
       const neededDepth = Math.min(8, Math.max(1.5, (110 - los) * 0.65));
       return p.x > los + neededDepth && p.vx > 1.6 && p.route && !p.routeComplete;
     },
     zoneThreat(candidates, assignment, los) {
-      const deep = assignment.depth >= 12;
+      const deep = this.isDeepZone(assignment);
       const ranked = [...candidates].sort((a, b) => {
         const score = (p) => {
           const lateral = Math.abs(p.y - assignment.baseY);
@@ -6354,7 +6357,7 @@
         return;
       }
       const qb = P("QB");
-      if (!RUNS2.has(matchState.selectedPlay) && !matchState.passThrown && !matchState.ballCarrier && qb && (qb.x >= matchState.playStart - 1.9 || RushAwareness.assess(qb, matchState.playStart, matchState.playClock).escape) && d.assignment?.kind === "zone" && d.assignment.depth < 12 && distance2D(d, qb) < 12) {
+      if (!RUNS2.has(matchState.selectedPlay) && !matchState.passThrown && !matchState.ballCarrier && qb && (qb.x >= matchState.playStart - 1.9 || RushAwareness.assess(qb, matchState.playStart, matchState.playClock).escape) && d.assignment?.kind === "zone" && !CoverageRoutePolicy.isDeepZone(d.assignment) && distance2D(d, qb) < 12) {
         d.intent = "scramble-alert";
         d.intentTarget = "QB";
         steer(d, qb.x + 0.3 - d.x, qb.y - d.y, dt, 1.06);
@@ -6411,11 +6414,12 @@
         return;
       }
       let tx = as.baseX, ty = as.baseY;
+      const deep = CoverageRoutePolicy.isDeepZone(as);
+      const deepEntry = Math.min(7, Math.max(2, (110 - matchState.playStart) * 0.55));
       const candidates = skillOffense().filter(
-        (o) => o.x > matchState.playStart - 0.5 && Math.abs(o.y - as.baseY) < as.width && (as.depth < 12 ? o.x < matchState.playStart + 18 : o.x >= matchState.playStart + 7)
+        (o) => o.x > matchState.playStart - 0.5 && Math.abs(o.y - as.baseY) < as.width && (!deep ? o.x < matchState.playStart + 18 : o.x >= matchState.playStart + deepEntry)
       );
       if (candidates.length) {
-        const deep = as.depth >= 12;
         const t = CoverageRoutePolicy.zoneThreat(
           candidates,
           as,
@@ -6438,6 +6442,7 @@
           as.baseY - as.width * 0.76,
           as.baseY + as.width * 0.76
         );
+        if (deep) tx = Math.max(tx, as.baseX - 1.4);
         d.deepRead = !!predicted;
       } else d.deepRead = false;
       d.intent = "cover-zone";
@@ -9803,14 +9808,16 @@
       forwardSpeed
     };
   }
-  function step2(runner, defender, link, dt) {
+  function step2(runner, defender, link, dt, previousBreaks = 0) {
     const contest = drive(runner, defender, link);
     const age = link.age || 0;
     if ((link.grip || 0) < escapeProgress.minimumGrip)
       return { ...contest, broken: false, progress: 0, kind: "none" };
     const lightHold = (link.grip || 0) < escapeProgress.lightHoldGrip || link.style !== "wrap";
     const threshold = lightHold ? escapeProgress.lightThreshold : escapeProgress.wrapThreshold;
-    const gain = Math.max(0, contest.margin - (lightHold ? -0.1 : 0.09));
+    const repeatSkill = clampFinite((contest.legPower - 0.67) / 0.33, 0, 1);
+    const repeatLoad = Math.min(previousBreaks, 2) * (0.56 - 0.49 * repeatSkill);
+    const gain = Math.max(0, contest.margin - repeatLoad - (lightHold ? -0.1 : 0.09));
     const recovery = Math.max(0, -contest.margin) * 0.5;
     link.escapeProgress = clampFinite(
       (link.escapeProgress || 0) + dt * (gain * 2 - recovery * 0.85),
@@ -9862,6 +9869,7 @@
     function resolveTackles(a, dt) {
       if (!a || a.team !== 0) return;
       collectTackleContacts(a, dt);
+      const scrimmage = !matchState.specialState;
       let combinedGrip = 0, engaged = 0, totalBrake = 0, contacts2 = [];
       for (const [key, t] of [...matchState.tackleLinks]) {
         const d = P(key);
@@ -9919,7 +9927,13 @@
           radius(a),
           radius(d)
         );
-        const escapeContest = ChaosTackleEscape.step(a, d, t, dt);
+        const escapeContest = ChaosTackleEscape.step(
+          a,
+          d,
+          t,
+          dt,
+          scrimmage ? matchState.brokenTackleCount : 0
+        );
         t.escapeDiagnostics = escapeContest;
         const visualStrain = ChaosEscapeReactions.strain(a, d, t, escapeContest);
         a.tackleStrain = Math.max(a.tackleStrain || 0, visualStrain.runnerStrain);
@@ -9951,8 +9965,9 @@
         const outrunningGrip = speed(a) > 3.3 && t.grip < 0.44 && t.age > 0.68;
         const physicallyEscaping = runnerEdge > 14 && security < 0.94 && t.age > 0.9 && t.grip < 0.76;
         const stretchedLoose = t.attachment?.reason === "overextended" && t.grip < 0.68 && t.age > 0.28;
-        if (outrunningGrip || physicallyEscaping || stretchedLoose) {
-          releaseTackle(d, a, "escape", t.escapeDiagnostics);
+        const legacyEscape = !scrimmage && (outrunningGrip || physicallyEscaping);
+        if (legacyEscape || stretchedLoose) {
+          releaseTackle(d, a, scrimmage ? "distance" : "escape", t.escapeDiagnostics);
           contacts2.pop();
           engaged--;
           combinedGrip -= contribution;
@@ -9980,8 +9995,9 @@
         const skill = d.TAK * 0.59 + d.AWR * 0.16 + d.STR * 0.16 + d.HIT * 0.09;
         const survive = a.TRK * 0.54 + a.STR * 0.22 + a.AGI * 0.17 + a.AWR * 0.07;
         const edge = skill - survive + hit.advantage * 0.24;
+        const cleanWrap = scrimmage && t.style === "wrap" && t.quality >= 0.72;
         const gripNeed = clamp(
-          0.92 - edge * 8e-3 + (speed(a) > 5 ? 0.06 : 0),
+          (cleanWrap ? 0.89 : 0.92) - edge * 8e-3 + (speed(a) > 5 ? 0.06 : 0),
           0.63,
           1.36
         );
@@ -9993,7 +10009,7 @@
           a.action?.kind
         );
         const ageNeed = clamp(
-          0.64 - edge * 2e-3 + (speed(a) > 5 ? 0.025 : 0) + struggle.finishDelay - earlier,
+          (cleanWrap ? 0.59 : 0.64) - edge * 2e-3 + (speed(a) > 5 ? 0.025 : 0) + struggle.finishDelay - earlier,
           0.34,
           1.34
         );

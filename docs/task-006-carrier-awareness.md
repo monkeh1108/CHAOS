@@ -77,3 +77,18 @@ Straight running and deliberate reversals use ordinary movement.
 
 Avoiding a particular blocker still needs a clear exit. Ordinary turns can
 be seen without setting up that particular collision.
+
+## Pass coverage and tackle consistency
+
+Deep-zone assignments keep their role when their starting depth is compressed
+near the goal line. The safeties can shade toward a developing vertical route
+while preserving depth, and underneath defenders can still close short lanes.
+
+A clean scrimmage wrap takes control sooner. A hold that physically slips out
+of reach is a loose grip. A credited break requires an escape contest, and the
+next hold on the same play is harder to break. The highest-rated power backs
+can still win that contest again if leverage, balance and stamina allow it.
+
+For coverage, try Verticals in the red zone and watch the safeties stay behind
+the routes while the corners close underneath. For tackling, compare ordinary
+backs with high-strength and high-trucking backs against the same defense.

@@ -25,6 +25,7 @@ export function createTackleResolution() {
   function resolveTackles(a, dt) {
     if (!a || a.team !== 0) return;
     collectTackleContacts(a, dt);
+    const scrimmage = !matchState.specialState;
     let combinedGrip = 0,
       engaged = 0,
       totalBrake = 0,
@@ -116,7 +117,9 @@ export function createTackleResolution() {
       // A sustained leg-drive/hold contest can shed a weak tackle or, with more
       // effort, work out of a secure wrap. Grip and contact still have to exist.
       // This never declares a winner merely because an animation played.
-      const escapeContest = ChaosTackleEscape.step(a, d, t, dt);
+      const escapeContest = ChaosTackleEscape.step(
+        a, d, t, dt, scrimmage ? matchState.brokenTackleCount : 0,
+      );
       t.escapeDiagnostics = escapeContest;
       const visualStrain = ChaosEscapeReactions.strain(a, d, t, escapeContest);
       a.tackleStrain = Math.max(a.tackleStrain || 0, visualStrain.runnerStrain);
@@ -163,8 +166,9 @@ export function createTackleResolution() {
         t.attachment?.reason === "overextended" &&
         t.grip < 0.68 &&
         t.age > 0.28;
-      if (outrunningGrip || physicallyEscaping || stretchedLoose) {
-        releaseTackle(d, a, "escape", t.escapeDiagnostics);
+      const legacyEscape = !scrimmage && (outrunningGrip || physicallyEscaping);
+      if (legacyEscape || stretchedLoose) {
+        releaseTackle(d, a, scrimmage ? "distance" : "escape", t.escapeDiagnostics);
         contacts.pop();
         engaged--;
         combinedGrip -= contribution;
@@ -193,8 +197,9 @@ export function createTackleResolution() {
       const skill = d.TAK * 0.59 + d.AWR * 0.16 + d.STR * 0.16 + d.HIT * 0.09;
       const survive = a.TRK * 0.54 + a.STR * 0.22 + a.AGI * 0.17 + a.AWR * 0.07;
       const edge = skill - survive + hit.advantage * 0.24;
+      const cleanWrap = scrimmage && t.style === "wrap" && t.quality >= 0.72;
       const gripNeed = clamp(
-        0.92 - edge * 0.008 + (speed(a) > 5 ? 0.06 : 0),
+        (cleanWrap ? 0.89 : 0.92) - edge * 0.008 + (speed(a) > 5 ? 0.06 : 0),
         0.63,
         1.36,
       );
@@ -208,7 +213,7 @@ export function createTackleResolution() {
         a.action?.kind,
       );
       const ageNeed = clamp(
-        0.64 -
+        (cleanWrap ? 0.59 : 0.64) -
           edge * 0.002 +
           (speed(a) > 5 ? 0.025 : 0) +
           struggle.finishDelay -
