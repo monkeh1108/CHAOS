@@ -1131,10 +1131,15 @@ export function createGridironRenderer(canvas) {
         ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
         : wrist;
       paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
-      // Place the ball against the inside of the hand, with its long axis
-      // aligned along the forearm. This is a render transform only.
-      if (carriesBall)
-        sphere(palm, [0.078, 0.064, -0.074], [0.18, 0.32, 0.21], C.ball);
+      if (carriesBall) {
+        // Keep the near end cupped in the palm. When the arm cradles the
+        // ball, tip the far end inward toward the forearm and ribs.
+        const grip = at(palm, 0.078, -0.058, -0.074);
+        const football = carryWeight
+          ? mul(grip, rotX(-0.4 * carryWeight))
+          : grip;
+        sphere(football, [0, 0.122, 0], [0.18, 0.32, 0.21], C.ball);
+      }
     }
     if (selected === p) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);

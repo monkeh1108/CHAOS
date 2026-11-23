@@ -101,15 +101,19 @@ test("one held ball follows the carrying glove through stride, juke and stiff-ar
     assert.equal(gloves(drawings).length, 2);
     const ball = balls(drawings)[0].model;
     const carryingGlove = gloves(drawings)[1].model;
+    // The grip end stays fixed in the palm while the opposite end leans
+    // inward. A center offset alone would look like a glued-on football.
+    let inward = 0;
     for (let axis = 0; axis < 3; axis++) {
       const component =
-        (carryingGlove[axis] * 0.078) / 0.12 +
-        (carryingGlove[axis + 4] * 0.09) / 0.18 -
+        (carryingGlove[axis] * 0.078) / 0.12 -
+        (carryingGlove[axis + 4] * 0.032) / 0.18 -
         (carryingGlove[axis + 8] * 0.074) / 0.16;
-      assert.ok(
-        near(ball[12 + axis], carryingGlove[12 + axis] + component, 1e-5),
-      );
+      const grip = ball[12 + axis] - (ball[axis + 4] * 0.122) / 0.32;
+      assert.ok(near(grip, carryingGlove[12 + axis] + component, 1e-5));
+      inward += (ball[axis + 4] * carryingGlove[axis + 8]) / (0.32 * 0.16);
     }
+    assert.ok(inward < -0.2, "the far end tucks in while the player carries");
     first ??= translation(ball);
     travel = Math.max(
       travel,
