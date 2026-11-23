@@ -10,6 +10,7 @@ import {
   runningLegTarget,
   runningWeight,
   solveGroundedLeg,
+  upperBodyArticulation,
 } from "./animation_policy.js";
 
 // Original lightweight WebGL renderer. No network, textures, assets, or
@@ -133,6 +134,14 @@ export function createGridironRenderer(canvas) {
     return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
   };
   const at = (m, x, y, z) => mul(m, trans(x, y, z));
+  // A joint rotates around an anchor in the parent's model space. The neutral
+  // transform is shared so static players add no extra matrix work.
+  function rotateAtHeight(parent, height, yaw, pitch) {
+    if (!yaw && !pitch) return parent;
+    let rotation = rotY(yaw);
+    if (pitch) rotation = mul(rotation, rotZ(pitch));
+    return at(mul(at(parent, 0, height, 0), rotation), 0, -height, 0);
+  }
   const norm = (v) => {
     const l = Math.hypot(...v) || 1;
     return v.map((x) => x / l);
@@ -318,14 +327,35 @@ export function createGridironRenderer(canvas) {
       ],
       8,
     ),
+    // The jersey tapers into the waist and overlaps the pants through the
+    // waist pivot. The chest retains the width needed for the shoulder pads.
     torso: profileMesh([
-      [-0.5, 0],
-      [-0.43, 0.36],
-      [-0.21, 0.4],
-      [0.15, 0.48],
+      [-0.6, 0],
+      [-0.55, 0.3],
+      [-0.4, 0.35],
+      [-0.19, 0.38],
+      [0.04, 0.43],
+      [0.24, 0.49],
       [0.37, 0.5],
       [0.46, 0.34],
       [0.5, 0],
+    ]),
+    pelvis: profileMesh([
+      [-0.53, 0],
+      [-0.42, 0.35],
+      [-0.18, 0.5],
+      [0.09, 0.45],
+      [0.36, 0.34],
+      [0.49, 0.27],
+      [0.57, 0],
+    ]),
+    neck: profileMesh([
+      [-0.56, 0],
+      [-0.43, 0.5],
+      [-0.17, 0.43],
+      [0.19, 0.37],
+      [0.43, 0.4],
+      [0.54, 0],
     ]),
     leg: profileMesh([
       [-0.34, 0.056],
@@ -786,35 +816,22 @@ export function createGridironRenderer(canvas) {
           : 0.58
       : 0;
     const shift = winded ? 0.05 : 0;
-    // Counter-rotate about the waist and keep the original attachment points.
-    const pelvis = running
-      ? at(
-          mul(
-            at(root, 0, 0.87, 0),
-            rotY(running.pelvisYaw * gait * (1 - (cut?.weight || 0))),
-          ),
-          0,
-          -0.87,
-          0,
-        )
-      : root;
-    const chest = running
-      ? at(
-          mul(
-            at(root, 0, 1.02, 0),
-            mul(
-              rotY(-running.pelvisYaw * 0.8 * gait),
-              rotZ(-running.lean * gait),
-            ),
-          ),
-          0,
-          -1.02,
-          0,
-        )
-      : root;
-    // Keep the established root and joint centers. Build the uniform around
-    // them so pads sit over the upper arms and the helmet sits on a neck.
-    sphere(
+    const articulation = upperBodyArticulation(
+      pose,
+      running,
+      gait,
+      cut?.weight || 0,
+    );
+    const pelvis = rotateAtHeight(root, 0.87, articulation.pelvisYaw, 0);
+    const chest = rotateAtHeight(
+      root,
+      1.02,
+      articulation.chestYaw,
+      articulation.chestPitch,
+    );
+    const head = rotateAtHeight(chest, 1.71 + shift, 0, articulation.neckPitch);
+    paint(
+      "pelvis",
       pelvis,
       [0, 0.94 + shift, 0],
       [0.44 * breadth, 0.37, 0.57 * breadth],
@@ -827,11 +844,12 @@ export function createGridironRenderer(canvas) {
       [0.54 * breadth, 0.78, 0.75 * breadth],
       jersey,
     );
-    sphere(chest, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
-    sphere(chest, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
-    sphere(chest, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
-    box(chest, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
-    box(chest, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
+    paint("neck", chest, [0.015, 1.73 + shift, 0], [0.24, 0.25, 0.27], C.skin);
+    // The helmet, visor and bars are rigid equipment on a single head frame.
+    sphere(head, [0.02, 1.95 + shift, 0], [0.49, 0.47, 0.46], trim);
+    sphere(head, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
+    box(head, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
+    box(head, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
       let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
       const footIndex = side < 0 ? 0 : 1;
