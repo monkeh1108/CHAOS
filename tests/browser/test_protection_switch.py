@@ -32,13 +32,14 @@ def test_protection_switch(browser_session, standalone_html):
       page.evaluate('''()=>{window.fakePad={connected:true,index:0,id:'Xbox One test',mapping:'standard',axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false,value:0}))};Object.defineProperty(navigator,'getGamepads',{configurable:true,value:()=>[window.fakePad]});window.fakePad.buttons[1]={pressed:true,value:1};}''')
       page.wait_for_function("GRIDIRON_DEBUG.getState().manualReceiver")
       s=page.evaluate('GRIDIRON_DEBUG.getState()');assert s['manualReceiver'] and s['active']=='WR2',(size,s['active'],s['manualReceiver'])
-      # Set a live airborne ball away from WR to keep play alive, directional control.
-      page.evaluate('''()=>{window.fakePad.axes=[0.65,0,0,0];}''')
-      before=next(p for p in s['players'] if p['key']=='WR2')
-      page.wait_for_timeout(130)
+      # Keep the pass airborne and wait for the real gamepad poll before sampling steering.
+      page.evaluate("""() => {
+       GRIDIRON_DEBUG.debugSetFlight(105,48,4.2,5,0,'WR2');
+       window.fakePad.axes=[0.65,0,0,0];
+      }""")
+      page.wait_for_function("GRIDIRON_DEBUG.getState().players.find(p => p.key === 'WR2').intent === 'user-receiver'")
       t=page.evaluate('GRIDIRON_DEBUG.getState()')
-      after=next(p for p in t['players'] if p['key']=='WR2')
-      if t['ball']: assert after['intent']=='user-receiver',(size,after['intent'],t['phase'])
+      assert t['ball'] and t['active']=='WR2' and t['manualReceiver'],(size,t['phase'])
       # Keyboard action on a separate pass.
       page.evaluate('''()=>{let d=GRIDIRON_DEBUG;d.reset();d.select('verticals');d.snap();d.debugSetContactEnabled(false);d.step(12);d.passTo(0,.24)}''')
       page.keyboard.press('b');s=page.evaluate('GRIDIRON_DEBUG.getState()');assert s['active']=='WR1' and s['manualReceiver'],(size,s['active'])
