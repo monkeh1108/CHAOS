@@ -99,10 +99,15 @@ def main():
     parser.add_argument("--html", type=Path, default=ROOT / "index.html")
     parser.add_argument("--reference-html", type=Path, default=os.environ.get("CHAOS_GOLDEN_REFERENCE"),
                         help="Compare against a fixed baseline build in the same browser")
+    parser.add_argument("--reference-scenarios", nargs="+", choices=SCENARIOS,
+                        help="Compare these scenarios against the reference build and the rest against fixtures")
     parser.add_argument("--record", action="store_true", help="Explicitly write the reference snapshots")
     args = parser.parse_args()
     if args.record and args.reference_html:
         parser.error("--record and --reference-html cannot be combined")
+    if args.reference_scenarios and not args.reference_html:
+        parser.error("--reference-scenarios requires a reference build")
+    reference_scenarios = args.reference_scenarios or SCENARIOS
     browser = args.browser
     if not browser:
         browser = next((path for name in ("chromium", "chromium-browser", "google-chrome", "msedge")
@@ -127,16 +132,17 @@ def main():
     failures = []
     for scenario, snapshot in actual.items():
         path = fixtures / f"{scenario}.json"
+        use_reference = reference is not None and scenario in reference_scenarios
         if args.record:
             path.write_text(snapshot, encoding="utf-8", newline="\n")
         else:
             expected = (capture_repeatable(browser, reference, scenario, "baseline")
-                        if reference is not None else path.read_text(encoding="utf-8"))
+                        if use_reference else path.read_text(encoding="utf-8"))
             if snapshot != expected:
                 failures.append(scenario)
                 continue
         digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:12]
-        label = "exact match to two baseline runs" if reference is not None else "two identical runs"
+        label = "exact match to two baseline runs" if use_reference else "two identical runs"
         print(f"PASS {scenario}: {label} ({digest})")
     if failures:
         raise AssertionError(f"Golden snapshot mismatch: {', '.join(failures)}")
