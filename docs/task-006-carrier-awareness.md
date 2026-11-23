@@ -38,3 +38,30 @@ and a change in the runner's heading before contact. Controlled fixtures cover
 awareness, agility, true rear approach, open and closed gaps, lateral travel,
 manual steering, and other ball-carrier positions. Playtesting checks how
 readable and frequent the reactions are in ordinary games.
+
+## Run-defense follow-up
+
+On a confirmed run, outside corners preserve their shoulder near the line.
+Safeties keep separate pursuit depths, and a defender with leverage aims at
+the runner's projected crossing point until close enough to finish the
+tackle. The angles use live momentum after the handoff.
+
+Test with Stretch and Sweep from different spots. Watch whether a deep
+defender is still upfield when the runner turns the corner. Successful
+blocks and broken tackles can still produce long gains.
+
+For a repeatable sidestep in a fresh browser playtest, run the following in
+the browser console, then close the console and watch the first cut on
+Counter. This resets the practice series.
+
+```js
+GRIDIRON_DEBUG.reset();
+GRIDIRON_DEBUG.debugSeed(431);
+GRIDIRON_DEBUG.select("counter");
+GRIDIRON_DEBUG.snap();
+```
+
+With neutral movement, the seeded Counter reaches the right tackle and
+starts turning before contact. The clear-lane check can reject a sidestep
+when teammates or defenders occupy the exits. This revision leaves that
+choice to the existing awareness and gap checks.
