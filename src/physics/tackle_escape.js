@@ -95,7 +95,7 @@ function drive(runner, defender, link) {
     forwardSpeed,
   };
 }
-function step(runner, defender, link, dt) {
+function step(runner, defender, link, dt, previousBreaks = 0) {
   const contest = drive(runner, defender, link);
   const age = link.age || 0;
   // No grip: not a break-tackle event at all.
@@ -106,7 +106,11 @@ function step(runner, defender, link, dt) {
   const threshold = lightHold
     ? escapeProgress.lightThreshold
     : escapeProgress.wrapThreshold;
-  const gain = Math.max(0, contest.margin - (lightHold ? -0.1 : 0.09));
+  // A runner must regenerate leg drive after a release. Contact strength and
+  // balance still matter when a high-rated runner tries to break another hold.
+  const repeatSkill = clamp((contest.legPower - 0.67) / 0.33, 0, 1);
+  const repeatLoad = Math.min(previousBreaks, 2) * (0.56 - 0.49 * repeatSkill);
+  const gain = Math.max(0, contest.margin - repeatLoad - (lightHold ? -0.1 : 0.09));
   const recovery = Math.max(0, -contest.margin) * 0.5;
   link.escapeProgress = clamp(
     (link.escapeProgress || 0) + dt * (gain * 2.0 - recovery * 0.85),

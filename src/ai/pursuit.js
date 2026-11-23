@@ -163,6 +163,57 @@ export function createPursuit() {
     return clamp(t, 0.045, 0.85);
   }
 
+  function runLeverageAngle(d, a, aim) {
+    if (!RUNS.has(matchState.selectedPlay) || aim.retreatRead || d.x <= a.x - 0.25)
+      return aim;
+
+    const middle = H / 2;
+    const side = Math.sign(a.y + a.vy * 0.28 - middle);
+    const playside = (d.spawnY - middle) * side >= 0;
+    if (aim.sep > 1.5 && aim.sep < 10 && Math.hypot(a.vx, a.vy) > 3) {
+      const meeting = clamp(interceptT(d, a), 0.12, 0.63);
+      const blend = clamp((aim.sep - 1.5) / 2.2, 0, 1);
+      return {
+        ...aim,
+        x: clamp(a.x + a.vx * meeting * blend, 10, 110),
+        y: clamp(a.y + a.vy * meeting * blend, 0.65, H - 0.65),
+        mode: "close",
+        lead: meeting * blend,
+        leadRun: true,
+      };
+    }
+    if (d.pos === "CB" && aim.role.startsWith("force") && aim.sep > 4.0 &&
+        a.x < matchState.playStart + 5) {
+      const shoulder = Math.sign(d.spawnY - middle);
+      const runnerLane = a.y + clamp(a.vy * 0.32, -2.8, 2.8);
+      const width = playside ? (runnerLane - middle) * shoulder + 2.6 : 0;
+      const y = middle + shoulder * Math.max(8.5, width, (aim.y - middle) * shoulder);
+      return {
+        ...aim,
+        x: clamp(Math.max(aim.x, matchState.playStart + 2, a.x + a.vx * 0.46), 10, 110),
+        y: clamp(y, 0.65, H - 0.65),
+        mode: "edge-contain",
+      };
+    }
+    if (aim.role !== "last-line" || aim.sep <= 2.9) return aim;
+
+    const lateralGap = Math.abs(d.y - a.y);
+    const skill = clamp((d.PUR + d.PRC - 80) / 118, 0.15, 1);
+    const lead = clamp(0.3 + lateralGap * 0.03, 0.3, 0.72);
+    const deep = Math.min(d.spawnX + (playside ? -5 : 2), a.x + (playside ? 10 : 15));
+    const leverage = a.x + clamp(a.vx * lead, 1.1, playside ? 8 : 11);
+    const insideHelp = playside ? 0 : clamp((d.x - a.x - 6) * 0.22, 0, 1.6);
+    // Close from depth. The far safety protects the inside lane if the near
+    // safety misses, so neither starts by racing to the mesh point.
+    return {
+      ...aim,
+      x: clamp(Math.max(aim.x, deep, leverage), 10, 110),
+      y: clamp(a.y + clamp(a.vy * lead, -3 - skill, 3 + skill) - side * insideHelp, 0.65, H - 0.65),
+      mode: "last-line",
+      leadRun: true,
+    };
+  }
+
   function pursuitAim(d, a) {
     const sep = dist(d, a),
       fit = d.fit || runFitFor(d),
@@ -239,7 +290,12 @@ export function createPursuit() {
       peakX: a.pursuitHighX,
       enabled: matchState.ballCarrier === a && !matchState.specialState,
     });
-    return ChaosPursuitReaction.aim(d, a, planned, matchState.playClock);
+    const angle = matchState.ballCarrier === a && !matchState.specialState
+      ? runLeverageAngle(d, a, planned)
+      : planned;
+    return angle.leadRun
+      ? angle
+      : ChaosPursuitReaction.aim(d, a, angle, matchState.playClock);
   }
 
   function pursuitAI(d, a, dt) {
@@ -252,7 +308,8 @@ export function createPursuit() {
         ? "safety-angle"
         : "pursue";
     d.intentTarget = aim.role;
-    steer(d, aim.x - d.x, aim.y - d.y, dt, rating * (d.blocked > 0 ? 0.54 : 1));
+    const effort = rating * (d.blocked > 0 ? 0.54 : 1);
+    steer(d, aim.x - d.x, aim.y - d.y, dt, effort);
   }
 
   return {

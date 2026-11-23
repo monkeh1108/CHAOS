@@ -1,10 +1,10 @@
+import { RUN_LANDMARKS } from "../sim/match_config.js";
 import { clamp, distance2D as dist } from "../core/math.js";
 import { ProtectionRead } from "../ai/protection_read.js";
 
 export function createPassProtection() {
   let H,
     P,
-    RUNS,
     arrive,
     blockBattle,
     closestThreat,
@@ -67,40 +67,6 @@ export function createPassProtection() {
 
   function protectionLane(o) {
     return { LT: -3.6, LG: -1.8, C: 0, RG: 1.8, RT: 3.6 }[o.key] || 0;
-  }
-
-  function runningBlockThreats(o, rushing, run) {
-    const lane = 26.65 + protectionLane(o),
-      same = o.blockTarget;
-    return [...rushing]
-      .filter((d) => d.shedCooldown <= 0 || d.key !== same)
-      .sort((a, b) => {
-        const rating = (d) => {
-          const assigned =
-            matchState.blockLinks.get(o.key)?.defender === d.key ? -5 : 0;
-          const home = Math.abs(d.y - lane),
-            distance = dist(o, d);
-          const competing = [...matchState.blockLinks.values()].some(
-            (link) => link.blocker !== o.key && link.defender === d.key,
-          );
-          const extra = competing ? 3.5 : 0;
-          const overreach = home > 6.2 ? (home - 6.2) * 2 : 0;
-          const runSide =
-            run && matchState.selectedPlay === "power" && o.key === "RG"
-              ? d.y < 23
-                ? -2
-                : 3
-              : run && matchState.selectedPlay === "counter" && o.key === "LG"
-                ? d.y > 30
-                  ? -2
-                  : 3
-                : 0;
-          return (
-            distance * 0.7 + home * 0.8 + overreach + extra + assigned + runSide
-          );
-        };
-        return rating(a) - rating(b);
-      });
   }
 
   function passThreatPriority(d, qb) {
@@ -205,80 +171,59 @@ export function createPassProtection() {
     if (dist(o, t) < 1.98) blockBattle(o, t, dt);
   }
 
-  function blockerAI(o, dt) {
-    if (matchState.selectedPlay === "inside") {
-      insideZoneBlockerAI(o, dt, new Set(), null);
-      return;
-    }
-    const run = RUNS.has(matchState.selectedPlay);
-    if (!run) {
-      passProtectAI(o, dt);
-      return;
-    }
-    o.intent = "protect";
-    o.intentTarget = "run-lane";
-    const rushing = matchState.def.filter(
-      (d) =>
-        !d.ground &&
-        d.beatenUntil < matchState.playClock &&
-        d.x > matchState.playStart - 1 &&
-        d.x < matchState.playStart + 16 &&
-        Math.abs(d.y - (26.65 + protectionLane(o))) < 10,
-    );
-    if (!rushing.length) return;
-    if (
-      ((matchState.selectedPlay === "power" && o.key === "RG") ||
-        (matchState.selectedPlay === "counter" && o.key === "LG")) &&
-      matchState.playClock < 0.92
-    ) {
+  function runBlock(o, dt, claims) {
+    const { playStart, playClock, selectedPlay, blockLinks } = matchState;
+    const { bend, block } = RUN_LANDMARKS[selectedPlay];
+    const pulling = o.key === block.pull;
+    const lead = o.pos === "FB" || (o.pos === "TE" && (o.spawnY - 26.65) * (bend[1] - 26.65) > 0);
+    const lane = pulling || lead ? block.leadY : o.spawnY + block.shift;
+    if (pulling && playClock < 1.65 && Math.abs(o.y - lane) > 1.7) {
       o.intent = "pull";
-      o.intentTarget =
-        matchState.selectedPlay === "counter" ? "right C-gap" : "left C-gap";
-      steer(
-        o,
-        matchState.playStart - 1.0 - o.x,
-        (matchState.selectedPlay === "counter" ? 32.0 : 21.8) - o.y,
-        dt,
-        0.96,
-      );
+      o.intentTarget = bend[1] < 26.65 ? "left C-gap" : "right C-gap";
+      steer(o, playStart - 1.25 - o.x, lane - o.y, dt, 1.04);
       return;
     }
-    const candidates = runningBlockThreats(o, rushing, run).filter(
-      (d) => d.key !== o.beatenTarget,
+
+    const current = blockLinks.get(o.key)?.defender;
+    if (!current && o.beatenUntil <= playClock) o.beatenTarget = null;
+    const candidates = matchState.def.filter(
+      (d) => !d.ground &&
+        d.beatenUntil < playClock &&
+        d.key !== o.beatenTarget &&
+        d.x > playStart - 2 &&
+        d.x < playStart + 12 &&
+        Math.abs(d.y - lane) < 4.8 &&
+        dist(o, d) < 10 &&
+        (d.key === current || !claims.has(d.key)),
     );
-    const locked = matchState.blockLinks.get(o.key),
-      preferred = locked && rushing.find((d) => d.key === locked.defender);
-    if (!locked && o.beatenTarget && matchState.playClock >= o.beatenUntil) {
-      o.beatenTarget = null;
-    }
-    const t =
-      preferred ||
-      (o.blockTarget &&
-        rushing.find(
-          (d) =>
-            d.key === o.blockTarget && dist(d, o) < 4.2 && d.shedCooldown <= 0,
-        )) ||
-      candidates[0];
-    if (!t) {
+    const score = (d) => dist(o, d) * 0.8 + Math.abs(d.y - lane) * 1.45 -
+      (d.key === o.blockTarget && d.shedCooldown <= 0 ? 1 : 0);
+    const target = candidates.find((d) => d.key === current) ??
+      candidates.sort((a, b) => score(a) - score(b))[0];
+    if (!target) {
       o.intent = "climb-second-level";
       o.intentTarget = "find-linebacker";
-      arrive(
-        o,
-        matchState.playStart + clamp(matchState.playClock * 2.0, 2, 9),
-        26.65 + protectionLane(o),
-        dt,
-        0.92,
-      );
+      arrive(o, playStart + (pulling || lead ? 3.6 : 2.8), lane, dt, 0.94);
       return;
     }
-    o.blockTarget = t.key;
-    o.intentTarget = t.key;
-    const lane = 26.65 + protectionLane(o),
-      tY = clamp(t.y, lane - 3.4, lane + 3.4);
-    const tx = Math.max(matchState.playStart + 0.15, t.x - 0.6);
-    const ty = tY + (matchState.selectedPlay === "stretch" ? -0.35 : 0);
-    steer(o, tx - o.x, ty - o.y, dt, 0.96);
-    if (dist(o, t) < 1.9) blockBattle(o, t, dt);
+
+    claims.add(target.key);
+    o.blockTarget = target.key;
+    o.intent = pulling || lead ? "lead-block" : "run-block";
+    o.intentTarget = target.key;
+    const leadTime = 0.14;
+    const x = Math.max(playStart - 1.4, target.x + target.vx * leadTime - 0.5);
+    const y = clamp(target.y + target.vy * leadTime, lane - 2.4, lane + 2.4);
+    steer(o, x - o.x, y - o.y, dt, 0.98);
+    if (dist(o, target) < 1.9) blockBattle(o, target, dt);
+  }
+
+  function blockerAI(o, dt, claims) {
+    if (matchState.selectedPlay === "inside")
+      insideZoneBlockerAI(o, dt, claims, null);
+    else if (RUN_LANDMARKS[matchState.selectedPlay]?.block)
+      runBlock(o, dt, claims);
+    else passProtectAI(o, dt);
   }
 
   function rbPassProtection(p, dt) {
@@ -335,24 +280,13 @@ export function createPassProtection() {
     if (dist(p, target) < 1.98) blockBattle(p, target, dt);
   }
 
-  function rbLeadBlock(p, dt) {
-    p.intent = "lead-block";
-    p.intentTarget = "front";
-    if (p.key === "FB" && matchState.selectedPlay === "power") {
-      const target = closestThreat(
-        p,
-        matchState.def.filter((d) => !d.rush && d.x > matchState.playStart),
-      ).p;
-      let ty = 22.3,
-        tx = matchState.playStart + Math.min(8, matchState.playClock * 3);
-      if (target && dist(p, target) < 3) {
-        tx = target.x - 0.65;
-        ty = target.y;
-        blockBattle(p, target, dt);
-      }
-      steer(p, tx - p.x, ty - p.y, dt, 0.96);
+  function rbLeadBlock(p, dt, claims) {
+    if (RUN_LANDMARKS[matchState.selectedPlay]?.block) {
+      runBlock(p, dt, claims);
       return;
     }
+    p.intent = "lead-block";
+    p.intentTarget = "front";
     const rushers = matchState.def.filter((d) => d.rush);
     const t = closestThreat(p, rushers).p;
     if (t && dist(p, t) < 2.3) {
@@ -368,7 +302,6 @@ export function createPassProtection() {
       ({
         H,
         P,
-        RUNS,
         arrive,
         blockBattle,
         closestThreat,

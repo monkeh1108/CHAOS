@@ -349,6 +349,7 @@ export function createControlActions() {
     }
     if (input.mag > 0.12) matchState.manualDrive = true;
     if (matchState.manualDrive) {
+      if (p.carrierObstacle) p.carrierObstacle = null;
       p.intent = input.mag > 0.12 ? "carry-manual" : "carry-coast";
       p.intentTarget = "user";
       if (input.mag > 0.12)

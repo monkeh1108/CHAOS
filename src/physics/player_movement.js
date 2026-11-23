@@ -1,4 +1,6 @@
 import { clamp } from "../core/math.js";
+import { RUNS } from "../sim/match_config.js";
+import { runnerCut } from "./runner_cut.js";
 
 export function createPlayerMovement() {
   let acceleration, launchAssist, mass, matchState, maxSpeed, speed, sprintHeld;
@@ -76,6 +78,7 @@ export function createPlayerMovement() {
         "escort",
         "block",
         "lead-block",
+        "pull",
         "pile-support",
         "rush",
         "run",
@@ -208,6 +211,23 @@ export function createPlayerMovement() {
           rotatedY = vx * t + vy * c;
         vx = rotatedX * preserved;
         vy = rotatedY * preserved;
+      }
+      if (
+        p.intent === "carry-auto" &&
+        p === matchState.ballCarrier &&
+        RUNS.has(matchState.selectedPlay) &&
+        !matchState.specialState &&
+        !p.stumbleTime && !p.ground && !p.airState && !p.action
+      ) {
+        const cut = runnerCut(p, vx, vy, targetAngle, mass(p), dt);
+        if (cut) {
+          vx = cut.vx;
+          vy = cut.vy;
+        }
+        p.runnerCutBank = (p.runnerCutBank || 0) +
+          clamp((cut?.bank || 0) - (p.runnerCutBank || 0), -dt * 2.8, dt * 2.8);
+      } else if (p.runnerCutBank) {
+        p.runnerCutBank = 0;
       }
       const alignment =
         spd > 0.15 ? (vx * dx + vy * dy) / (Math.hypot(vx, vy) * norm) : 1;

@@ -1,3 +1,4 @@
+import { RUN_LANDMARKS } from "../sim/match_config.js";
 import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
 import { AnimationPolicy } from "./animation_policy.js";
@@ -326,36 +327,17 @@ export function createGridironRenderer(canvas) {
   }
   function routeArt(sim) {
     if (sim.phase !== "presnap" || sim.defenseArt?.length) return;
-    const run = ["inside", "stretch", "power", "counter", "sweep"].includes(
-      sim.play,
-    );
-    if (run) {
+    const track = RUN_LANDMARKS[sim.play];
+    if (track) {
       const back = sim.players.find((p) => p.key === "RB");
-      if (!back) return;
-      const start = [back.x, back.y],
-        handoff = [sim.los + 1, 26.65];
-      const edge =
-        sim.play === "stretch"
-          ? [sim.los + 6, 8]
-          : sim.play === "sweep"
-            ? [sim.los + 8, 43]
-            : sim.play === "counter"
-              ? [sim.los + 6, 38]
-              : sim.play === "power"
-                ? [sim.los + 5, 19]
-                : [sim.los + 8, 26.65];
-      const end =
-        sim.play === "stretch"
-          ? [sim.los + 15, 8]
-          : sim.play === "sweep"
-            ? [sim.los + 16, 46]
-            : sim.play === "counter"
-              ? [sim.los + 15, 39]
-              : sim.play === "power"
-                ? [sim.los + 13, 16]
-                : [sim.los + 16, 26.65];
-      const pts = [start, handoff, edge, end],
-        tint = C.own;
+      const quarterback = sim.players.find((p) => p.key === "QB");
+      if (!back || !quarterback) return;
+      const start = [back.x, back.y];
+      const handoff = [quarterback.x + 0.3, quarterback.y];
+      const pts = [start, handoff];
+      for (const point of [track.entry, track.bend, track.finish])
+        if (point) pts.push([sim.los + point[0], point[1]]);
+      const tint = C.own;
       for (let i = 0; i < pts.length - 1; i++)
         artStroke(pts[i], pts[i + 1], tint, 0.22);
       const a = pts.at(-2),

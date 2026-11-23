@@ -139,9 +139,11 @@ export function createBodyCollision() {
         }
       }
     }
-    // Capture legitimate anatomical contact *before* four positional correction
-    // passes can erase it from the post-solver tackle sample. Read-only evidence;
-    // the tackle solver still checks eligibility, cooldown, and grip progression.
+    const relX = b.vx - a.vx;
+    const relY = b.vy - a.vy;
+    const closing = relX * nx + relY * ny;
+    // The solver can stop a head-on collision before the standing arm capsules
+    // touch. Retain the actual pad impact alongside any anatomical overlap.
     if (
       pass === 0 &&
       matchState.ballCarrier &&
@@ -150,14 +152,20 @@ export function createBodyCollision() {
       !b.ground &&
       (a === matchState.ballCarrier || b === matchState.ballCarrier)
     ) {
-      const runner = a === matchState.ballCarrier ? a : b,
-        defender = runner === a ? b : a;
+      const runner = a === matchState.ballCarrier ? a : b;
+      const defender = runner === a ? b : a;
+      const sign = defender === a ? 1 : -1;
+      const facing = (Math.cos(defender.face) * nx + Math.sin(defender.face) * ny) * sign;
+      const aligned = -closing / Math.max(0.01, Math.hypot(relX, relY));
+      const padImpact =
+        !matchState.specialState &&
+        !["tackle-dive", "cut-stick"].includes(defender.action?.kind) &&
+        closing < -1.25 && aligned > 0.68 && facing > 0.23
+          ? { alignment: aligned, impulse: -closing * YARD_M / (invA + invB) }
+          : null;
       const body = ChaosContactOutcomes.evaluate(runner, defender);
-      if (body.bodyContact && body.penetration >= 0.095) {
-        const old = matchState.liveTackleContacts.get(defender.key);
-        if (!old || body.penetration > old.penetration)
-          matchState.liveTackleContacts.set(defender.key, body);
-      }
+      if (padImpact || (body.bodyContact && body.penetration >= 0.095))
+        matchState.liveTackleContacts.set(defender.key, { ...body, padImpact });
     }
     const penetration = Math.max(0, minSep - sep);
     // Classify from incoming momentum BEFORE collision impulses. Body contact
@@ -204,9 +212,6 @@ export function createBodyCollision() {
       b.x += (nx * correction * invB) / (invA + invB);
       b.y += (ny * correction * invB) / (invA + invB);
     }
-    const relX = b.vx - a.vx,
-      relY = b.vy - a.vy,
-      closing = relX * nx + relY * ny;
     if (closing >= -0.025) return penetration > 0;
     const tracksDrive = indirectContactActive(matchState);
     const approachA = tracksDrive ? a.vx * nx + a.vy * ny : 0;

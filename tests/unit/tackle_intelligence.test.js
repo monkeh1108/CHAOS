@@ -5,8 +5,12 @@ const { ChaosTackleIntelligence: T } = require('../../src/ai/tackle_intelligence
 const d={HIT:85,TAK:82,STR:78,AGI:80,PMV:72,face:0,vx:5,vy:0};const r={};
 assert.deepStrictEqual(JSON.stringify(T.direction(d,{x:0,y:1,mag:1})),JSON.stringify({x:0,y:1}));
 assert.equal(T.direction(d,{x:0,y:0,mag:0}).x,1);
-const g={gap:2.1,contact:.8,closing:-.3,runnerSpeed:7,facing:.8,frontality:.8,freeLane:true};
+const g={gap:2.1,contact:.8,closing:-.3,runnerSpeed:7,facing:.8,frontality:.8,freeLane:true,breakaway:true,supportAhead:false};
 assert.equal(T.selection(d,r,g),'tackle-dive');
+assert.equal(T.selection(d,r,{...g,supportAhead:true}),'pursue');
+assert.equal(T.selection(d,r,{...g,breakaway:false}),'pursue');
+assert.equal(T.selection(d,r,{...g,closing:0.6}),'pursue');
+assert.equal(T.selection(d,r,{...g,closing:-1.8}),'pursue');
 assert.equal(T.selection(d,r,{...g,gap:10}),'pursue');
 assert.equal(T.selection(d,r,{...g,gap:.85,closing:1}),'wrap');
 assert.equal(T.selection(d,r,{...g,gap:.85,closing:3.3}),'hit-stick');

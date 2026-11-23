@@ -1,7 +1,9 @@
 import { clamp } from "../core/math.js";
+import { readCarrierObstacle } from "./carrier_obstacles.js";
+import { RUN_LANDMARKS } from "../sim/match_config.js";
 
 export function createBallCarrierAI() {
-  let H, P, matchState, steer;
+  let H, P, matchState, radius, steer;
 
   // A ball carrier's objective is the opposing end zone. Prior versions used a
   // landmark anchored to the snap time; a breakaway RB would outrun that landmark
@@ -9,23 +11,20 @@ export function createBallCarrierAI() {
   function autoCarry(p, dt) {
     p.intent = "carry-auto";
     p.intentTarget = "endzone";
-    const inBackfield =
-      p.x < matchState.playStart + 5.5 && matchState.playClock < 2.5;
-    const lane =
-      matchState.selectedPlay === "stretch"
-        ? 16
-        : matchState.selectedPlay === "sweep"
-          ? 39
-          : matchState.selectedPlay === "counter"
-            ? 35
-            : matchState.selectedPlay === "power"
-              ? 22.5
-              : 24.2;
-    // A run gap influences the FIRST few steps only. After breaking contain, keep
-    // the runner's current lane, especially along an empty sideline.
-    let targetY =
-      inBackfield && p === P("RB")
-        ? p.y + clamp(lane - p.y, -3.0, 3.0) * 0.62
+    const { playStart, selectedPlay } = matchState;
+    const back = !matchState.specialState && p === P("RB");
+    const outsideTrack = back && selectedPlay !== "inside" && RUN_LANDMARKS[selectedPlay];
+    const runPoint = outsideTrack
+      ? [outsideTrack.entry, outsideTrack.bend, outsideTrack.finish]
+          .find((point) => point && p.x < playStart + point[0])
+      : null;
+    // Inside Zone reads the interior gap. Wider runs aim at the points on the play art.
+    const readingInside =
+      back && !outsideTrack && p.x < playStart + 5.5 && matchState.playClock < 2.5;
+    let targetY = runPoint
+      ? runPoint[1]
+      : readingInside
+        ? p.y + clamp(24.2 - p.y, -3.0, 3.0) * 0.62
         : p.y;
     // Special teams: the called return lane guides early auto-return decisions;
     // the actual kick side is independent and the user may steer elsewhere.
@@ -48,7 +47,7 @@ export function createBallCarrierAI() {
           Math.abs(d.y - p.y) < 2.1,
       )
       .sort((a, b) => a.x - b.x)[0];
-    if (inFront) {
+    if (inFront && !runPoint) {
       const side =
         p.y <= 3.7 ? 1 : p.y >= H - 3.7 ? -1 : inFront.y >= p.y ? -1 : 1;
       const candidate = clamp(p.y + side * 2.2, 1.35, H - 1.35);
@@ -94,14 +93,33 @@ export function createBallCarrierAI() {
       }
     }
     const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
-    const dx = Math.max(2, aheadX - p.x);
-    const dy = (targetY - p.y) * 2.0;
-    steer(p, dx, dy, dt, 1.02);
+    const dx = runPoint
+      ? clamp(playStart + runPoint[0] - p.x, 2, 7)
+      : Math.max(2, aheadX - p.x);
+    const cuttingBack = p.intent === "cutback";
+    if (cuttingBack && p.carrierObstacle) p.carrierObstacle = null;
+    const trackDy = (targetY - p.y) * (runPoint ? 1 : 2);
+    const length = Math.hypot(dx, trackDy);
+    const obstacle = cuttingBack
+      ? null
+      : readCarrierObstacle(
+          p, matchState, radius, dt, H,
+          runPoint ? { x: dx / length, y: trackDy / length } : null,
+        );
+    // Use ordinary steering and traction. The collision solver still owns every impact.
+    if (obstacle) p.intentTarget = obstacle.key;
+    steer(
+      p,
+      obstacle ? obstacle.x * length : dx,
+      obstacle ? obstacle.y * length : trackDy,
+      dt,
+      1.02,
+    );
   }
 
   return {
     bind(services) {
-      ({ H, P, matchState, steer } = services);
+      ({ H, P, matchState, radius, steer } = services);
     },
     autoCarry,
   };
