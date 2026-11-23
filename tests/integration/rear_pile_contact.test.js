@@ -41,6 +41,7 @@ assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 // Set fixture inputs and inspect closure state without changing production debug controls.
 vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
  window.fixture = {
+  recovery(key) {const d = systems.P(key); return {cooldown: d.tackleCooldown, separated: d.reengage?.hasSeparated};},
   neutral() {matchState.controlMode='offense';matchState.manualDrive=true;matchState.suppressManualUntilNeutral=false;},
   input(value) {dispatchInput({type:"controls",move:{x:0,y:Number(value),mag:Number(value)}});},
   time() {return matchState.playClock;},
@@ -206,6 +207,52 @@ observe('second defender after a broken grip', 'RB', [...second, 'DT2'], 150, (s
  if (released && links.some(link => link.defender === 'DT2')) backupGrip = true;
 });
 assert.ok(released && backupGrip);
+
+scrimmage();
+g.debugForceCarrier('RB');
+const [lead] = arrange('RB', 1, 1, 0, 2);
+const pack = ['WILL', 'DT2', 'EDGE1', 'EDGE2'];
+let breakAt = null;
+let followUp = null;
+const rearPack = observe('rear pack after a broken grip', 'RB', [lead, ...pack], 240, (state, links, frame) => {
+ if (breakAt === null && links.some(link => link.defender === lead)) {
+  assert.ok(g.debugForceGripEscape(lead));
+  breakAt = frame;
+  const first = player(lead, state);
+  // Seed the crowd immediately behind the defender who just lost his grip.
+  // The pursuit, collisions and next tackle all run through live updates.
+  pack.forEach((key, i) => {
+   const row = 1 + Math.floor(i / 2);
+   g.debugMovePlayer(key, first.x - .7 * row, first.y + (i % 2 ? 1 : -1) * .16 * row);
+   g.debugSetVelocity(key, Math.max(first.vx + 1, 3.4), first.vy);
+   g.debugSetDefenderState(key, {face: 0});
+  });
+ } else if (breakAt !== null) {
+  if (f.recovery(lead).cooldown > 0)
+   assert.ok(!links.some(link => link.defender === lead), 'cooldown still prevents an immediate re-grip');
+  if (followUp === null && links.length > 0) followUp = links[0].defender;
+ }
+});
+assert.ok(breakAt !== null && followUp && followUp !== lead, 'another defender must reach the runner after the release');
+assert.ok(rearPack.phase === 'dead' && rearPack.logs.some(log => /tackle/i.test(log)), JSON.stringify(rearPack));
+assert.ok(rearPack.maxAdvance < 9, JSON.stringify(rearPack));
+
+scrimmage();
+g.debugForceCarrier('RB');
+const [resetDefender] = arrange('RB', 1, 1, 0, 2);
+g.step(1);
+assert.ok(g.debugForceGripEscape(resetDefender));
+const runningBack = player('RB');
+g.debugMovePlayer(resetDefender, runningBack.x - 2, runningBack.y);
+g.step(1);
+assert.ok(f.recovery(resetDefender).cooldown > 0);
+assert.equal(f.recovery(resetDefender).separated, true, 'a real gap during cooldown counts as separation');
+const afterGap = player('RB');
+g.debugMovePlayer(resetDefender, afterGap.x - .6, afterGap.y);
+g.step(1);
+assert.ok(f.recovery(resetDefender).cooldown > 0);
+assert.equal(f.recovery(resetDefender).separated, true);
+assert.equal(g.getState().contacts.tackles.length, 0);
 
 scrimmage();
 g.debugForceCarrier('RB');

@@ -23,6 +23,14 @@ export function createTackleContacts() {
     const report = matchState.tackleDiagnostics;
     if (report) report.length = 0;
     for (const d of matchState.def) {
+      // A real separation can open and close while the defender is cooling
+      // down. Record it then; recovery still gates any new grip.
+      const ready = ChaosTackleReengagement.observe(
+        d,
+        a,
+        radius(a) + radius(d),
+        matchState.playClock,
+      );
       const recovery = d.ground
         ? "grounded"
         : d.stun > 0
@@ -40,14 +48,7 @@ export function createTackleContacts() {
       // physically reaches him, including a user-blitzing safety or linebacker.
       // Rush assignments affect pursuit and blocking, not tackle eligibility.
       const proximity = dist(a, d);
-      if (
-        !ChaosTackleReengagement.observe(
-          d,
-          a,
-          radius(a) + radius(d),
-          matchState.playClock,
-        )
-      ) {
+      if (!ready) {
         report?.push({ defender: d.key, reason: "reengagement" });
         d.wrapReach = 0;
         d.wrapLinked = false;
@@ -252,7 +253,9 @@ export function createTackleContacts() {
         const placementQuality = padImpact
           ? Math.max(anatomicalQuality, 0.65 + 0.12 * padImpact.alignment)
           : anatomicalQuality;
-        const padGrip = padImpact ? clamp(0.39 + (d.TAK - 60) * 0.004, 0.34, 0.54) : 0.055;
+        const padGrip = padImpact
+          ? clamp(0.39 + (d.TAK - 60) * 0.004, 0.34, 0.54)
+          : 0.055;
         const handPosition = clamp(
           (0.24 +
             hit.advantage * 0.011 +

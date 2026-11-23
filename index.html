@@ -1325,6 +1325,12 @@
       const report = matchState.tackleDiagnostics;
       if (report) report.length = 0;
       for (const d of matchState.def) {
+        const ready = ChaosTackleReengagement.observe(
+          d,
+          a,
+          radius(a) + radius(d),
+          matchState.playClock
+        );
         const recovery = d.ground ? "grounded" : d.stun > 0 ? "stunned" : d.tackleCooldown > 0 && d.action?.kind !== "tackle-dive" ? "tackle cooldown" : null;
         if (recovery) {
           report?.push({ defender: d.key, reason: recovery });
@@ -1333,12 +1339,7 @@
           continue;
         }
         const proximity = distance2D(a, d);
-        if (!ChaosTackleReengagement.observe(
-          d,
-          a,
-          radius(a) + radius(d),
-          matchState.playClock
-        )) {
+        if (!ready) {
           report?.push({ defender: d.key, reason: "reengagement" });
           d.wrapReach = 0;
           d.wrapLinked = false;
@@ -6744,7 +6745,51 @@
       const angle2 = matchState.ballCarrier === a && !matchState.specialState ? runLeverageAngle(d, a, planned) : planned;
       return angle2.leadRun ? angle2 : ChaosPursuitReaction.aim(d, a, angle2, matchState.playClock);
     }
+    function escapeRecoveryAim(d, a) {
+      const recovery = d.reengage;
+      if (recovery?.carrier !== a.key || recovery.hasSeparated || d.blocked >= 0.25)
+        return null;
+      const sep = distance2D(d, a);
+      if (sep >= recovery.requiredGap || sep < 1e-3) return null;
+      const fx = (a.x - d.x) / sep;
+      const fy = (a.y - d.y) / sep;
+      if (!recovery.peel) {
+        const heading = Math.hypot(a.vx, a.vy) > 1 ? Math.atan2(a.vy, a.vx) : a.face;
+        const hx = Math.cos(heading);
+        const hy = Math.sin(heading);
+        if (fx * hx + fy * hy < 0.6) return null;
+        const crowd = matchState.def.find((other) => {
+          if (other === d || other.ground || other.stun > 0 || other.blocked >= 0.25 || other.tackleCooldown > 0 || other.reengage?.carrier === a.key)
+            return false;
+          const x = d.x - other.x;
+          const y = d.y - other.y;
+          return x * fx + y * fy > 0.25 && Math.hypot(x, y) < 1.65 && Math.abs(y * fx - x * fy) < 0.65;
+        });
+        if (!crowd) return null;
+        const lateral = -(d.x - a.x) * hy + (d.y - a.y) * hx;
+        const crowdSide = -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx;
+        let side = Math.abs(lateral) > 0.08 ? Math.sign(lateral) : -Math.sign(crowdSide) || 1;
+        const width = recovery.requiredGap + 0.15;
+        const lane = d.y + side * hx * width;
+        if (lane < 0.65 || lane > H2 - 0.65) side *= -1;
+        recovery.peel = { x: -side * hy * width, y: side * hx * width };
+      }
+      return {
+        x: clamp(d.x - fx * 0.35 + recovery.peel.x, 10, 110),
+        y: clamp(d.y - fy * 0.35 + recovery.peel.y, 0.65, H2 - 0.65),
+        mode: "escape-recovery",
+        role: a.key
+      };
+    }
     function pursuitAI(d, a, dt) {
+      const recovery = escapeRecoveryAim(d, a);
+      if (recovery) {
+        d.pursuitPoint = recovery;
+        d.intent = "recover";
+        d.intentTarget = a.key;
+        steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
+        return;
+      }
       const aim2 = pursuitAim(d, a);
       d.pursuitPoint = aim2;
       const rating3 = clamp(0.95 + (d.PUR - 70) * 32e-4, 0.82, 1.11);
