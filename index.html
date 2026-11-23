@@ -13289,7 +13289,54 @@
       preserveDrawingBuffer: false
     });
     if (!gl) return null;
-    const vs = `attribute vec3 aPos;attribute vec3 aNormal;uniform mat4 uMVP;uniform mat4 uModel;varying float vShade;void main(){mat3 axes=mat3(uModel); vec3 mag2=vec3(dot(axes[0],axes[0]),dot(axes[1],axes[1]),dot(axes[2],axes[2]));vec3 n=normalize(axes*(aNormal/max(mag2,vec3(0.00001))));vShade=0.59+0.41*max(0.0,dot(n,normalize(vec3(-0.45,1.0,0.35))));gl_Position=uMVP*vec4(aPos,1.0);}`;
+    const vs = `
+    attribute vec3 aPos;
+    attribute vec3 aNormal;
+    uniform mat4 uMVP;
+    uniform mat4 uModel;
+    // Bend, inward twist, lateral build, and forearm length.
+    uniform vec4 uArm;
+    varying float vShade;
+
+    vec3 armTurn(vec3 v, float weight) {
+      float twist = uArm.y * weight;
+      float ct = cos(twist), st = sin(twist);
+      v = vec3(ct * v.x + st * v.z, v.y, ct * v.z - st * v.x);
+      float bend = uArm.x * weight;
+      float cb = cos(bend), sb = sin(bend);
+      return vec3(cb * v.x - sb * v.y, sb * v.x + cb * v.y, v.z);
+    }
+
+    void main() {
+      vec3 point = aPos;
+      vec3 normal = aNormal;
+      if (uArm.w > 0.0) {
+        // Use the same rings on both sides of the sleeve seam. Through the
+        // elbow, rotate each cross-section without shrinking its radius.
+        const float span = 0.12;
+        float y = aPos.y;
+        if (y < -span) {
+          y = -span + (y + span) * (uArm.w - span) / (0.34 - span);
+        }
+        float blend = clamp((span - y) / (2.0 * span), 0.0, 1.0);
+        vec3 radial = vec3(aPos.x, 0.0, aPos.z * uArm.z);
+        vec3 center = vec3(0.0, y, 0.0);
+        if (y < -span) {
+          center = armTurn(center, 1.0);
+        } else if (y < span) {
+          float before = 1.0 - blend;
+          center = before * before * vec3(0.0, span, 0.0) +
+                   blend * blend * armTurn(vec3(0.0, -span, 0.0), 1.0);
+        }
+        point = center + armTurn(radial, blend);
+        normal = armTurn(vec3(normal.x, normal.y, normal.z / uArm.z), blend);
+      }
+      mat3 axes = mat3(uModel);
+      vec3 mag2 = vec3(dot(axes[0], axes[0]), dot(axes[1], axes[1]), dot(axes[2], axes[2]));
+      vec3 n = normalize(axes * (normal / max(mag2, vec3(0.00001))));
+      vShade = 0.59 + 0.41 * max(0.0, dot(n, normalize(vec3(-0.45, 1.0, 0.35))));
+      gl_Position = uMVP * vec4(point, 1.0);
+    }`;
     const fs = `precision mediump float;uniform vec3 uColor;varying float vShade;void main(){gl_FragColor=vec4(uColor*vShade,1.0);}`;
     const shader = (type, src) => {
       const s = gl.createShader(type);
@@ -13310,6 +13357,7 @@
     gl.depthFunc(gl.LEQUAL);
     const attrPos = gl.getAttribLocation(prog, "aPos"), attrNormal = gl.getAttribLocation(prog, "aNormal");
     const uMVP = gl.getUniformLocation(prog, "uMVP"), uModel = gl.getUniformLocation(prog, "uModel"), uColor = gl.getUniformLocation(prog, "uColor");
+    const uArm = gl.getUniformLocation(prog, "uArm");
     if (attrPos < 0 || attrNormal < 0)
       throw Error("Required 3D vertex inputs missing");
     gl.enableVertexAttribArray(attrPos);
@@ -13473,7 +13521,7 @@
         const a = pt(v2, u), b = pt(v2 + 1, u), c = pt(v2 + 1, u + 1), d = pt(v2, u + 1);
         for (const p of [a, b, c, a, c, d]) ball.push(...p, ...norm(p));
       }
-    function profileMesh(rings2) {
+    function profileMesh(rings2, materialBreak = 0) {
       const vertices = [];
       const sides = 10;
       const step3 = 2 * Math.PI / sides;
@@ -13495,11 +13543,27 @@
           vertices.push(...lower[j], ...upper[k], ...lower[k]);
         }
       }
-      return mesh(vertices);
+      return { ...mesh(vertices), seam: materialBreak * 6 * sides };
     }
     const meshes = {
       box: mesh(cube),
       sphere: mesh(ball),
+      arm: profileMesh(
+        [
+          [-0.34, 0.037],
+          [-0.27, 0.051],
+          [-0.16, 0.078],
+          [-0.12, 0.076],
+          [-0.06, 0.067],
+          [0, 0.061],
+          [0.06, 0.066],
+          [0.12, 0.074],
+          [0.19, 0.084],
+          [0.32, 0.102],
+          [0.43, 0.065]
+        ],
+        8
+      ),
       torso: profileMesh([
         [-0.5, 0],
         [-0.43, 0.36],
@@ -13568,21 +13632,34 @@
       stands: color([24, 42, 52]),
       ball: color([141, 81, 43])
     };
-    function paint(which, parent, pos, size, c) {
-      const model = mul(at(parent, ...pos), scale(...size));
+    function bindMesh(msh, model) {
       gl.uniformMatrix4fv(
         uMVP,
         false,
         new Float32Array(mul(viewProjection, model))
       );
       gl.uniformMatrix4fv(uModel, false, new Float32Array(model));
-      gl.uniform3fv(uColor, c);
-      const msh = meshes[which];
       gl.bindBuffer(gl.ARRAY_BUFFER, msh.b);
       gl.vertexAttribPointer(attrPos, 3, gl.FLOAT, false, 24, 0);
       gl.vertexAttribPointer(attrNormal, 3, gl.FLOAT, false, 24, 12);
+    }
+    function paint(which, parent, pos, size, c) {
+      const msh = meshes[which];
+      bindMesh(msh, mul(at(parent, ...pos), scale(...size)));
+      gl.uniform3fv(uColor, c);
       gl.drawArrays(gl.TRIANGLES, 0, msh.n);
       drawCalls++;
+    }
+    function drawArm(pivot, bend, twist, breadth, length, jersey) {
+      const arm = meshes.arm;
+      bindMesh(arm, pivot);
+      gl.uniform4f(uArm, bend, twist, breadth, length);
+      gl.uniform3fv(uColor, C.skin);
+      gl.drawArrays(gl.TRIANGLES, 0, arm.seam);
+      gl.uniform3fv(uColor, jersey);
+      gl.drawArrays(gl.TRIANGLES, arm.seam, arm.n - arm.seam);
+      gl.uniform4f(uArm, 0, 0, 0, 0);
+      drawCalls += 2;
     }
     const box = (m, pos, size, c) => paint("box", m, pos, size, c), sphere = (m, pos, size, c) => paint("sphere", m, pos, size, c);
     function field(LOS, first) {
@@ -13867,27 +13944,13 @@
           [0.33 * breadth, 0.233, 0.29 * breadth],
           jersey
         );
-        paint(
-          "upperLimb",
-          shoulder,
-          [0, -0.22, 0],
-          [0.217, 0.58, 0.21 * breadth],
-          jersey
-        );
         const reachPose = ground ? null : divePose || standingWrapPose;
         const bend = reachPose?.elbow ?? (ground ? 0.28 : pose2.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
-        const elbow = mul(
-          at(shoulder, 0, -0.43, 0),
-          mul(rotZ(bend), rotY(side * (reachPose?.inward || 0)))
-        );
+        const pivot = at(shoulder, 0, -0.43, 0);
+        const twist = side * (reachPose?.inward || 0);
         const extension = reachPose ? 0.43 : 0.34;
-        paint(
-          "lowerLimb",
-          elbow,
-          [0, -extension * 0.42, 0],
-          [0.155, extension * 1.22, 0.157 * breadth],
-          C.skin
-        );
+        const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
+        drawArm(pivot, bend, twist, breadth, extension, jersey);
         sphere(elbow, [0, -extension, 0], [0.14, 0.16, 0.16], C.pants);
       }
       if (carrier === p)
