@@ -1,10 +1,13 @@
+import re
+
+
 def test_play_selection_and_input(browser_session, standalone_html):
     HTML=standalone_html
     with browser_session(headless=True, args=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-angle=swiftshader']) as browser:
      for width in (1120,390):
       page=browser.new_page(viewport={'width':width,'height':820})
       errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-      page.set_content(HTML,wait_until='load')
+      page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
       D='GRIDIRON_DEBUG';st=lambda:page.evaluate(f'{D}.getState()')
       page.evaluate(f'{D}.reset()')
       page.evaluate(f'{D}.debugDefensePresnap()')
@@ -15,12 +18,12 @@ def test_play_selection_and_input(browser_session, standalone_html):
       assert initial!=second
       for _ in range(12):page.evaluate(f'{D}.switchDefender()')
       assert st()['phase']=='presnap'
-      assert page.evaluate('document.querySelector("#inputStatus").textContent').find('SELECTED')>=0
+      assert st()['selectedDefenderKey'] in page.locator('#inputStatus').inner_text()
       assert page.evaluate('window.GRIDIRON_DEBUG.getAudibles().open') is False
       assert page.evaluate(f'{D}.openAudibles()') is True
       assert page.evaluate(f'{D}.applyAudible(2)') is True
       # Ensure no route art supplied for the 3D renderer while the user controls defense.
-      assert 'gameStarted&&controlMode===\'defense\'' in HTML
+      assert re.search(r'''!\s*\(\s*gameStarted\s*&&\s*controlMode\s*===\s*['"]defense['"]\s*\)''', HTML)
       # Two-point attempt should support normal playbook selection followed by X audible.
       page.evaluate('GRIDIRON_DEBUG.reset()')
       page.evaluate("GRIDIRON_DEBUG.select('inside')")

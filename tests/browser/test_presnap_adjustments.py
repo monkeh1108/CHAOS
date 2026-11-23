@@ -7,7 +7,7 @@ def test_presnap_adjustments(browser_session, standalone_html):
      for width in (1120,390):
       page=browser.new_page(viewport={'width':width,'height':820})
       errors=[];page.on('pageerror',lambda err:errors.append(str(err)))
-      page.set_content(HTML,wait_until='load')
+      page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
       page.evaluate('GRIDIRON_DEBUG.reset()')
       page.locator('#playbookBtn').click()
       before=page.evaluate('GRIDIRON_DEBUG.getMatch().playSeconds')
