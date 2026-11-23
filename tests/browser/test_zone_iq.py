@@ -34,14 +34,14 @@ def test_zone_iq(browser_session, standalone_html):
    g.step(38);let state=g.getState();
    const ol=state.players.filter(p=>['LT','LG','C','RG','RT'].includes(p.key));
    return {plan,counts,left,right,combos:teammates.length,sawFront,sawBack,responsive,blind,p1,scoreFront,scoreBack,eliteScan,poorScan,
-    tick:state.playClock,ol:ol.map(p=>({key:p.key,intent:p.intent,target:p.intentTarget,x:p.x,y:p.y})),links:state.contacts.blocks.length};
+    prioritizesVisibleThreat:scoreFront > 0 && scoreBack === -Infinity, tick:state.playClock,ol:ol.map(p=>({key:p.key,intent:p.intent,target:p.intentTarget,x:p.x,y:p.y})),links:state.contacts.blocks.length};
   }''')
       print('WIDTH',width,result)
       assert len(result['counts'])>=3 and max(result['counts'].values())<=2,result
       assert result['combos']>=1,result
       assert result['sawFront'] and not result['sawBack'],result
       assert result['responsive'] and result['blind'] is None,result
-      assert result['scoreFront']>result['scoreBack'],result
+      assert result['prioritizesVisibleThreat'],result
       assert result['eliteScan']<result['poorScan'] and .05<result['eliteScan']<.3,result
       assert all(p['intent'] in ['zone-drive','zone-combo','zone-climb','zone-search','whistle','handoff'] for p in result['ol']),result
       assert result['tick']>=.2,result
