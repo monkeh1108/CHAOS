@@ -10,8 +10,15 @@ def test_zone_iq(browser_session, standalone_html):
       page.set_content(html,wait_until='load')
       result=page.evaluate('''() => {
    const g=GRIDIRON_DEBUG;
-   // This seed generates a front with an available double-team.
-   g.debugFinishCoinToss();g.reset();g.select('inside');g.debugSeed(2);g.snap();
+   // Reset builds player positions before snap, so fix both random sources.
+   const random = Math.random;
+   try {
+    Math.random = () => 431 / 4294967296;
+    g.debugFinishCoinToss();g.reset();
+   } finally {
+    Math.random = random;
+   }
+   g.select('inside');g.debugSeed(2);g.snap();
    const plan=g.debugInsideZonePlan();
    const allocated=Object.values(plan).filter(p=>p?.target).map(p=>p.target);
    const counts={};for(const k of allocated)counts[k]=(counts[k]||0)+1;
