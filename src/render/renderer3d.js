@@ -385,8 +385,9 @@ export function createGridironRenderer(canvas) {
       [-0.055, 0.075],
       [0, 0.079],
       [0.055, 0.083],
-      [0.11, 0.095],
-      [0.18, 0.118],
+      // Taper the sides above the knee while retaining quadriceps depth.
+      [0.11, 0.09, 0.095],
+      [0.18, 0.105, 0.116],
       [0.3, 0.148],
       // Taper the hip attachment while retaining the muscle below it.
       [0.42, 0.114, 0.124],
@@ -870,13 +871,20 @@ export function createGridironRenderer(canvas) {
     sphere(head, [0.13, 1.85 + shift, 0], [0.35, 0.19, 0.37], C.shoe);
     box(head, [0.285, 1.87 + shift, 0], [0.035, 0.035, 0.41], C.bar);
     box(head, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
+    const idleRoll =
+      pose.state === "idle" && !presnap && !pose.plant && !p.airState
+        ? 0.032 * breadth * Math.max(0, 1 - pose.speed / 0.9)
+        : 0;
     for (const side of [-1, 1]) {
       let hip = at(pelvis, 0, 0.87, side * 0.2 * breadth);
       const footIndex = side < 0 ? 0 : 1;
       let leg = null;
       if (legWeight > 0) {
         const stride = runningLegTarget(cycle, cycle.pace, side, s);
-        const target = cut ? jukeLegTarget(cut, stride, side) : stride;
+        // Narrow new running targets without moving a locked plant or a juke target.
+        const target = cut
+          ? jukeLegTarget(cut, stride, side)
+          : { ...stride, lateral: -0.032 * breadth };
         leg = solveGroundedLeg(target, side, s, hip, state?.feet[footIndex]);
         feet[footIndex] = leg.plant;
       }
@@ -895,7 +903,8 @@ export function createGridironRenderer(canvas) {
           : 0) +
         (rise > 0 ? -0.22 * arc : 0) +
         (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-      if (leg) hip = mul(hip, rotX(leg.roll * legWeight));
+      const roll = (leg?.roll || 0) * legWeight + side * idleRoll;
+      if (roll) hip = mul(hip, rotX(roll));
       hip = mul(
         hip,
         rotZ(hipSwing * (1 - legWeight) + (leg?.hip || 0) * legWeight),
