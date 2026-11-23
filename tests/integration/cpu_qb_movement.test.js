@@ -66,3 +66,36 @@ test("open lane produces a mobile QB scramble and a pocket QB pass", () => {
   assert.equal(mobile.getState().passThrown, false);
   assert.equal(measurePlay(openLane(20)).state.passThrown, true);
 });
+
+for (const side of [-1, 1]) {
+  test("CPU slides away from a free rusher on side " + side, () => {
+    const game = snapCpuPass("verticals");
+    const start = quarterback(game.getState());
+    const [engaged, free] = game.getState().players.filter(
+      (player) => player.rush,
+    );
+    for (const player of game.getState().players) {
+      if (player.key === "QB") continue;
+      game.debugMovePlayer(
+        player.key,
+        player.team === 0 ? 51 : 99,
+        player.y < 26 ? 3 : 50,
+      );
+    }
+    game.debugMovePlayer(engaged.key, start.x, start.y - side * 3.4);
+    game.debugSetDefenderState(engaged.key, { blocked: 0.8 });
+    game.debugMovePlayer(free.key, start.x, start.y + side * 3.6);
+    game.debugSetVelocity(free.key, 0, -side * 4);
+
+    game.step(10);
+
+    const state = game.getState();
+    assert.equal(state.phase, "live");
+    assert.equal(state.passThrown, false);
+    assert.equal(state.cpuQB.runTarget, null);
+    assert.ok(
+      (start.y - quarterback(state).y) * side > 0.05,
+      "QB starts sliding away from the free rusher despite a closer, engaged defender",
+    );
+  });
+}
