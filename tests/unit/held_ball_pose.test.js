@@ -159,3 +159,107 @@ test("arm relaxation fades into movement and excludes ready, contact and planted
     assert.equal(idleArmWeight({ state, speed: 0 }), 0);
   }
 });
+
+function tacklePair(fixture, heading) {
+  const { player, scene } = fixture;
+  player.vx = 4;
+  const defender = {
+    ...player,
+    team: 1,
+    key: "LB",
+    pos: "LB",
+    x: player.x - Math.cos(heading) * 0.79,
+    y: player.y - Math.sin(heading) * 0.79,
+    face: heading,
+    intent: "wrap",
+    wrapReach: 1,
+    wrapLinked: true,
+  };
+  scene.players.push(defender);
+  scene.tackles = [
+    { defender: defender.key, style: "wrap", age: 0.24, grip: 0.85 },
+  ];
+  return defender;
+}
+
+test("recorded wraps aim two distinct hands toward the runner from front, side and rear", () => {
+  for (const heading of [0, Math.PI / 2, Math.PI]) {
+    const fixture = rendererFixture();
+    const { player, scene, draw } = fixture;
+    tacklePair(fixture, heading);
+    const before = structuredClone(scene);
+    const palms = gloves(draw())
+      .slice(2)
+      .map(({ model }) => translation(model));
+    assert.equal(palms.length, 2);
+    const span = Math.hypot(...palms[0].map((n, i) => n - palms[1][i]));
+    assert.ok(
+      span > 0.16 && span < 0.66,
+      "hands approach different sides of the torso",
+    );
+    for (const [x, y, z] of palms) {
+      assert.ok(
+        Math.hypot(x - player.x, z - player.y) < 0.56,
+        "reach ends near the runner",
+      );
+      assert.ok(y > 0.88 && y < 1.65, "hands stay in the torso band");
+    }
+    assert.deepEqual(scene, before);
+  }
+});
+
+test("wrap follow-through uses recorded falls and releases the hands on escape", () => {
+  const f = rendererFixture();
+  const { player, scene, draw } = f;
+  const defender = tacklePair(f, 0);
+  const hands = () =>
+    gloves(draw())
+      .slice(2)
+      .map(({ model }) => translation(model)[1]);
+  const upright = hands();
+  scene.tackles = [];
+  defender.intent = "recover";
+  defender.wrapReach = 0;
+  defender.wrapLinked = false;
+  defender.escapeReaction = {
+    kind: "twist",
+    duration: 0.4,
+    time: 0.4,
+    intensity: 0.8,
+  };
+  const released = hands();
+  assert.notDeepEqual(released, upright);
+  assert.equal(defender.ground, undefined);
+  defender.escapeReaction = null;
+  assert.notDeepEqual(hands(), released);
+
+  defender.intent = "wrap";
+  defender.wrapReach = 1;
+  defender.wrapLinked = true;
+  scene.tackles = [
+    { defender: defender.key, style: "wrap", age: 0.24, grip: 0.85 },
+  ];
+  hands();
+  scene.phase = "dead";
+  scene.tackles = [];
+  player.ground = {
+    stage: "fall",
+    kind: "tackle",
+    from: defender.key,
+    age: 0.14,
+    fall: 0.25,
+  };
+  const standing = hands();
+  assert.equal(defender.ground, undefined);
+  defender.ground = {
+    stage: "fall",
+    kind: "tackle",
+    from: player.key,
+    age: 0.17,
+    fall: 0.25,
+  };
+  assert.ok(
+    Math.max(...hands()) < Math.max(...standing),
+    "only the recorded fall lowers the defender",
+  );
+});
