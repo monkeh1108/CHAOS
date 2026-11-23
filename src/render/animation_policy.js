@@ -111,9 +111,13 @@ export function upperBodyArticulation(pose, running, gait, cutWeight) {
   };
 }
 
-// Add small, mirrored equipment-side rotations to existing ready and reach
-// poses. Contact reach, the running arm pump and juke balance keep their
-// original shoulder and elbow angles.
+export function idleArmWeight(pose) {
+  return pose.state === "idle" && !pose.plant
+    ? 1 - ease((pose.speed - 0.3) / 0.6)
+    : 0;
+}
+
+// Small, mirrored equipment-side rotations for existing ready and reach poses.
 export function armArticulation(side, catchKind, blockMode, quarterbackReady) {
   if (blockMode) {
     return {

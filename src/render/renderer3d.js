@@ -4,6 +4,7 @@ import { ChaosLowContact } from "../physics/low_contact.js";
 import {
   AnimationPolicy,
   armArticulation,
+  idleArmWeight,
   jukeBody,
   jukeLegTarget,
   runningBody,
@@ -944,6 +945,22 @@ export function createGridironRenderer(canvas) {
       }
       sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
       const reachPose = ground ? null : divePose || standingWrapPose;
+      // The left arm remains available for the existing stiff-arm animation.
+      const carriesBall = carrier === p && side > 0;
+      const carryWeight =
+        carriesBall &&
+        !ground &&
+        !aKind &&
+        !reachPose &&
+        !p.airState &&
+        !pose.brace &&
+        (!pose.action || pose.action === "juke" || pose.action === "stiff")
+          ? 0.66
+          : 0;
+      const relax =
+        reachPose || armsOut || airPose || p.stumbleTime > 0
+          ? 0
+          : idleArmWeight(pose);
       const arm =
         ground || reachPose || cut || gait > 0
           ? null
@@ -1064,7 +1081,8 @@ export function createGridironRenderer(canvas) {
       const cutBalance = cut
         ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
         : 0;
-      const elevation = swing + (pump - swing) * gait + cutBalance;
+      const swingAngle = swing + (pump - swing) * gait + cutBalance;
+      const elevation = swingAngle + (0.18 - swingAngle) * carryWeight;
       const shoulder = mul(
         clavicle,
         arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation),
@@ -1081,8 +1099,16 @@ export function createGridironRenderer(canvas) {
       // The shared contact reach still owns dive and standing-wrap elbow angles.
       const baseBend =
         reachPose?.elbow ??
-        (ground ? 0.28 : pose.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
-      const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+        (ground
+          ? 0.28
+          : pose.blockArms
+            ? 0.33
+            : overhead
+              ? -0.15
+              : 0.48 - 0.34 * relax);
+      const swingBend =
+        baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+      const bend = swingBend + (1.24 - swingBend) * carryWeight;
       const pivot = at(shoulder, 0, -0.43, 0);
       const twist = reachPose
         ? side * reachPose.inward
@@ -1105,9 +1131,11 @@ export function createGridironRenderer(canvas) {
         ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
         : wrist;
       paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
+      // Place the ball against the inside of the hand, with its long axis
+      // aligned along the forearm. This is a render transform only.
+      if (carriesBall)
+        sphere(palm, [0.078, 0.064, -0.074], [0.18, 0.32, 0.21], C.ball);
     }
-    if (carrier === p)
-      sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
     if (selected === p) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
@@ -1246,7 +1274,7 @@ export function createGridironRenderer(canvas) {
         p,
         sim.clock,
         sim.active,
-        sim.markerCarrier || sim.carrier,
+        inFlight ? null : sim.markerCarrier || sim.carrier,
         contacts,
         sim.possession ?? 0,
         presnap,

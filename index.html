@@ -899,6 +899,9 @@
       neckPitch: limit(stanceLean * 0.48, 0, 0.18)
     };
   }
+  function idleArmWeight(pose2) {
+    return pose2.state === "idle" && !pose2.plant ? 1 - ease2((pose2.speed - 0.3) / 0.6) : 0;
+  }
   function armArticulation(side, catchKind, blockMode, quarterbackReady) {
     if (blockMode) {
       return {
@@ -14265,6 +14268,9 @@
         }
         sphere(foot, [0.12, 0, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
         const reachPose = ground ? null : divePose || standingWrapPose;
+        const carriesBall = carrier === p && side > 0;
+        const carryWeight = carriesBall && !ground && !aKind && !reachPose && !p.airState && !pose2.brace && (!pose2.action || pose2.action === "juke" || pose2.action === "stiff") ? 0.66 : 0;
+        const relax = reachPose || armsOut || airPose || p.stumbleTime > 0 ? 0 : idleArmWeight(pose2);
         const arm = ground || reachPose || cut || gait > 0 ? null : armArticulation(
           side,
           aKind,
@@ -14286,7 +14292,8 @@
         const swing = getUpArm !== null ? getUpArm : standingWrapPose ? standingWrapPose.shoulder : freeHandEscape ? (p.team === 0 ? side < 0 ? 0.58 : 0.22 : 0.68) + pose2.escapePulse * (p.team === 0 ? side < 0 ? 0.52 : -0.12 : 0.45) : pose2.stance ? stanceSwing : kick ? side < 0 ? -0.86 : 0.3 : stiffExtended ? 1.3 : hurdle ? side < 0 ? 1.28 : 0.86 : dive ? divePose.shoulder : overhead ? highpoint : catchArm || (pose2.blockArms ? (pose2.blockMode === "drive" ? 1.16 : pose2.blockMode === "seal" ? 0.96 : pose2.blockMode === "double-team" ? 1.12 : 1.02) + side * 0.07 : armsOut ? 0.62 - side * 0.1 : run ? -side * step3 * legAmp * 0.8 * pose2.armDrive : 0.1);
         const pump = running ? 0.21 + side * running.armDrive : swing;
         const cutBalance = cut ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort : 0;
-        const elevation = swing + (pump - swing) * gait + cutBalance;
+        const swingAngle = swing + (pump - swing) * gait + cutBalance;
+        const elevation = swingAngle + (0.18 - swingAngle) * carryWeight;
         const shoulder = mul(
           clavicle,
           arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation)
@@ -14298,8 +14305,9 @@
           [0.33 * breadth, 0.233, 0.29 * breadth],
           jersey
         );
-        const baseBend = reachPose?.elbow ?? (ground ? 0.28 : pose2.blockArms ? 0.33 : overhead ? -0.15 : 0.48);
-        const bend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+        const baseBend = reachPose?.elbow ?? (ground ? 0.28 : pose2.blockArms ? 0.33 : overhead ? -0.15 : 0.48 - 0.34 * relax);
+        const swingBend = baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
+        const bend = swingBend + (1.24 - swingBend) * carryWeight;
         const pivot = at(shoulder, 0, -0.43, 0);
         const twist = reachPose ? side * reachPose.inward : (arm?.roll || 0) * 0.35;
         const extension = reachPose ? 0.43 : 0.34;
@@ -14318,9 +14326,9 @@
         const wrist = at(elbow, 0, -extension, 0);
         const palm = arm ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll))) : wrist;
         paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
+        if (carriesBall)
+          sphere(palm, [0.078, 0.064, -0.074], [0.18, 0.32, 0.21], C.ball);
       }
-      if (carrier === p)
-        sphere(chest, [0.36, 1.32, -0.24], [0.32, 0.19, 0.21], C.ball);
       if (selected === p) {
         box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
         box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
@@ -14435,7 +14443,7 @@
           p,
           sim.clock,
           sim.active,
-          sim.markerCarrier || sim.carrier,
+          inFlight ? null : sim.markerCarrier || sim.carrier,
           contacts2,
           sim.possession ?? 0,
           presnap,
