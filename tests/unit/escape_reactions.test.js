@@ -54,8 +54,8 @@ const secure={...link,style:'wrap',grip:1.25,quality:1.08,age:.32,escapeProgress
 const strongDef={...defender,TAK:94,STR:92,AWR:92};
 for(let i=0;i<65;i++){secure.age+=1/60;const value=esc.step(runner,strongDef,secure,1/60);assert(!value.broken,'solid wrap resists routine escape');}
 // Source-based guard that was broken in v0.36.4o: no unconditional ground state.
-const engine=fs.readFileSync(path.join(root,'src/engine.js'),'utf8');
-const f=engine.slice(engine.indexOf('function releaseTackle('),engine.indexOf('// Defenders choose a secure wrap'));
+const tackleLinks=fs.readFileSync(path.join(root,'src/physics/tackle_links.js'),'utf8');
+const f=tackleLinks.slice(tackleLinks.indexOf('function releaseTackle('),tackleLinks.indexOf('function tackleStyle('));
 assert(/if\s*\(\s*reaction\.fall\s*\)\s*\{/.test(f) && !f.includes("if(reason==='escape'){\n  d.ground"),'grounding must require physical criterion');
 assert(f.includes('d.tackleCooldown') && f.includes('d.escapeReaction'),'standing defender retains a recoverable response');
 console.log('PASS: weak-grip upright slip; visible pre-break strain/leg drive; twist; sustained-wrap pull; diving follow-through; earned severe imbalance; repeated-break fatigue; secure-wrap resistance');

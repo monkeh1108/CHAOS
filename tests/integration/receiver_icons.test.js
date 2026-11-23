@@ -55,17 +55,17 @@ const withoutLab = script.replace(/\bmountContactLab\(\);/, '');
 assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/,
  `
- window.renderFrame = render;
- window.startKickoff = () => setupKickoff(0);
- window.setMatchPossession = team => { matchState.gameStarted = true; setDriveSpot(team, 30); setup(); };
+ window.renderFrame = () => presentation.render();
+ window.startKickoff = () => systems.setupKickoff(0);
+ window.setMatchPossession = team => { matchState.gameStarted = true; systems.setDriveSpot(team, 30); systems.setup(); };
  window.fieldKick = () => {
-  const returner = P(matchState.specialState.returnerKey);
+  const returner = systems.P(matchState.specialState.returnerKey);
   returner.x = matchState.ball.aimX;
   returner.y = matchState.ball.aimY;
   matchState.specialState.elapsed = matchState.specialState.airtime;
  };
- window.turnover = () => newPossession(1, 30);
- window.setFormation = formation => { matchState.selectedFormation = formation; setup(); };
+ window.turnover = () => systems.newPossession(1, 30);
+ window.setFormation = formation => { matchState.selectedFormation = formation; systems.setup(); };
  const debug = {`), sandbox);
 const g = sandbox.GRIDIRON_DEBUG;
 

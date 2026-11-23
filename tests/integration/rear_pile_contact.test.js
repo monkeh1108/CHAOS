@@ -46,8 +46,8 @@ vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
   time() {return matchState.playClock;},
   contacts() {return Object.fromEntries(matchState.liveTackleContacts);},
   missDive(key) {
-   P(key).action={kind:'tackle-dive',time:.01,age:.52,used:false};
-   P(key).diveRecovery=1.2;
+   systems.P(key).action={kind:'tackle-dive',time:.01,age:.52,used:false};
+   systems.P(key).diveRecovery=1.2;
   }
  };
  const debug = {`), sandbox);
