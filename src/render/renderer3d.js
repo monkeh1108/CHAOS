@@ -388,8 +388,9 @@ export function createGridironRenderer(canvas) {
       [0.11, 0.095],
       [0.18, 0.118],
       [0.3, 0.148],
-      [0.42, 0.133],
-      [0.54, 0.108],
+      // Taper the hip attachment while retaining the muscle below it.
+      [0.42, 0.114, 0.124],
+      [0.54, 0.09, 0.103],
       [0.58, 0.082],
     ]),
   };
