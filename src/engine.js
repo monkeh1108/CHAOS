@@ -58,10 +58,19 @@ function nextRandomSequence(sequence) {
 }
 
 export function createGame(
-  { attach, onEvent, random = () => Math.random() } = {},
+  { attach, onEvent, random = () => Math.random(), localTeam = 0 } = {},
   initialSeed,
 ) {
+  if (localTeam !== 0 && localTeam !== 1)
+    throw new RangeError("Invalid local team");
   const matchState = {
+    controllerTeams: { local: localTeam, cpu: 1 - localTeam },
+    controls: {
+      move: { x: 0, y: 0, mag: 0 },
+      sprint: false,
+      conservative: false,
+      quarterbackMoves: false,
+    },
     bootstrapSequence: initialSeed === undefined ? null : initialSeed >>> 0,
     contactEvidence: createContactEvidenceState(),
     defensiveMemory: createDefensiveMemoryState(),
@@ -773,7 +782,6 @@ export function createGame(
       p.JUK = clamp(p.AGI * 0.45 + p.CUT * 0.33 + p.AWR * 0.22, 30, 99);
       p.SFA = clamp(p.STR * 0.49 + p.TRK * 0.33 + p.AWR * 0.18, 30, 99);
     }
-  matchState.keys = {};
   matchState.players = [];
   matchState.off = [];
   matchState.def = [];
@@ -841,51 +849,15 @@ export function createGame(
   // Key is defender or blocker: each defender may hold one ball carrier, each blocker
   // may engage one rusher. Contact data lives only for the current snap.
 
-  // Xbox One controllers use the W3C Standard Gamepad mapping in Chromium/Edge.
-  // Buttons: A=0, B=1, X=2, Y=3, LB=4, RB=5, LT=6, RT=7,
-  // View=8, Menu=9, L3=10, R3=11, D-pad up/down/left/right=12/13/14/15.
-  const XBOX = {
-    A: 0,
-    B: 1,
-    X: 2,
-    Y: 3,
-    LB: 4,
-    RB: 5,
-    LT: 6,
-    RT: 7,
-    VIEW: 8,
-    MENU: 9,
-    UP: 12,
-    DOWN: 13,
-    LEFT: 14,
-    RIGHT: 15,
-  };
   matchState.suppressManualUntilNeutral = false;
-  matchState.padState = {
-    index: -1,
-    id: "",
-    connected: false,
-    standard: false,
-    lx: 0,
-    ly: 0,
-    rx: 0,
-    ry: 0,
-    lt: 0,
-    rt: 0,
-    previous: [],
-    sampled: 0,
-  };
   // Three practice roles share one physics engine; controller mapping is contextual.
   matchState.controlMode = "offense";
   matchState.selectedDefenderKey = "MLB";
   matchState.selectedLinemanKey = "LG";
-  matchState.rightStickLatched = false;
-  matchState.rightStickDirection = "";
   matchState.xHoldStart = null;
   matchState.xDiveFired = false;
 
   matchState.paused = false;
-  matchState.gamepadStatusLast = "";
   matchState.sheetFocusIndex = 0;
   matchState.sheetFocusKey = "";
   const plays = [
@@ -978,8 +950,6 @@ export function createGame(
   matchState.confetti = [];
   matchState.shake = 0;
   matchState.offset = 0;
-  matchState.joystick = { x: 0, y: 0, active: false, pointer: null };
-  matchState.mobile = false;
   matchState.manualDrive = false;
   matchState.contactEnabled = true;
   matchState.pendingPass = null;
@@ -1018,7 +988,6 @@ export function createGame(
   matchState.tossStage = "none";
   matchState.tossCall = null;
   matchState.tossWinner = null;
-  matchState.tossPadPrevious = [];
   matchState.audibleOpen = false;
   const AUDIBLE_BUTTONS = ["A", "B", "X", "Y"];
   const OFFENSE_AUDIBLES = {
@@ -1089,10 +1058,12 @@ export function createGame(
   function kickRatings() {
     return matchState.custom.K;
   }
-  function homeTeamControl() {
-    // Ordinary games keep HOME under player control. The standard 0/1 teams
-    // map to offensive/defensive *roles*, which reverse when possession flips.
-    const role = matchState.possession === 0 ? "offense" : "defense";
+  function localTeamControl() {
+    // Offensive and defensive roles reverse when possession changes.
+    const role =
+      matchState.possession === matchState.controllerTeams.local
+        ? "offense"
+        : "defense";
     if (matchState.controlMode !== role) selectControlMode(role);
   }
   function chooseCPUPlay() {
@@ -1107,9 +1078,10 @@ export function createGame(
     const pool = style.pool.filter((p) =>
       chooseRun ? RUNS.has(p) : !RUNS.has(p),
     );
-    if (pool.length)
-      matchState.selectedPlay = pool[Math.floor(rand() * pool.length)];
-    matchState.selectedFormation = RUNS.has(matchState.selectedPlay)
+    const play = pool.length
+      ? pool[Math.floor(rand() * pool.length)]
+      : matchState.selectedPlay;
+    const formation = RUNS.has(play)
       ? rand() < 0.5
         ? "iform"
         : "ace"
@@ -1118,6 +1090,17 @@ export function createGame(
         : rand() < 0.58
           ? "spread"
           : "bunch";
+    return dispatchInput({
+      type: "selectPlay",
+      playerSlot: matchState.controllerTeams.cpu,
+      play,
+      formation,
+    });
+  }
+
+  function selectCPUPlay(play, formation) {
+    matchState.selectedPlay = play;
+    matchState.selectedFormation = formation;
     emitPresentation({
       type: "playSelectionChanged",
       play: matchState.selectedPlay,
@@ -1142,7 +1125,7 @@ export function createGame(
     matchState.down = 1;
     matchState.togo = Math.min(10, 110 - matchState.yard);
     matchState.first = matchState.yard + matchState.togo;
-    if (matchState.gameStarted) homeTeamControl();
+    if (matchState.gameStarted) localTeamControl();
   }
   function newPossession(team, oppositeSpot) {
     setDriveSpot(team, 120 - oppositeSpot);
@@ -1288,13 +1271,14 @@ export function createGame(
     else if (matchState.tossStage === "decision") resolveToss(value);
   }
   function startCoinToss() {
-    matchState.tossPadPrevious = [];
+    emitPresentation({ type: "coinTossInputReset" });
     matchState.tossStage = "call";
     matchState.tossCall = null;
     matchState.tossWinner = null;
     tossScreen(
       "OPENING COIN TOSS",
-      "HOME calls the coin. Choose heads or tails.",
+      TEAM_NAMES[matchState.controllerTeams.local] +
+        " calls the coin. Choose heads or tails.",
       [
         { label: "HEADS", value: "heads" },
         { label: "TAILS", value: "tails" },
@@ -1305,11 +1289,18 @@ export function createGame(
     if (matchState.tossStage !== "call") return;
     matchState.tossCall = call;
     const result = matchRandom() < 0.5 ? "heads" : "tails";
-    matchState.tossWinner = result === call ? 0 : 1;
+    matchState.tossWinner =
+      result === call
+        ? matchState.controllerTeams.local
+        : matchState.controllerTeams.cpu;
     matchState.tossStage = "decision";
-    if (matchState.tossWinner === 0) {
+    if (matchState.tossWinner === matchState.controllerTeams.local) {
       tossScreen(
-        "COIN: " + result.toUpperCase() + " · HOME WINS",
+        "COIN: " +
+          result.toUpperCase() +
+          " · " +
+          TEAM_NAMES[matchState.controllerTeams.local] +
+          " WINS",
         "Choose to receive, kick, or defer the choice to the second half.",
         [
           { label: "RECEIVE", value: "receive" },
@@ -1321,8 +1312,13 @@ export function createGame(
       // CPU decision uses no hidden gameplay info. It generally defers.
       const choice = matchRandom() < 0.7 ? "defer" : "receive";
       tossScreen(
-        "COIN: " + result.toUpperCase() + " · AWAY WINS",
-        "AWAY selects " +
+        "COIN: " +
+          result.toUpperCase() +
+          " · " +
+          TEAM_NAMES[matchState.controllerTeams.cpu] +
+          " WINS",
+        TEAM_NAMES[matchState.controllerTeams.cpu] +
+          " selects " +
           choice.toUpperCase() +
           ". The opening kickoff is determined.",
         [{ label: "CONTINUE", value: choice }],
@@ -1355,7 +1351,9 @@ export function createGame(
     log(
       "COIN TOSS · " +
         TEAM_NAMES[matchState.tossWinner] +
-        " won · HOME called " +
+        " won · " +
+        TEAM_NAMES[matchState.controllerTeams.local] +
+        " called " +
         matchState.tossCall +
         " · " +
         TEAM_NAMES[receiver] +
@@ -1418,7 +1416,7 @@ export function createGame(
       "<strong>" +
         (kind === "safety-kick" ? "SAFETY FREE KICK" : "KICKOFF") +
         ".</strong> " +
-        (matchState.possession === 0
+        (matchState.possession === matchState.controllerTeams.local
           ? "Call RETURN LEFT, MIDDLE or RIGHT."
           : "Prepare coverage.") +
         " Kicker picks the actual placement.",
@@ -2358,7 +2356,10 @@ export function createGame(
       setupKickoff(matchState.possession);
     else {
       setup();
-      if (matchState.gameStarted && matchState.possession === 1) {
+      if (
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
+      ) {
         chooseCPUPlay();
         matchState.scrimmagePlayCalled = true;
         matchState.playSeconds = PRESNAP_PLAY_SECONDS;
@@ -2392,11 +2393,13 @@ export function createGame(
       "Delay of game · " + TEAM_NAMES[matchState.possession] + " -5 yards";
     setup();
     matchState.playSeconds =
-      matchState.possession === 1 && matchState.gameStarted
+      matchState.possession === matchState.controllerTeams.cpu &&
+      matchState.gameStarted
         ? PRESNAP_PLAY_SECONDS
         : 40;
     matchState.scrimmagePlayCalled =
-      matchState.possession === 1 && matchState.gameStarted;
+      matchState.possession === matchState.controllerTeams.cpu &&
+      matchState.gameStarted;
     if (matchState.scrimmagePlayCalled) {
       matchState.cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
       hidePlaybook();
@@ -2447,13 +2450,16 @@ export function createGame(
       }
       if (
         matchState.gameStarted &&
-        matchState.possession === 1 &&
+        matchState.possession === matchState.controllerTeams.cpu &&
         matchState.scrimmagePlayCalled &&
         !matchState.specialState &&
         (!matchState.tryState || matchState.tryState.mode === "two") &&
         matchState.playSeconds <= matchState.cpuSnapAt
       ) {
-        snap(true);
+        dispatchInput({
+          type: "snap",
+          playerSlot: matchState.controllerTeams.cpu,
+        });
         return;
       }
     }
@@ -3252,8 +3258,7 @@ export function createGame(
     matchState.suppressManualUntilNeutral = false;
     matchState.xHoldStart = null;
     matchState.xDiveFired = false;
-    matchState.rightStickLatched = false;
-    matchState.rightStickDirection = "";
+    emitPresentation({ type: "rightStickReset" });
     matchState.queuedCarrierMove = null;
     matchState.players.length = 0;
     matchState.off.length = 0;
@@ -3467,13 +3472,16 @@ export function createGame(
     emitPresentation({
       type: "snapControlChanged",
       text:
-        matchState.gameStarted && matchState.possession === 1
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
           ? "CPU WILL SNAP"
           : "SNAP THE BALL",
     });
     emitPresentation({
       type: "snapControlChanged",
-      disabled: matchState.gameStarted && matchState.possession === 1,
+      disabled:
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu,
     });
     emitPresentation({ type: "playControlsLocked", locked: false });
     emitPresentation({ type: "resultHidden" });
@@ -3495,7 +3503,8 @@ export function createGame(
       matchState.phase === "live" ||
       matchState.specialState ||
       matchState.controlMode === "defense" ||
-      (matchState.gameStarted && matchState.possession !== 0) ||
+      (matchState.gameStarted &&
+        matchState.possession !== matchState.controllerTeams.local) ||
       (!!matchState.tryState && !matchState.tryState.mode)
     )
       return;
@@ -3516,7 +3525,7 @@ export function createGame(
     if (matchState.phase === "live" || matchState.matchOver) return;
     if (
       matchState.gameStarted &&
-      matchState.possession === 1 &&
+      matchState.possession === matchState.controllerTeams.cpu &&
       !cpu &&
       !matchState.specialState
     )
@@ -3872,26 +3881,38 @@ export function createGame(
       setup();
       matchState.playSeconds = 25;
       showPlaybook();
-      if (matchState.gameStarted && matchState.possession === 1)
+      if (
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
+      )
         chooseSpecial("pat");
     } else if (action === "kickoff") {
       setupKickoff(1 - matchState.possession);
     } else if (action === "safety-kick") {
       setupKickoff(1 - matchState.possession, "safety-kick");
     } else {
-      if (matchState.gameStarted && matchState.possession === 1)
+      if (
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
+      )
         chooseCPUPlay();
       setup();
       matchState.playSeconds =
-        matchState.gameStarted && matchState.possession === 1
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
           ? PRESNAP_PLAY_SECONDS
           : 40;
       matchState.scrimmagePlayCalled =
-        matchState.gameStarted && matchState.possession === 1;
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu;
       matchState.cpuSnapAt = clamp(11 + rand() * 5, 11, 16);
       // CPU possessions show the field immediately for defensive repositioning.
       // VIEW still opens the optional defensive call sheet.
-      if (matchState.gameStarted && matchState.possession === 1) hidePlaybook();
+      if (
+        matchState.gameStarted &&
+        matchState.possession === matchState.controllerTeams.cpu
+      )
+        hidePlaybook();
       else showPlaybook();
     }
   }
@@ -3929,32 +3950,8 @@ export function createGame(
     setup();
     log("New drive · ball on own 20");
   }
-  // Screen-oriented controls in 3D: toward the top of the screen means forward
-  // downfield, and right/left steer toward the corresponding screen sidelines.
-  // In the original overhead 2D view, retain the existing field-coordinate
-  // mapping (D / right = downfield, W / up = upper sideline).
-  // Keep this transform in one place so QB, runner, defender, and OL controls
-  // agree; juke-side selection remains tied to the field sidelines separately.
-  function fieldStickAxes(screenX, screenY, viewMode = getVisualMode()) {
-    if (viewMode === "3d") return { x: -screenY, y: screenX };
-    return { x: screenX, y: screenY };
-  }
   function stickInput() {
-    let screenX = 0,
-      screenY = 0;
-    if (matchState.keys.w || matchState.keys.arrowup) screenY -= 1;
-    if (matchState.keys.s || matchState.keys.arrowdown) screenY += 1;
-    if (matchState.keys.a || matchState.keys.arrowleft) screenX -= 1;
-    if (matchState.keys.d || matchState.keys.arrowright) screenX += 1;
-    screenX += matchState.joystick.x + matchState.padState.lx;
-    screenY += matchState.joystick.y + matchState.padState.ly;
-    const mag = Math.hypot(screenX, screenY);
-    if (mag > 1) {
-      screenX /= mag;
-      screenY /= mag;
-    }
-    const input = fieldStickAxes(screenX, screenY);
-    return { x: input.x, y: input.y, mag: Math.min(1, mag) };
+    return matchState.controls.move;
   }
   function steer(p, dx, dy, dt, boost = 1) {
     if (p.jukeRecovery > 0) {
@@ -6653,8 +6650,7 @@ export function createGame(
     protectBall(false);
     matchState.controlMode = mode;
     matchState.manualDrive = false;
-    matchState.rightStickLatched = false;
-    matchState.rightStickDirection = "";
+    emitPresentation({ type: "rightStickReset" });
     matchState.queuedCarrierMove = null;
     matchState.active =
       matchState.phase === "live"
@@ -6671,7 +6667,11 @@ export function createGame(
   function cycleControlMode() {
     if (matchState.gameStarted) {
       message(
-        "<strong>GAME DAY.</strong> HOME controls offense when receiving and defense when AWAY has the football. Use practice reset for manual role testing.",
+        "<strong>GAME DAY.</strong> " +
+          TEAM_NAMES[matchState.controllerTeams.local] +
+          " controls offense when receiving and defense when " +
+          TEAM_NAMES[matchState.controllerTeams.cpu] +
+          " has the football. Use practice reset for manual role testing.",
       );
       return matchState.controlMode;
     }
@@ -6946,10 +6946,7 @@ export function createGame(
     return true;
   }
   function sprintHeld() {
-    return (
-      !!matchState.keys.shift ||
-      (matchState.padState.connected && matchState.padState.rt > 0.24)
-    );
+    return matchState.controls.sprint;
   }
   function userCarry(p, dt) {
     const input = stickInput();
@@ -7120,7 +7117,12 @@ export function createGame(
       if (index >= 0) {
         const hold =
           chosen.range > 19 ? 0.11 : chosen.danger > 0.42 ? 0.46 : 0.29;
-        const fired = passTo(index, hold);
+        const fired = dispatchInput({
+          type: "pass",
+          receiver: index,
+          hold,
+          playerSlot: matchState.controllerTeams.cpu,
+        });
         if (fired) {
           matchState.cpuQB.passes++;
           log(
@@ -9472,12 +9474,7 @@ export function createGame(
     if (matchState.controlMode === "defense") {
       const selected = P(matchState.selectedDefenderKey);
       if (selected) {
-        selected.conservativeHeld =
-          !!matchState.keys.z ||
-          !!(
-            matchState.padState.connected &&
-            matchState.padState.previous[XBOX.A]
-          );
+        selected.conservativeHeld = matchState.controls.conservative;
         if (selected.conservativeHeld)
           selected.conservativeUntil = matchState.playClock + 0.13;
       }
@@ -9743,7 +9740,7 @@ export function createGame(
     // LT modifies quarterback face buttons into ball skills. It doesn't throw.
     return !RUNS.has(matchState.selectedPlay) &&
       !matchState.passThrown &&
-      (matchState.padState.lt > 0.45 || matchState.keys.alt) &&
+      matchState.controls.quarterbackMoves &&
       matchState.phase === "live"
       ? P("QB")
       : null;
@@ -10085,7 +10082,7 @@ export function createGame(
   function receiverPromptTargets() {
     if (
       matchState.controlMode !== "offense" ||
-      matchState.possession !== 0 ||
+      matchState.possession !== matchState.controllerTeams.local ||
       matchState.paused ||
       matchState.matchOver ||
       matchState.specialState ||
@@ -10127,8 +10124,159 @@ export function createGame(
   function setVisualMode(mode) {
     return presentation?.setVisualMode(mode) ?? mode;
   }
+  const matchActions = {
+    applyAudible,
+    openAudibles,
+    closeAudibles,
+    showPlaybook,
+    hidePlaybook,
+    cycleSheetFormation,
+    chooseSpecial,
+    nextDown,
+    startThirdQuarter,
+    switchDefender,
+    switchToIntendedReceiver,
+    chooseAirAction,
+    startPass,
+    releasePass,
+    carrierMove,
+    holdStiffArm,
+    protectBall,
+    defensiveFaceButton,
+    defensiveStick,
+    lineImpact,
+    burst,
+    evade,
+    reset,
+    startNewMatch,
+    requestTimeout,
+    cycleControlMode,
+    setScheme: (setting, value, keepClock, showSheet) => {
+      const fields = {
+        formation: "selectedFormation",
+        front: "selectedFront",
+        coverage: "coveragePreference",
+        pressure: "pressurePreference",
+      };
+      if (!Object.hasOwn(fields, setting)) return;
+      matchState[fields[setting]] = value;
+      if (showSheet)
+        emitPresentation({ type: "selectionChanged", key: setting, value });
+      const remaining = matchState.playSeconds;
+      const wasCalled = matchState.scrimmagePlayCalled;
+      setup();
+      if (keepClock) {
+        matchState.playSeconds = remaining;
+        matchState.scrimmagePlayCalled = wasCalled;
+      }
+      if (showSheet) showPlaybook();
+    },
+    returnCall: (call) => {
+      matchState.returnCall = call;
+      organizeReturnUnit();
+      showPlaybook();
+    },
+    defensiveHold: (held, refresh) => {
+      const selected = P(matchState.selectedDefenderKey);
+      if (!selected) return;
+      selected.conservativeHeld = held;
+      if (held && refresh)
+        selected.conservativeUntil = matchState.playClock + 0.12;
+    },
+    downHold: (action) => {
+      if (action === "release" && !matchState.xDiveFired) downSafe();
+      matchState.xHoldStart = action === "start" ? matchState.playClock : null;
+      if (action !== "cancel") matchState.xDiveFired = false;
+    },
+    cancelCarrierMove: () => {
+      matchState.queuedCarrierMove = null;
+    },
+    cancelPass: () => {
+      matchState.pendingPass = null;
+    },
+    fairCatch: (notice) => {
+      matchState.returnFairCatch = true;
+      if (notice) message(notice);
+    },
+    autoRun: (untilNeutral) => {
+      matchState.manualDrive = false;
+      if (untilNeutral) matchState.suppressManualUntilNeutral = true;
+      hud();
+    },
+    togglePause: () => {
+      if (matchState.phase !== "live") return false;
+      matchState.paused = !matchState.paused;
+      refreshPauseUI();
+      hud();
+      return matchState.paused;
+    },
+  };
+  const inputHandlers = {
+    coinToss: ({ choice }) => chooseCoinToss(choice),
+    selectPlay: ({ play, formation }, team) =>
+      team === matchState.controllerTeams.cpu
+        ? selectCPUPlay(play, formation)
+        : choosePlay(play),
+    snap: (_command, team) => snap(team === matchState.controllerTeams.cpu),
+    pass: ({ receiver, hold }) => passTo(receiver, hold),
+    controls: ({ move, sprint, conservative, quarterbackMoves }) => {
+      matchState.controls = {
+        move: { x: move.x, y: move.y, mag: move.mag },
+        sprint: !!sprint,
+        conservative: !!conservative,
+        quarterbackMoves: !!quarterbackMoves,
+      };
+    },
+    ...Object.fromEntries(
+      Object.entries(matchActions).map(([type, action]) => [
+        type,
+        ({ args = [] }) => action(...args),
+      ]),
+    ),
+  };
+
+  function validateInput(command) {
+    if (!command || !Object.hasOwn(inputHandlers, command.type)) {
+      throw new TypeError("Unknown CHAOS tick command");
+    }
+    const team = command.playerSlot ?? matchState.controllerTeams.local;
+    if (
+      team !== matchState.controllerTeams.local &&
+      team !== matchState.controllerTeams.cpu
+    ) {
+      throw new RangeError("Unknown CHAOS player slot");
+    }
+    if (
+      team === matchState.controllerTeams.cpu &&
+      !["selectPlay", "snap", "pass"].includes(command.type)
+    ) {
+      throw new TypeError("Unsupported CPU input command");
+    }
+    if (command.args !== undefined && !Array.isArray(command.args)) {
+      throw new TypeError("Invalid CHAOS command arguments");
+    }
+    if (
+      command.type === "controls" &&
+      (!command.move ||
+        !Number.isFinite(command.move.x) ||
+        !Number.isFinite(command.move.y) ||
+        !Number.isFinite(command.move.mag))
+    ) {
+      throw new TypeError("Invalid CHAOS movement command");
+    }
+    return team;
+  }
+
+  function dispatchInput(command) {
+    const team = validateInput(command);
+    return inputHandlers[command.type](command, team);
+  }
+
   const presentation = attach?.({
-    chooseCoinToss,
+    dispatchInput,
+    get localTeam() {
+      return matchState.controllerTeams.local;
+    },
     get sheetFocusKey() {
       return matchState.sheetFocusKey;
     },
@@ -10210,12 +10358,6 @@ export function createGame(
     get gameFlowNote() {
       return matchState.gameFlowNote;
     },
-    get gamepadStatusLast() {
-      return matchState.gamepadStatusLast;
-    },
-    set gamepadStatusLast(value) {
-      matchState.gamepadStatusLast = value;
-    },
     get gameStarted() {
       return matchState.gameStarted;
     },
@@ -10224,12 +10366,6 @@ export function createGame(
     },
     get intended() {
       return matchState.intended;
-    },
-    get joystick() {
-      return matchState.joystick;
-    },
-    get keys() {
-      return matchState.keys;
     },
     get lastContact() {
       return matchState.lastContact;
@@ -10257,9 +10393,6 @@ export function createGame(
     },
     get off() {
       return matchState.off;
-    },
-    get padState() {
-      return matchState.padState;
     },
     get PASS_ICONS() {
       return PASS_ICONS;
@@ -10327,12 +10460,6 @@ export function createGame(
     get quarterSeconds() {
       return matchState.quarterSeconds;
     },
-    get queuedCarrierMove() {
-      return matchState.queuedCarrierMove;
-    },
-    set queuedCarrierMove(value) {
-      matchState.queuedCarrierMove = value;
-    },
     get returnCall() {
       return matchState.returnCall;
     },
@@ -10344,18 +10471,6 @@ export function createGame(
     },
     set returnFairCatch(value) {
       matchState.returnFairCatch = value;
-    },
-    get rightStickDirection() {
-      return matchState.rightStickDirection;
-    },
-    set rightStickDirection(value) {
-      matchState.rightStickDirection = value;
-    },
-    get rightStickLatched() {
-      return matchState.rightStickLatched;
-    },
-    set rightStickLatched(value) {
-      matchState.rightStickLatched = value;
     },
     get RUNS() {
       return RUNS;
@@ -10423,12 +10538,6 @@ export function createGame(
     get togo() {
       return matchState.togo;
     },
-    get tossPadPrevious() {
-      return matchState.tossPadPrevious;
-    },
-    set tossPadPrevious(value) {
-      matchState.tossPadPrevious = value;
-    },
     get tossStage() {
       return matchState.tossStage;
     },
@@ -10441,20 +10550,8 @@ export function createGame(
     get W() {
       return W;
     },
-    get XBOX() {
-      return XBOX;
-    },
-    get xDiveFired() {
-      return matchState.xDiveFired;
-    },
-    set xDiveFired(value) {
-      matchState.xDiveFired = value;
-    },
     get xHoldStart() {
       return matchState.xHoldStart;
-    },
-    set xHoldStart(value) {
-      matchState.xHoldStart = value;
     },
     get yard() {
       return matchState.yard;
@@ -10464,58 +10561,25 @@ export function createGame(
     },
     P,
     acceleration,
-    applyAudible,
     audibleChoices,
     availableRunner,
-    burst,
-    carrierMove,
     catchReach,
-    chooseAirAction,
-    choosePlay,
-    chooseSpecial,
     clockText,
-    closeAudibles,
     closestThreat,
-    cycleControlMode,
-    cycleSheetFormation,
     defenderAirInteractionZone,
-    defensiveFaceButton,
-    defensiveStick,
-    downSafe,
     eligibleTargets,
-    evade,
     flightMarkers,
     gameTick,
-    hidePlaybook,
-    holdStiffArm,
     hud,
     isFreeKick,
     kickLineX,
-    lineImpact,
     mass,
     maxSpeed,
-    message,
-    nextDown,
-    openAudibles,
-    organizeReturnUnit,
-    passTo,
     positionSelectedDefender,
-    protectBall,
     radius,
     receiverPromptTargets,
-    releasePass,
-    requestTimeout,
-    reset,
-    setup,
-    showPlaybook,
-    snap,
     speed,
     spotText,
-    startNewMatch,
-    startPass,
-    startThirdQuarter,
-    switchDefender,
-    switchToIntendedReceiver,
     tickGround,
     update,
   });
@@ -10539,22 +10603,11 @@ export function createGame(
   }
 
   function advanceTick(commands) {
-    // Keyboard, controller, and AI translation still live at their existing entry points.
-    const actions = {
-      coinToss: ({ choice }) => chooseCoinToss(choice),
-      selectPlay: ({ play }) => choosePlay(play),
-      snap: () => snap(),
-      pass: ({ receiver, hold }) => passTo(receiver, hold),
-    };
-    for (const command of commands) {
-      if (!command || !Object.hasOwn(actions, command.type)) {
-        throw new TypeError("Unknown CHAOS tick command");
-      }
-    }
+    for (const command of commands) validateInput(command);
     const events = [];
     tickEvents = events;
     try {
-      for (const command of commands) actions[command.type](command);
+      for (const command of commands) dispatchInput(command);
       if (!matchState.paused) {
         if (matchState.phase === "dead") {
           for (const player of matchState.players) {
@@ -10577,6 +10630,7 @@ export function createGame(
     captureSnapshot: snapshot,
     restoreSnapshot: restore,
     advanceTick,
+    dispatchInput,
     policies: Object.freeze({
       AnimationPolicy,
       BlockingPolicy,
@@ -10719,7 +10773,7 @@ export function createGame(
     debugFinishCoinToss: (call = "heads", choice = "receive") => {
       if (matchState.tossStage === "call") flipCoin(call);
       if (matchState.tossStage === "decision") {
-        matchState.tossWinner = 0;
+        matchState.tossWinner = matchState.controllerTeams.local;
         resolveToss(choice);
       }
       return matchState.tossStage;
@@ -10769,16 +10823,18 @@ export function createGame(
     }),
     getVisual,
     getController: () => ({
-      connected: matchState.padState.connected,
-      index: matchState.padState.index,
-      id: matchState.padState.id,
-      standard: matchState.padState.standard,
-      lx: matchState.padState.lx,
-      ly: matchState.padState.ly,
-      rx: matchState.padState.rx,
-      ry: matchState.padState.ry,
-      lt: matchState.padState.lt,
-      rt: matchState.padState.rt,
+      ...(presentation?.getController?.() ?? {
+        connected: false,
+        index: -1,
+        id: "",
+        standard: false,
+        lx: 0,
+        ly: 0,
+        rx: 0,
+        ry: 0,
+        lt: 0,
+        rt: 0,
+      }),
       paused: matchState.paused,
     }),
     getSteering: () => ({ viewMode: getVisualMode(), ...stickInput() }),
@@ -10792,8 +10848,8 @@ export function createGame(
       queuedCarrierMove: matchState.queuedCarrierMove
         ? { ...matchState.queuedCarrierMove }
         : null,
-      rightStickLatched: matchState.rightStickLatched,
-      rightStickDirection: matchState.rightStickDirection,
+      rightStickLatched: presentation?.getRightStick?.().latched ?? false,
+      rightStickDirection: presentation?.getRightStick?.().direction ?? "",
       burstCool: matchState.burstCool,
       evadeCool: matchState.evadeCool,
       formation: matchState.selectedFormation,

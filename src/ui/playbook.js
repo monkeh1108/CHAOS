@@ -2,12 +2,13 @@ import { PlaybookNavigation } from "./playbook_navigation.js";
 
 export function createPlaybookUi(session) {
   const $ = (id) => document.getElementById(id);
-  const { isFreeKick, clockText, spotText, snap } = session;
+  const { isFreeKick, clockText, spotText } = session;
   function renderPlaybook() {
     const {
       specialState,
       tryState,
       possession,
+      localTeam,
       selectedFormation,
       TEAM_NAMES,
       TEAM_STYLES,
@@ -32,12 +33,12 @@ export function createPlaybookUi(session) {
     const heading = $("callSheetHeading"),
       sub = $("callSheetSub");
     $("sheetToolbar").style.display =
-      !specialState && !tryState && possession === 0 ? "flex" : "none";
+      !specialState && !tryState && possession === localTeam ? "flex" : "none";
     $("sheetFormation").value = selectedFormation;
     if (isFreeKick(specialState)) {
       heading.textContent =
         (specialState.kind === "safety-kick" ? "SAFETY FREE KICK · " : "") +
-        (possession === 0 ? "RETURN KICKOFF" : "KICKOFF COVERAGE") +
+        (possession === localTeam ? "RETURN KICKOFF" : "KICKOFF COVERAGE") +
         " · " +
         TEAM_NAMES[specialState.kickingTeam] +
         " kicking";
@@ -47,7 +48,7 @@ export function createPlaybookUi(session) {
         " receiving · " +
         TEAM_STYLES[possession].identity;
       list.innerHTML =
-        possession === 0
+        possession === localTeam
           ? ["left", "middle", "right"]
               .map(
                 (v) =>
@@ -63,11 +64,11 @@ export function createPlaybookUi(session) {
         '<button type="button" class="sheetPick" data-special="pat"><b>EXTRA POINT</b><small>Kick · 1 point</small></button><button type="button" class="sheetPick" data-special="two"><b>GO FOR TWO</b><small>Run or pass · 2 points</small></button>';
     } else {
       heading.textContent =
-        (possession === 0 ? "CALL A PLAY" : "CALL YOUR DEFENSE") +
+        (possession === localTeam ? "CALL A PLAY" : "CALL YOUR DEFENSE") +
         " · " +
         TEAM_NAMES[possession];
       sub.textContent = `${TEAM_STYLES[possession].identity} · Q${quarter} ${clockText(quarterSeconds)} · ${down}${["", "st", "nd", "rd", "th"][down] || "th"} & ${Math.max(1, Math.ceil(togo))} · ${spotText()} · ${clockText(playSeconds)} play clock`;
-      if (possession === 1) {
+      if (possession !== localTeam) {
         sub.textContent +=
           " · DEFENSE: " + defenseDesc[selectedFront] + " · LB/RB CHANGE FRONT";
         list.innerHTML =
@@ -162,7 +163,7 @@ export function createPlaybookUi(session) {
       selected.classList.contains("active") &&
       isFreeKick(session.specialState)
     ) {
-      snap();
+      session.dispatchInput({ type: "snap", playerSlot: session.localTeam });
       return true;
     }
     session.sheetFocusKey =

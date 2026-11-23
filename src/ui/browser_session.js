@@ -1,9 +1,45 @@
+import { readFieldControls, XBOX } from "../input/controls.js";
 import { createPlaybookUi } from "./playbook.js";
 import { createGameHud } from "../ui/game_hud.js";
 import { clamp } from "../core/math.js";
 import { createFieldRenderer } from "../render/field_renderer.js";
 
 export function attachGameBrowser(session) {
+  const keys = Object.create(null);
+  const joystick = { x: 0, y: 0, active: false, pointer: null };
+  const padState = {
+    index: -1,
+    id: "",
+    connected: false,
+    standard: false,
+    lx: 0,
+    ly: 0,
+    rx: 0,
+    ry: 0,
+    lt: 0,
+    rt: 0,
+    previous: [],
+  };
+  let tossPadPrevious = [];
+  let gamepadStatusLast = "";
+  let rightStickLatched = false;
+  let rightStickDirection = "";
+  const dispatch = (command) =>
+    session.dispatchInput({ ...command, playerSlot: session.localTeam });
+  const action = (type, ...args) => dispatch({ type, args });
+  const choosePlay = (play) => dispatch({ type: "selectPlay", play });
+  const passTo = (receiver, hold) => dispatch({ type: "pass", receiver, hold });
+  const snap = () => dispatch({ type: "snap" });
+  const syncControls = () =>
+    session.dispatchInput(
+      readFieldControls(
+        keys,
+        joystick,
+        padState,
+        getVisualMode(),
+        session.localTeam,
+      ),
+    );
   const $ = (id) => document.getElementById(id);
   const canvas = $("field");
   const playbook = createPlaybookUi(session);
@@ -11,58 +47,24 @@ export function attachGameBrowser(session) {
   const {
     P,
     acceleration,
-    applyAudible,
     audibleChoices,
     availableRunner,
-    burst,
-    carrierMove,
     catchReach,
-    chooseAirAction,
-    choosePlay,
-    chooseSpecial,
     clockText,
-    closeAudibles,
     closestThreat,
-    cycleControlMode,
-    cycleSheetFormation,
     defenderAirInteractionZone,
-    defensiveFaceButton,
-    defensiveStick,
-    downSafe,
     eligibleTargets,
-    evade,
     flightMarkers,
     gameTick,
-    hidePlaybook,
-    holdStiffArm,
-    hud,
     isFreeKick,
     kickLineX,
-    lineImpact,
     mass,
     maxSpeed,
-    message,
-    nextDown,
-    openAudibles,
-    organizeReturnUnit,
-    passTo,
     positionSelectedDefender,
-    protectBall,
     radius,
     receiverPromptTargets,
-    releasePass,
-    requestTimeout,
-    reset,
-    setup,
-    showPlaybook,
-    snap,
     speed,
     spotText,
-    startNewMatch,
-    startPass,
-    startThirdQuarter,
-    switchDefender,
-    switchToIntendedReceiver,
     tickGround,
     update,
   } = session;
@@ -134,32 +136,29 @@ export function attachGameBrowser(session) {
   function refreshControllerStatus() {
     const el = $("controllerStatus");
     if (!el) return;
-    const status = session.padState.connected
+    const status = padState.connected
       ? "● " +
-        (session.padState.standard
-          ? /xbox|xinput|microsoft/i.test(session.padState.id)
+        (padState.standard
+          ? /xbox|xinput|microsoft/i.test(padState.id)
             ? "XBOX ONE CONTROLLER CONNECTED"
             : "STANDARD GAMEPAD CONNECTED"
           : "CONTROLLER FOUND · UNSUPPORTED BUTTON MAP") +
         " · " +
-        (session.padState.id || "Gamepad").slice(0, 66) +
-        (session.padState.standard
-          ? " · RT " + Math.round(session.padState.rt * 100) + "%"
+        (padState.id || "Gamepad").slice(0, 66) +
+        (padState.standard
+          ? " · RT " + Math.round(padState.rt * 100) + "%"
           : "")
       : typeof navigator.getGamepads === "function"
         ? "○ Xbox One controller not detected · Connect via USB/Bluetooth, then press a button."
         : "○ This browser does not expose gamepad controls. Try Chrome or Edge.";
-    if (status !== session.gamepadStatusLast) {
+    if (status !== gamepadStatusLast) {
       el.textContent = status;
-      el.classList.toggle(
-        "detected",
-        session.padState.connected && session.padState.standard,
-      );
+      el.classList.toggle("detected", padState.connected && padState.standard);
       el.classList.toggle(
         "unsupported",
-        session.padState.connected && !session.padState.standard,
+        padState.connected && !padState.standard,
       );
-      session.gamepadStatusLast = status;
+      gamepadStatusLast = status;
     }
   }
   function refreshPauseUI() {
@@ -171,63 +170,26 @@ export function attachGameBrowser(session) {
       btn.disabled = session.phase !== "live";
     }
   }
-  function togglePause() {
-    if (session.phase !== "live") return false;
-    session.paused = !session.paused;
-    refreshPauseUI();
-    hud();
-    return session.paused;
-  }
-  function cyclePlay(delta) {
-    if (
-      session.phase !== "presnap" ||
-      session.controlMode === "defense" ||
-      session.scrimmagePlayCalled
-    )
-      return;
-    const i = session.plays.indexOf(session.selectedPlay);
-    choosePlay(
-      session.plays[(i + delta + session.plays.length) % session.plays.length],
-    );
-  }
-  function cycleScheme(kind, delta) {
-    if (session.phase !== "presnap") return;
-    const keys =
-      kind === "formation"
-        ? ["spread", "trips", "ace", "iform"]
-        : ["mix", "cover1", "cover2", "cover3", "quarters"];
-    const old =
-      kind === "formation"
-        ? session.selectedFormation
-        : session.coveragePreference;
-    const next = keys[(keys.indexOf(old) + delta + keys.length) % keys.length];
-    if (kind === "formation") {
-      session.selectedFormation = next;
-      $("formation").value = next;
-    } else {
-      session.coveragePreference = next;
-      $("coverage").value = next;
-    }
-    setup();
-  }
+  const togglePause = () => action("togglePause");
   function clearPad() {
-    protectBall(false);
-    holdStiffArm(false);
-    session.padState.connected = false;
-    session.padState.standard = false;
-    session.padState.index = -1;
-    session.padState.id = "";
-    session.padState.lx = 0;
-    session.padState.ly = 0;
-    session.padState.rx = 0;
-    session.padState.ry = 0;
-    session.padState.lt = 0;
-    session.padState.rt = 0;
-    session.padState.previous = [];
-    session.rightStickLatched = false;
-    session.rightStickDirection = "";
-    session.queuedCarrierMove = null;
-    session.xHoldStart = null;
+    action("protectBall", false);
+    action("holdStiffArm", false);
+    padState.connected = false;
+    padState.standard = false;
+    padState.index = -1;
+    padState.id = "";
+    padState.lx = 0;
+    padState.ly = 0;
+    padState.rx = 0;
+    padState.ry = 0;
+    padState.lt = 0;
+    padState.rt = 0;
+    padState.previous = [];
+    rightStickLatched = false;
+    rightStickDirection = "";
+    action("cancelCarrierMove");
+    action("downHold", "cancel");
+    syncControls();
     refreshControllerStatus();
   }
   function pollGamepad() {
@@ -239,15 +201,15 @@ export function attachGameBrowser(session) {
       } catch (_) {}
       const pad = pads.find((p) => p?.connected && p.mapping === "standard");
       if (!pad) {
-        session.tossPadPrevious = [];
+        tossPadPrevious = [];
         return;
       }
       const held = Array.from(
         { length: 4 },
         (_, i) => !!pad.buttons?.[i]?.pressed,
       );
-      const chosen = held.findIndex((v, i) => v && !session.tossPadPrevious[i]);
-      session.tossPadPrevious = held;
+      const chosen = held.findIndex((v, i) => v && !tossPadPrevious[i]);
+      tossPadPrevious = held;
       if (chosen >= 0) {
         const options = Array.from(
           document.querySelectorAll("#coinTossOptions button"),
@@ -258,7 +220,7 @@ export function attachGameBrowser(session) {
       return;
     }
     if (typeof navigator.getGamepads !== "function") {
-      if (session.padState.connected) clearPad();
+      if (padState.connected) clearPad();
       else refreshControllerStatus();
       return;
     }
@@ -272,8 +234,8 @@ export function attachGameBrowser(session) {
     // Keep the selected Xbox controller while it remains connected; otherwise use
     // the first controller with a standard layout, preferably an Xbox device.
     let pad =
-      session.padState.index >= 0 && pads[session.padState.index]?.connected
-        ? pads[session.padState.index]
+      padState.index >= 0 && pads[padState.index]?.connected
+        ? pads[padState.index]
         : null;
     if (!pad) {
       const available = Array.from(pads)
@@ -289,29 +251,30 @@ export function attachGameBrowser(session) {
         null;
     }
     if (!pad) {
-      if (session.padState.connected) clearPad();
+      if (padState.connected) clearPad();
       else refreshControllerStatus();
       return;
     }
     const standard = pad.mapping === "standard";
     if (
-      pad.index !== session.padState.index ||
-      pad.id !== session.padState.id ||
-      standard !== session.padState.standard
+      pad.index !== padState.index ||
+      pad.id !== padState.id ||
+      standard !== padState.standard
     ) {
-      session.padState.previous = [];
-      session.padState.index = pad.index;
-      session.padState.id = pad.id;
-      session.padState.standard = standard;
+      padState.previous = [];
+      padState.index = pad.index;
+      padState.id = pad.id;
+      padState.standard = standard;
     }
-    session.padState.connected = true;
+    padState.connected = true;
     if (!standard) {
-      session.padState.lx = 0;
-      session.padState.ly = 0;
-      session.padState.rx = 0;
-      session.padState.ry = 0;
-      session.padState.lt = 0;
-      session.padState.rt = 0;
+      padState.lx = 0;
+      padState.ly = 0;
+      padState.rx = 0;
+      padState.ry = 0;
+      padState.lt = 0;
+      padState.rt = 0;
+      syncControls();
       refreshControllerStatus();
       return;
     }
@@ -319,27 +282,28 @@ export function attachGameBrowser(session) {
       Number(pad.axes?.[0]) || 0,
       Number(pad.axes?.[1]) || 0,
     );
-    session.padState.lx = axis.x;
-    session.padState.ly = axis.y;
-    session.padState.rx = Number(pad.axes?.[2]) || 0;
-    session.padState.ry = Number(pad.axes?.[3]) || 0;
-    session.padState.lt = buttonValue(pad, session.XBOX.LT);
-    session.padState.rt = buttonValue(pad, session.XBOX.RT);
+    padState.lx = axis.x;
+    padState.ly = axis.y;
+    padState.rx = Number(pad.axes?.[2]) || 0;
+    padState.ry = Number(pad.axes?.[3]) || 0;
+    padState.lt = buttonValue(pad, XBOX.LT);
+    padState.rt = buttonValue(pad, XBOX.RT);
     // One action per actual button-down transition; never repeat a held pass or cut.
     const next = Array.from(
       { length: 16 },
       (_, i) => buttonValue(pad, i) > 0.5,
     );
-    const was = session.padState.previous;
+    const was = padState.previous;
     const pressed = (i) => !!next[i] && !was[i];
     const released = (i) => !next[i] && !!was[i];
-    session.padState.previous = next;
+    padState.previous = next;
+    syncControls();
     if (session.phase === "halftime") {
-      if (pressed(session.XBOX.A)) startThirdQuarter();
+      if (pressed(XBOX.A)) action("startThirdQuarter");
       refreshControllerStatus();
       return;
     }
-    if (pressed(session.XBOX.MENU)) {
+    if (pressed(XBOX.MENU)) {
       togglePause();
       refreshControllerStatus();
       return;
@@ -351,18 +315,18 @@ export function attachGameBrowser(session) {
     if (session.phase === "presnap") {
       if (session.audibleOpen) {
         for (const [button, index] of [
-          [session.XBOX.A, 0],
-          [session.XBOX.B, 1],
-          [session.XBOX.X, 2],
-          [session.XBOX.Y, 3],
+          [XBOX.A, 0],
+          [XBOX.B, 1],
+          [XBOX.X, 2],
+          [XBOX.Y, 3],
         ])
           if (pressed(button)) {
-            applyAudible(index);
+            action("applyAudible", index);
             refreshControllerStatus();
             return;
           }
-        if (pressed(session.XBOX.VIEW)) {
-          closeAudibles();
+        if (pressed(XBOX.VIEW)) {
+          action("closeAudibles");
           refreshControllerStatus();
           return;
         }
@@ -370,68 +334,74 @@ export function attachGameBrowser(session) {
         return;
       }
       if (
-        pressed(session.XBOX.X) &&
+        pressed(XBOX.X) &&
         !session.playbookOpen &&
         !session.specialState &&
         (!session.tryState || session.tryState.mode === "two")
       ) {
-        openAudibles();
+        action("openAudibles");
         refreshControllerStatus();
         return;
       }
-      if (pressed(session.XBOX.VIEW)) {
-        session.playbookOpen ? hidePlaybook() : showPlaybook();
+      if (pressed(XBOX.VIEW)) {
+        session.playbookOpen ? action("hidePlaybook") : action("showPlaybook");
         refreshControllerStatus();
         return;
       }
       if (
         session.controlMode === "defense" &&
-        pressed(session.XBOX.B) &&
+        pressed(XBOX.B) &&
         !session.playbookOpen
       ) {
-        switchDefender();
+        action("switchDefender");
         refreshControllerStatus();
         return;
       }
       if (session.playbookOpen) {
         for (const [button, direction] of [
-          [session.XBOX.UP, "up"],
-          [session.XBOX.DOWN, "down"],
-          [session.XBOX.LEFT, "left"],
-          [session.XBOX.RIGHT, "right"],
+          [XBOX.UP, "up"],
+          [XBOX.DOWN, "down"],
+          [XBOX.LEFT, "left"],
+          [XBOX.RIGHT, "right"],
         ])
           if (pressed(button)) moveSheetFocus(direction);
-        if (pressed(session.XBOX.LB)) cycleSheetFormation(-1);
-        if (pressed(session.XBOX.RB)) cycleSheetFormation(1);
-        if (pressed(session.XBOX.A)) chooseSheetFocused();
-        if (pressed(session.XBOX.X) && session.specialState) snap(); // Preserve existing kickoff controls; scrimmage X is reserved for audibles.
+        if (pressed(XBOX.LB)) action("cycleSheetFormation", -1);
+        if (pressed(XBOX.RB)) action("cycleSheetFormation", 1);
+        if (pressed(XBOX.A)) chooseSheetFocused();
+        if (pressed(XBOX.X) && session.specialState) snap(); // Preserve existing kickoff controls; scrimmage X is reserved for audibles.
       } else {
         // Pre-snap D-pad never silently changes offensive calls.
         // Formation changes belong to the explicit playbook.
-        if (pressed(session.XBOX.A)) snap();
+        if (pressed(XBOX.A)) snap();
       }
     } else if (session.phase === "dead") {
-      if (pressed(session.XBOX.A)) nextDown();
+      if (pressed(XBOX.A)) action("nextDown");
     } else if (session.phase === "live") {
       if (
         session.specialState?.kind === "punt" &&
         session.ball?.flying &&
-        pressed(session.XBOX.Y)
+        pressed(XBOX.Y)
       )
-        session.returnFairCatch = true;
+        action("fairCatch");
       if (session.ball?.flying && !session.specialState) {
-        if (pressed(session.XBOX.B)) {
-          if (session.controlMode === "offense") switchToIntendedReceiver();
-          else if (session.controlMode === "defense") switchDefender();
+        if (pressed(XBOX.B)) {
+          if (session.controlMode === "offense")
+            action("switchToIntendedReceiver");
+          else if (session.controlMode === "defense") action("switchDefender");
         }
-        if (pressed(session.XBOX.X))
-          chooseAirAction(session.controlMode === "offense" ? "rac" : "swat");
-        if (pressed(session.XBOX.A))
-          chooseAirAction(
+        if (pressed(XBOX.X))
+          action(
+            "chooseAirAction",
+            session.controlMode === "offense" ? "rac" : "swat",
+          );
+        if (pressed(XBOX.A))
+          action(
+            "chooseAirAction",
             session.controlMode === "offense" ? "possession" : "receiver",
           );
-        if (pressed(session.XBOX.Y))
-          chooseAirAction(
+        if (pressed(XBOX.Y))
+          action(
+            "chooseAirAction",
             session.controlMode === "offense" ? "aggressive" : "ball",
           );
         // A held Y/A is not lost when it was pressed before this defender could
@@ -441,22 +411,22 @@ export function attachGameBrowser(session) {
           const queuedHere =
             session.airSelection.defenderKey === session.selectedDefenderKey;
           if (
-            next[session.XBOX.Y] &&
+            next[XBOX.Y] &&
             (!queuedHere || session.airSelection.defense !== "ball") &&
             defenderAirInteractionZone(P(session.selectedDefenderKey))
           )
-            chooseAirAction("ball", "held-gamepad");
+            action("chooseAirAction", "ball", "held-gamepad");
           else if (
-            next[session.XBOX.A] &&
+            next[XBOX.A] &&
             (!queuedHere || !session.airSelection.defense) &&
             defenderAirInteractionZone(P(session.selectedDefenderKey))
           )
-            chooseAirAction("receiver", "held-gamepad");
+            action("chooseAirAction", "receiver", "held-gamepad");
         }
       }
       const qbMoveMode =
         !session.specialState &&
-        session.padState.lt > 0.48 &&
+        padState.lt > 0.48 &&
         !session.RUNS.has(session.selectedPlay) &&
         !session.passThrown &&
         !session.ballCarrier;
@@ -469,100 +439,93 @@ export function attachGameBrowser(session) {
         !qbMoveMode
       ) {
         for (const [btn, idx] of [
-          [session.XBOX.X, 0],
-          [session.XBOX.Y, 1],
-          [session.XBOX.A, 2],
-          [session.XBOX.B, 3],
+          [XBOX.X, 0],
+          [XBOX.Y, 1],
+          [XBOX.A, 2],
+          [XBOX.B, 3],
         ]) {
-          if (pressed(btn)) startPass(idx, "gamepad");
+          if (pressed(btn)) action("startPass", idx, "gamepad");
           if (
             released(btn) &&
             session.pendingPass?.source === "gamepad" &&
             session.pendingPass.index === idx
           )
-            releasePass();
+            action("releasePass");
         }
       }
       if (
         session.controlMode === "offense" &&
         (session.ballCarrier?.team === 0 || qbMoveMode)
       ) {
-        if (pressed(session.XBOX.B)) carrierMove("spin");
-        if (pressed(session.XBOX.Y) && !session.specialState?.kind)
-          carrierMove("hurdle");
-        holdStiffArm(next[session.XBOX.A]);
-        protectBall(next[session.XBOX.RB]);
-        if (pressed(session.XBOX.X)) {
-          session.xHoldStart = session.playClock;
-          session.xDiveFired = false;
+        if (pressed(XBOX.B)) action("carrierMove", "spin");
+        if (pressed(XBOX.Y) && !session.specialState?.kind)
+          action("carrierMove", "hurdle");
+        action("holdStiffArm", next[XBOX.A]);
+        action("protectBall", next[XBOX.RB]);
+        if (pressed(XBOX.X)) {
+          action("downHold", "start");
         }
-        if (released(session.XBOX.X) && session.xHoldStart !== null) {
-          if (!session.xDiveFired) downSafe();
-          session.xHoldStart = null;
-          session.xDiveFired = false;
+        if (released(XBOX.X) && session.xHoldStart !== null) {
+          action("downHold", "release");
         }
-        if (pressed(session.XBOX.LB)) {
-          session.manualDrive = false;
-          session.suppressManualUntilNeutral = true;
-          hud();
+        if (pressed(XBOX.LB)) {
+          action("autoRun", true);
         }
       } else {
-        holdStiffArm(false);
-        protectBall(false);
-        session.xHoldStart = null;
+        action("holdStiffArm", false);
+        action("protectBall", false);
+        action("downHold", "cancel");
       }
       if (
         session.controlMode === "defense" &&
-        pressed(session.XBOX.B) &&
+        pressed(XBOX.B) &&
         !session.ball?.flying
       )
-        switchDefender();
+        action("switchDefender");
       if (session.controlMode === "defense" && !session.ball?.flying) {
-        const selected = P(session.selectedDefenderKey);
-        if (selected) {
-          selected.conservativeHeld = !!next[session.XBOX.A];
-          if (next[session.XBOX.A])
-            selected.conservativeUntil = session.playClock + 0.12;
-        }
-        if (pressed(session.XBOX.X)) defensiveFaceButton("X");
+        action("defensiveHold", !!next[XBOX.A], true);
+        if (pressed(XBOX.X)) action("defensiveFaceButton", "X");
       }
       // Distinct flicks must be recognized even when the stick returns only
       // partway to center. Reversing left<->right also counts as a new flick.
       // Holding the same direction never auto-spams an action.
-      const stickMag = Math.hypot(session.padState.rx, session.padState.ry);
+      const stickMag = Math.hypot(padState.rx, padState.ry);
       if (stickMag < 0.53) {
-        session.rightStickLatched = false;
-        session.rightStickDirection = "";
+        rightStickLatched = false;
+        rightStickDirection = "";
       } else if (stickMag > 0.68) {
-        const horizontal =
-          Math.abs(session.padState.rx) > Math.abs(session.padState.ry) * 1.12;
+        const horizontal = Math.abs(padState.rx) > Math.abs(padState.ry) * 1.12;
         const direction = horizontal
-          ? session.padState.rx < 0
+          ? padState.rx < 0
             ? "left"
             : "right"
-          : session.padState.ry < 0
+          : padState.ry < 0
             ? "up"
             : "down";
         const opposite =
-          (session.rightStickDirection === "left" && direction === "right") ||
-          (session.rightStickDirection === "right" && direction === "left");
-        if (!session.rightStickLatched || opposite) {
-          session.rightStickLatched = true;
-          session.rightStickDirection = direction;
+          (rightStickDirection === "left" && direction === "right") ||
+          (rightStickDirection === "right" && direction === "left");
+        if (!rightStickLatched || opposite) {
+          rightStickLatched = true;
+          rightStickDirection = direction;
           if (session.controlMode === "defense") {
             if (!horizontal)
-              defensiveStick(direction === "up" ? "hit-stick" : "cut-stick");
+              action(
+                "defensiveStick",
+                direction === "up" ? "hit-stick" : "cut-stick",
+              );
           } else if (session.controlMode === "line") {
-            if (direction === "up") lineImpact();
+            if (direction === "up") action("lineImpact");
           } else if (session.ballCarrier?.team === 0 || qbMoveMode) {
-            if (horizontal) carrierMove("juke", direction === "left" ? -1 : 1);
-            else if (direction === "up") carrierMove("truck");
-            else carrierMove("hesi");
+            if (horizontal)
+              action("carrierMove", "juke", direction === "left" ? -1 : 1);
+            else if (direction === "up") action("carrierMove", "truck");
+            else action("carrierMove", "hesi");
           }
         }
       }
-      if (session.controlMode === "offense" && pressed(session.XBOX.RT))
-        burst();
+      if (session.controlMode === "offense" && pressed(XBOX.RT))
+        action("burst");
     }
     refreshControllerStatus();
   }
@@ -595,7 +558,7 @@ export function attachGameBrowser(session) {
     }
     if (session.phase === "presnap" && !session.paused)
       positionSelectedDefender(elapsed);
-    if (session.phase === "presnap") hud();
+    if (session.phase === "presnap") session.hud();
     // A paused game was still rendering its 3D field 60 times per second. That
     // kept the GPU busy while the user watched video in another browser window.
     // Keep controls responsive but reduce GPU uploads/draw calls while paused.
@@ -763,33 +726,35 @@ export function attachGameBrowser(session) {
       y = e.clientY - (r.top + r.height / 2),
       m = Math.hypot(x, y),
       max = r.width * 0.33;
-    session.joystick.x = clamp(x / max, -1, 1);
-    session.joystick.y = clamp(y / max, -1, 1);
+    joystick.x = clamp(x / max, -1, 1);
+    joystick.y = clamp(y / max, -1, 1);
     if (m > max) {
-      session.joystick.x = x / m;
-      session.joystick.y = y / m;
+      joystick.x = x / m;
+      joystick.y = y / m;
     }
+    syncControls();
     $("knob").style.transform =
-      `translate(${session.joystick.x * max}px,${session.joystick.y * max}px)`;
+      `translate(${joystick.x * max}px,${joystick.y * max}px)`;
   }
   $("joystick").addEventListener("pointerdown", (e) => {
-    session.joystick.active = true;
-    session.joystick.pointer = e.pointerId;
+    joystick.active = true;
+    joystick.pointer = e.pointerId;
     $("joystick").setPointerCapture(e.pointerId);
     resizeStick(e);
     e.preventDefault();
   });
   $("joystick").addEventListener("pointermove", (e) => {
-    if (session.joystick.active && e.pointerId === session.joystick.pointer) {
+    if (joystick.active && e.pointerId === joystick.pointer) {
       resizeStick(e);
       e.preventDefault();
     }
   });
   function stickReset() {
-    session.joystick.active = false;
-    session.joystick.pointer = null;
-    session.joystick.x = 0;
-    session.joystick.y = 0;
+    joystick.active = false;
+    joystick.pointer = null;
+    joystick.x = 0;
+    joystick.y = 0;
+    syncControls();
     $("knob").style.transform = "translate(0,0)";
   }
   $("joystick").addEventListener("pointerup", stickReset);
@@ -814,8 +779,8 @@ export function attachGameBrowser(session) {
       session.phase === "live" &&
       session.ball?.flying
     ) {
-      session.returnFairCatch = true;
-      message(
+      action(
+        "fairCatch",
         "<strong>FAIR CATCH SIGNALED.</strong> Returner will down the punt at the catch point.",
       );
       e.preventDefault();
@@ -827,19 +792,19 @@ export function attachGameBrowser(session) {
     }
     if (session.phase === "presnap" && session.audibleOpen) {
       if (["a", "b", "x", "y"].includes(key)) {
-        applyAudible(["a", "b", "x", "y"].indexOf(key));
+        action("applyAudible", ["a", "b", "x", "y"].indexOf(key));
         e.preventDefault();
         return;
       }
       if (key === "escape") {
-        closeAudibles();
+        action("closeAudibles");
         e.preventDefault();
         return;
       }
       return;
     }
     if (session.phase === "presnap" && key === "x" && !session.playbookOpen) {
-      openAudibles();
+      action("openAudibles");
       e.preventDefault();
       return;
     }
@@ -870,109 +835,113 @@ export function attachGameBrowser(session) {
       ].includes(key)
     )
       e.preventDefault();
-    session.keys[key] = true;
+    keys[key] = true;
+    syncControls();
     if (e.repeat) return;
     if (["1", "2", "3", "4"].includes(key))
-      startPass(Number(key) - 1, "keyboard");
-    if (key === " ") evade();
-    if (key === "t") carrierMove("truck");
+      action("startPass", Number(key) - 1, "keyboard");
+    if (key === " ") action("evade");
+    if (key === "t") action("carrierMove", "truck");
     if (
       (key === "g" || key === "y") &&
       session.controlMode === "offense" &&
       availableRunner()
     )
-      carrierMove("hurdle");
-    if (key === "f" && !e.repeat) holdStiffArm(true);
-    if (key === "b" && session.controlMode === "defense") switchDefender();
+      action("carrierMove", "hurdle");
+    if (key === "f" && !e.repeat) action("holdStiffArm", true);
+    if (key === "b" && session.controlMode === "defense")
+      action("switchDefender");
     if (
       key === "b" &&
       session.controlMode === "offense" &&
       session.ball?.flying
     )
-      switchToIntendedReceiver();
+      action("switchToIntendedReceiver");
     if (session.ball?.flying) {
       if (key === "j")
-        chooseAirAction(
+        action(
+          "chooseAirAction",
           session.controlMode === "offense" ? "rac" : "swat",
           "keyboard",
         );
       if (key === "k")
-        chooseAirAction(
+        action(
+          "chooseAirAction",
           session.controlMode === "offense" ? "possession" : "receiver",
           "keyboard",
         );
       if (key === "l")
-        chooseAirAction(
+        action(
+          "chooseAirAction",
           session.controlMode === "offense" ? "aggressive" : "ball",
           "keyboard",
         );
     }
-    if (key === "v" && session.controlMode === "offense") carrierMove("spin");
-    if (key === "c" && session.controlMode === "offense") protectBall(true);
+    if (key === "v" && session.controlMode === "offense")
+      action("carrierMove", "spin");
+    if (key === "c" && session.controlMode === "offense")
+      action("protectBall", true);
     if (
       key === "x" &&
       session.controlMode === "offense" &&
-      (session.ballCarrier || session.keys.alt)
+      (session.ballCarrier || keys.alt)
     ) {
-      session.xHoldStart = session.playClock;
-      session.xDiveFired = false;
+      action("downHold", "start");
     }
-    if (key === "q" && session.controlMode === "line") lineImpact();
+    if (key === "q" && session.controlMode === "line") action("lineImpact");
     if (key === "z" && session.controlMode === "defense")
-      defensiveFaceButton("A");
+      action("defensiveFaceButton", "A");
     if (key === "x" && session.controlMode === "defense") {
-      if (session.ball?.flying) chooseAirAction("swat", "keyboard");
-      else defensiveFaceButton("X");
+      if (session.ball?.flying) action("chooseAirAction", "swat", "keyboard");
+      else action("defensiveFaceButton", "X");
     }
     if (key === "h" && session.controlMode === "defense")
-      defensiveStick("hit-stick");
+      action("defensiveStick", "hit-stick");
     if (key === "n" && session.controlMode === "defense")
-      defensiveStick("cut-stick");
-    if (key === "shift") burst();
-    if (key === "r") reset();
+      action("defensiveStick", "cut-stick");
+    if (key === "shift") action("burst");
+    if (key === "r") action("reset");
     if (key === "enter") {
       session.phase === "halftime"
-        ? startThirdQuarter()
+        ? action("startThirdQuarter")
         : session.phase === "dead"
-          ? nextDown()
+          ? action("nextDown")
           : snap();
       e.preventDefault();
     }
   });
   window.addEventListener("keyup", (e) => {
     const key = e.key.toLowerCase();
-    session.keys[key] = false;
-    if (key === "c") protectBall(false);
-    if (key === "f") holdStiffArm(false);
-    if (key === "z" && session.controlMode === "defense") {
-      const d = P(session.selectedDefenderKey);
-      if (d) d.conservativeHeld = false;
-    }
+    keys[key] = false;
+    syncControls();
+    if (key === "c") action("protectBall", false);
+    if (key === "f") action("holdStiffArm", false);
+    if (key === "z" && session.controlMode === "defense")
+      action("defensiveHold", false);
     if (key === "x" && session.xHoldStart !== null) {
-      if (!session.xDiveFired) downSafe();
-      session.xHoldStart = null;
-      session.xDiveFired = false;
+      action("downHold", "release");
     }
     if (
       ["1", "2", "3", "4"].includes(key) &&
       session.pendingPass?.source === "keyboard" &&
       session.pendingPass.index === Number(key) - 1
     )
-      releasePass();
+      action("releasePass");
   });
   window.addEventListener("blur", () => {
-    for (const key of Object.keys(session.keys)) session.keys[key] = false;
-    session.pendingPass = null;
-    protectBall(false);
-    holdStiffArm(false);
-    session.xHoldStart = null;
+    for (const key of Object.keys(keys)) keys[key] = false;
+    action("cancelPass");
+    action("protectBall", false);
+    action("holdStiffArm", false);
+    action("downHold", "cancel");
     stickReset();
   });
   $("airActions")
     .querySelectorAll("button[data-air]")
     .forEach((b, i) =>
       b.addEventListener("click", () =>
-        chooseAirAction(
+        action(
+          "chooseAirAction",
           session.controlMode === "defense"
             ? ["swat", "receiver", "ball"][i]
             : ["rac", "possession", "aggressive"][i],
@@ -982,39 +951,31 @@ export function attachGameBrowser(session) {
     );
   $("audibleOptions").addEventListener("click", (e) => {
     const button = e.target.closest("[data-audible]");
-    if (button) applyAudible(Number(button.dataset.audible));
+    if (button) action("applyAudible", Number(button.dataset.audible));
   });
-  $("audibleClose").addEventListener("click", closeAudibles);
+  $("audibleClose").addEventListener("click", () => action("closeAudibles"));
   $("callSheet").addEventListener("click", (e) => {
     const ret = e.target.closest("[data-returncall]");
     if (ret) {
-      session.returnCall = ret.dataset.returncall;
-      organizeReturnUnit();
-      showPlaybook();
+      action("returnCall", ret.dataset.returncall);
       return;
     }
     const dc = e.target.closest("[data-defense-coverage]");
-    if (dc && session.possession === 1 && session.phase === "presnap") {
-      session.coveragePreference = dc.dataset.defenseCoverage;
-      $("coverage").value = session.coveragePreference;
-      const remaining = session.playSeconds,
-        wasCalled = session.scrimmagePlayCalled;
-      setup();
-      session.playSeconds = remaining;
-      session.scrimmagePlayCalled = wasCalled;
-      showPlaybook();
+    if (
+      dc &&
+      session.possession !== session.localTeam &&
+      session.phase === "presnap"
+    ) {
+      action("setScheme", "coverage", dc.dataset.defenseCoverage, true, true);
       return;
     }
     const dp = e.target.closest("[data-defense-pressure]");
-    if (dp && session.possession === 1 && session.phase === "presnap") {
-      session.pressurePreference = dp.dataset.defensePressure;
-      $("pressure").value = session.pressurePreference;
-      const remaining = session.playSeconds,
-        wasCalled = session.scrimmagePlayCalled;
-      setup();
-      session.playSeconds = remaining;
-      session.scrimmagePlayCalled = wasCalled;
-      showPlaybook();
+    if (
+      dp &&
+      session.possession !== session.localTeam &&
+      session.phase === "presnap"
+    ) {
+      action("setScheme", "pressure", dp.dataset.defensePressure, true, true);
       return;
     }
     const play = e.target.closest("[data-sheetplay]");
@@ -1024,21 +985,18 @@ export function attachGameBrowser(session) {
     }
     const special = e.target.closest("[data-special]");
     if (special) {
-      chooseSpecial(special.dataset.special);
+      action("chooseSpecial", special.dataset.special);
       return;
     }
   });
-  $("closeSheet").addEventListener("click", hidePlaybook);
+  $("closeSheet").addEventListener("click", () => action("hidePlaybook"));
   $("sheetFormation").addEventListener("change", () => {
     if (session.phase !== "presnap" || session.specialState) return;
-    session.selectedFormation = $("sheetFormation").value;
-    $("formation").value = session.selectedFormation;
-    setup();
-    showPlaybook();
+    action("setScheme", "formation", $("sheetFormation").value, false, true);
   });
   $("sheetSnap").addEventListener("click", () => {
     if (session.tryState && !session.tryState.mode) {
-      showPlaybook();
+      action("showPlaybook");
       return;
     }
     snap();
@@ -1046,87 +1004,89 @@ export function attachGameBrowser(session) {
   $("playbookBtn").addEventListener("click", () =>
     session.phase === "presnap"
       ? session.playbookOpen
-        ? hidePlaybook()
-        : showPlaybook()
+        ? action("hidePlaybook")
+        : action("showPlaybook")
       : null,
   );
-  $("timeoutBtn").addEventListener("click", requestTimeout);
+  $("timeoutBtn").addEventListener("click", () => action("requestTimeout"));
   $("fairCatchBtn").addEventListener("click", () => {
     if (
       session.phase === "live" &&
       session.specialState?.kind === "punt" &&
       session.ball?.flying
     ) {
-      session.returnFairCatch = true;
-      message(
+      action(
+        "fairCatch",
         "<strong>FAIR CATCH SIGNALED.</strong> The returner will down the punt.",
       );
     }
   });
-  $("receiverSwitch").addEventListener("click", switchToIntendedReceiver);
+  $("receiverSwitch").addEventListener("click", () =>
+    action("switchToIntendedReceiver"),
+  );
   $("viewMode").addEventListener("click", () =>
     setVisualMode(getVisualMode() === "3d" ? "2d" : "3d"),
   );
-  $("controlMode").addEventListener("click", cycleControlMode);
-  $("jukeAction").addEventListener("click", () => carrierMove("juke"));
-  $("truckAction").addEventListener("click", () => carrierMove("truck"));
-  $("hurdleAction").addEventListener("click", () => carrierMove("hurdle"));
+  $("controlMode").addEventListener("click", () => action("cycleControlMode"));
+  $("jukeAction").addEventListener("click", () =>
+    action("carrierMove", "juke"),
+  );
+  $("truckAction").addEventListener("click", () =>
+    action("carrierMove", "truck"),
+  );
+  $("hurdleAction").addEventListener("click", () =>
+    action("carrierMove", "hurdle"),
+  );
   $("stiffAction").addEventListener("pointerdown", (e) => {
-    holdStiffArm(true);
+    action("holdStiffArm", true);
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch (_) {}
   });
-  $("stiffAction").addEventListener("pointerup", () => holdStiffArm(false));
-  $("stiffAction").addEventListener("pointercancel", () => holdStiffArm(false));
+  $("stiffAction").addEventListener("pointerup", () =>
+    action("holdStiffArm", false),
+  );
+  $("stiffAction").addEventListener("pointercancel", () =>
+    action("holdStiffArm", false),
+  );
   $("pause").addEventListener("click", togglePause);
-  $("boost").addEventListener("click", burst);
-  $("dive").addEventListener("click", evade);
+  $("boost").addEventListener("click", () => action("burst"));
+  $("dive").addEventListener("click", () => action("evade"));
   $("snap").addEventListener("click", () =>
     session.phase === "halftime"
-      ? startThirdQuarter()
+      ? action("startThirdQuarter")
       : session.phase === "dead"
-        ? nextDown()
+        ? action("nextDown")
         : snap(),
   );
   $("autoRun").addEventListener("click", () => {
     if (session.phase === "live" && session.ballCarrier) {
-      session.manualDrive = false;
-      hud();
+      action("autoRun", false);
       canvas.focus({ preventScroll: true });
     }
   });
-  $("reset").addEventListener("click", () => startNewMatch());
+  $("reset").addEventListener("click", () => action("startNewMatch"));
   $("downloadTrace").addEventListener("click", downloadTrace);
   $("athlete").addEventListener("change", sliders);
   for (let el of document.querySelectorAll("[data-play]"))
     el.addEventListener("click", () => choosePlay(el.dataset.play));
-  for (const [id, key] of [
-    ["formation", "formation"],
-    ["front", "front"],
-    ["coverage", "coverage"],
-    ["pressure", "pressure"],
-  ])
+  for (const id of ["formation", "front", "coverage", "pressure"]) {
     $(id).addEventListener("change", () => {
-      if (session.phase === "live") return;
-      if (id === "formation") session.selectedFormation = $(id).value;
-      if (id === "front") session.selectedFront = $(id).value;
-      if (id === "coverage") session.coveragePreference = $(id).value;
-      if (id === "pressure") session.pressurePreference = $(id).value;
-      setup();
+      if (session.phase !== "live") action("setScheme", id, $(id).value);
     });
+  }
   for (let el of document.querySelectorAll("[data-target]")) {
     el.addEventListener("pointerdown", (e) => {
-      startPass(Number(el.dataset.target), "pointer");
+      action("startPass", Number(el.dataset.target), "pointer");
       try {
         el.setPointerCapture(e.pointerId);
       } catch {}
     });
     el.addEventListener("pointerup", () => {
-      if (session.pendingPass?.source === "pointer") releasePass();
+      if (session.pendingPass?.source === "pointer") action("releasePass");
     });
     el.addEventListener("pointercancel", () => {
-      if (session.pendingPass?.source === "pointer") session.pendingPass = null;
+      if (session.pendingPass?.source === "pointer") action("cancelPass");
     });
     // Keyboard accessibility: Enter/Space activate a medium touch pass.
     el.addEventListener("click", (e) => {
@@ -1164,6 +1124,7 @@ export function attachGameBrowser(session) {
       playSeconds: session.playSeconds,
       scrimmagePlayCalled: session.scrimmagePlayCalled,
       possession: session.possession,
+      localTeam: session.localTeam,
       timeOuts: session.timeOuts,
       TEAM_NAMES: session.TEAM_NAMES,
       selectedDefenderKey: session.selectedDefenderKey,
@@ -1186,7 +1147,7 @@ export function attachGameBrowser(session) {
       gameFlowNote: session.gameFlowNote,
     }),
     queries: {
-      chooseCoinToss: session.chooseCoinToss,
+      chooseCoinToss: (choice) => dispatch({ type: "coinToss", choice }),
       audibleChoices,
       eligibleTargets,
       clockText,
@@ -1237,8 +1198,12 @@ export function attachGameBrowser(session) {
       receiverPromptTargets,
     },
   });
-  const { resize, render, view, setVisualMode, getVisualMode, getVisual } =
-    fieldRenderer;
+  const { resize, render, view, getVisualMode, getVisual } = fieldRenderer;
+  function setVisualMode(mode) {
+    const result = fieldRenderer.setVisualMode(mode);
+    syncControls();
+    return result;
+  }
   canvas.addEventListener("click", useTap);
   window.addEventListener("resize", resize);
   if (window.ResizeObserver) new ResizeObserver(resize).observe($("canvasbox"));
@@ -1248,9 +1213,21 @@ export function attachGameBrowser(session) {
 
   return {
     emit(event) {
-      if (event.type === "playbookShown") playbook.renderPlaybook();
+      if (event.type === "coinTossInputReset") tossPadPrevious = [];
+      else if (event.type === "rightStickReset") {
+        rightStickLatched = false;
+        rightStickDirection = "";
+      } else if (event.type === "playbookShown") playbook.renderPlaybook();
       else if (event.type === "playbookHidden") playbook.hidePlaybook();
       else emitHudEvent(event);
+    },
+    getRightStick: () => ({
+      latched: rightStickLatched,
+      direction: rightStickDirection,
+    }),
+    getController: () => {
+      const { previous, ...status } = padState;
+      return status;
     },
     getSheetItems: playbook.getSheetItems,
     moveSheetFocus,

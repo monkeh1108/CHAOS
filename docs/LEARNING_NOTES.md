@@ -88,3 +88,15 @@ the play name from the engine to the button the browser highlights.
 
 In `tests/integration/match_snapshot.test.js`, follow the pass from release
 through saving, restoring into a fresh game, and comparing subsequent events.
+
+## Checkpoint 8
+
+- An **input command** records what a player wants to do. The engine
+  receives a move direction or a snap command with a player slot. The
+  browser handles keys, gamepad buttons, and touch before it sends them.
+- A **player slot** identifies which team issued a command. Possession
+  determines whether that slot is playing offense or defense.
+
+Trace readFieldControls in src/input/controls.js into dispatchInput in
+src/engine.js. The CPU sends its play calls, snaps, and throws through the
+same dispatcher.
