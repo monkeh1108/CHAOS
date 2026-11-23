@@ -288,15 +288,19 @@ export function createGridironRenderer(canvas) {
     const vertices = [];
     const sides = 10;
     const step = (2 * Math.PI) / sides;
-    const row = rings.map(([y, radius], i) => {
-      const [loY, loR] = rings[Math.max(0, i - 1)];
-      const [hiY, hiR] = rings[Math.min(rings.length - 1, i + 1)];
-      const slope = (loR - hiR) / (hiY - loY);
+    const row = rings.map(([y, width, depth = width], i) => {
+      const [loY, loWidth, loDepth = loWidth] = rings[Math.max(0, i - 1)];
+      const [hiY, hiWidth, hiDepth = hiWidth] =
+        rings[Math.min(rings.length - 1, i + 1)];
+      const widthSlope = (loWidth - hiWidth) / (hiY - loY);
+      const depthSlope = (loDepth - hiDepth) / (hiY - loY);
+      const aspect = width ? depth / width : 1;
       return Array.from({ length: sides }, (_, j) => {
         const angle = j * step;
         const x = Math.cos(angle),
           z = Math.sin(angle);
-        return [x * radius, y, z * radius, ...norm([x, slope, z])];
+        const slope = depthSlope * x * x + widthSlope * aspect * z * z;
+        return [x * depth, y, z * width, ...norm([x, slope, z * aspect])];
       });
     });
     for (let i = 0; i < row.length - 1; i++) {
@@ -352,11 +356,14 @@ export function createGridironRenderer(canvas) {
       [0.46, 0.34],
       [0.5, 0],
     ]),
+    // Keep width at the hip and the jersey overlap above it. The lower
+    // rings rise into the crotch and flatten the seat over the thigh roots.
     pelvis: profileMesh([
-      [-0.53, 0],
-      [-0.42, 0.35],
-      [-0.18, 0.5],
-      [0.09, 0.45],
+      [-0.37, 0],
+      [-0.3, 0.25, 0.24],
+      [-0.18, 0.43, 0.35],
+      [0.02, 0.48, 0.39],
+      [0.19, 0.41, 0.38],
       [0.36, 0.34],
       [0.49, 0.27],
       [0.57, 0],
@@ -381,9 +388,9 @@ export function createGridironRenderer(canvas) {
       [0.11, 0.095],
       [0.18, 0.118],
       [0.3, 0.148],
-      [0.42, 0.145],
-      [0.54, 0.105],
-      [0.58, 0.064],
+      [0.42, 0.133],
+      [0.54, 0.108],
+      [0.58, 0.082],
     ]),
   };
   let markerDebug = {
