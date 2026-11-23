@@ -4281,6 +4281,7 @@
       }
       if (input.mag > 0.12) matchState.manualDrive = true;
       if (matchState.manualDrive) {
+        if (p.carrierObstacle) p.carrierObstacle = null;
         p.intent = input.mag > 0.12 ? "carry-manual" : "carry-coast";
         p.intentTarget = "user";
         if (input.mag > 0.12)
@@ -7330,9 +7331,100 @@
     };
   }
 
+  // src/ai/carrier_obstacles.js
+  var BLOCKER_POSITIONS = /* @__PURE__ */ new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
+  var PAD_MARGIN = 0.14;
+  function reactionTiming(runner) {
+    const awareness = clamp(
+      (runner.AWR * 0.65 + (runner.VIS ?? runner.AWR) * 0.35 - 30) / 69,
+      0,
+      1
+    );
+    return { lookAhead: 0.33 + awareness * 0.46, delay: 0.26 - awareness * 0.18 };
+  }
+  function canSeeBlocker(runner, blocker, players, radius) {
+    const dx = blocker.x - runner.x;
+    const dy = blocker.y - runner.y;
+    const distanceSquared = dx * dx + dy * dy;
+    const facing = Math.cos(runner.face) * dx + Math.sin(runner.face) * dy;
+    if (facing < Math.sqrt(distanceSquared) * 0.76) return false;
+    return !players.some((other) => {
+      if (other === runner || other === blocker || other.ground) return false;
+      const x = other.x - runner.x;
+      const y = other.y - runner.y;
+      const fraction = (x * dx + y * dy) / distanceSquared;
+      return fraction > 0 && fraction < 1 && Math.hypot(x - fraction * dx, y - fraction * dy) < radius(other);
+    });
+  }
+  function laneIsOpen(runner, blocker, players, radius, time, targetY) {
+    const dx = blocker.x + blocker.vx * time - runner.x;
+    const dy = targetY - runner.y;
+    return !players.some((other) => {
+      if (other === runner || other === blocker) return false;
+      const relativeX = dx - other.vx * time;
+      const fraction = clamp(
+        (other.x - runner.x) / Math.max(relativeX, 0.1),
+        0,
+        1
+      );
+      const x = other.x + other.vx * time * fraction - runner.x - dx * fraction;
+      const y = other.y + other.vy * time * fraction - runner.y - dy * fraction;
+      return Math.hypot(x, y) < radius(runner) + radius(other) + PAD_MARGIN;
+    });
+  }
+  function readCarrierObstacle(runner, state2, radius, dt, fieldWidth) {
+    if (state2.selectedPlay !== "inside" || state2.specialState || state2.suppressManualUntilNeutral || runner.pos !== "RB" || runner.vx < 1.8 || runner.stun > 0 || runner.action || runner.ground || runner.airState || runner.stumbleTime > 0 || state2.tackleLinks.size) {
+      if (runner.carrierObstacle) runner.carrierObstacle = null;
+      return null;
+    }
+    const previous = runner.carrierObstacle;
+    const { lookAhead, delay } = reactionTiming(runner);
+    let threat2 = null;
+    for (const blocker2 of state2.off) {
+      if (blocker2 === runner || !BLOCKER_POSITIONS.has(blocker2.pos) || blocker2.ground || blocker2.indirectDrive || state2.blockLinks.has(blocker2.key) || Math.hypot(blocker2.vx, blocker2.vy) > 1.15)
+        continue;
+      const clearance3 = radius(runner) + radius(blocker2) + PAD_MARGIN;
+      const dx = blocker2.x - runner.x;
+      const closing = runner.vx - blocker2.vx;
+      const time2 = (dx - clearance3) / closing;
+      if (dx <= 0 || closing < 1.2 || time2 < 0 || time2 > lookAhead || threat2 && time2 >= threat2.time)
+        continue;
+      const offset = blocker2.y - runner.y;
+      const intercept2 = offset + (blocker2.vy - runner.vy) * time2;
+      const committed = previous?.key === blocker2.key && previous.side;
+      if (Math.abs(offset) > clearance3 + 0.42 || !committed && Math.abs(intercept2) >= clearance3 || !canSeeBlocker(runner, blocker2, state2.players, radius))
+        continue;
+      threat2 = { blocker: blocker2, clearance: clearance3, time: time2, intercept: intercept2 };
+    }
+    if (!threat2) {
+      if (runner.carrierObstacle) runner.carrierObstacle = null;
+      return null;
+    }
+    const { blocker, clearance: clearance2, time, intercept } = threat2;
+    const read = previous?.key === blocker.key ? previous : { key: blocker.key, elapsed: 0, side: 0, steeringTime: 0 };
+    if (read === previous) read.elapsed += dt;
+    runner.carrierObstacle = read;
+    if (read.elapsed < delay || time < 0.11) return null;
+    const agility = clamp((runner.AGI - 30) / 69, 0, 1);
+    const steeringLimit = (0.23 + 0.55 * agility) * clamp(runner.balance, 0.45, 1);
+    const side = intercept >= 0 ? -1 : 1;
+    for (const direction2 of read.side ? [read.side] : [side, -side]) {
+      const targetY = blocker.y + blocker.vy * time + direction2 * (clearance2 + 0.15);
+      if (targetY < 1.35 || targetY > fieldWidth - 1.35 || !laneIsOpen(runner, blocker, state2.players, radius, time, targetY))
+        continue;
+      read.side = direction2;
+      read.steeringTime += dt;
+      const commitment = clamp(read.steeringTime / 0.07, 0, 1);
+      const slope = direction2 * commitment * clamp((targetY - runner.y) * direction2 * 1.3, 0, steeringLimit);
+      return { key: blocker.key, slope };
+    }
+    read.steeringTime = 0;
+    return null;
+  }
+
   // src/ai/ball_carrier.js
   function createBallCarrierAI() {
-    let H2, P, matchState, steer;
+    let H2, P, matchState, radius, steer;
     function autoCarry(p, dt) {
       p.intent = "carry-auto";
       p.intentTarget = "endzone";
@@ -7372,12 +7464,16 @@
       }
       const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
       const dx = Math.max(2, aheadX - p.x);
-      const dy = (targetY - p.y) * 2;
+      const avoidingDefender = inFront || p.intent === "cutback";
+      if (avoidingDefender && p.carrierObstacle) p.carrierObstacle = null;
+      const obstacle = avoidingDefender ? null : readCarrierObstacle(p, matchState, radius, dt, H2);
+      const dy = obstacle ? dx * obstacle.slope : (targetY - p.y) * 2;
+      if (obstacle) p.intentTarget = obstacle.key;
       steer(p, dx, dy, dt, 1.02);
     }
     return {
       bind(services) {
-        ({ H: H2, P, matchState, steer } = services);
+        ({ H: H2, P, matchState, radius, steer } = services);
       },
       autoCarry
     };

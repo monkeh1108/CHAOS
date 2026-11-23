@@ -1,7 +1,8 @@
 import { clamp } from "../core/math.js";
+import { readCarrierObstacle } from "./carrier_obstacles.js";
 
 export function createBallCarrierAI() {
-  let H, P, matchState, steer;
+  let H, P, matchState, radius, steer;
 
   // A ball carrier's objective is the opposing end zone. Prior versions used a
   // landmark anchored to the snap time; a breakaway RB would outrun that landmark
@@ -95,13 +96,20 @@ export function createBallCarrierAI() {
     }
     const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
     const dx = Math.max(2, aheadX - p.x);
-    const dy = (targetY - p.y) * 2.0;
+    const avoidingDefender = inFront || p.intent === "cutback";
+    if (avoidingDefender && p.carrierObstacle) p.carrierObstacle = null;
+    const obstacle = avoidingDefender
+      ? null
+      : readCarrierObstacle(p, matchState, radius, dt, H);
+    // Use ordinary steering/traction. The collision solver still owns every impact.
+    const dy = obstacle ? dx * obstacle.slope : (targetY - p.y) * 2.0;
+    if (obstacle) p.intentTarget = obstacle.key;
     steer(p, dx, dy, dt, 1.02);
   }
 
   return {
     bind(services) {
-      ({ H, P, matchState, steer } = services);
+      ({ H, P, matchState, radius, steer } = services);
     },
     autoCarry,
   };
