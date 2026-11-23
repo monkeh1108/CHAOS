@@ -7331,8 +7331,139 @@
     };
   }
 
+  // src/physics/indirect_contact.js
+  var DRIVE_LIFETIME = 0.14;
+  var MIN_DRIVE_IMPULSE = 30;
+  var LINE_BLOCKERS = /* @__PURE__ */ new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
+  function indirectContactActive(state2) {
+    return state2.phase === "live" && state2.selectedPlay === "inside" && !state2.specialState && state2.ballCarrier?.team === 0;
+  }
+  function ageIndirectDrive(player, dt) {
+    const drive2 = player.indirectDrive;
+    if (!drive2) return;
+    drive2.remaining -= dt;
+    if (drive2.remaining <= 0) player.indirectDrive = null;
+  }
+  function recordDefenderDrive(state2, blocker, defender, x, y, engaged = false) {
+    if (!indirectContactActive(state2) || blocker.team !== 0 || defender.team !== 1 || blocker === state2.ballCarrier || x >= 0 || !engaged && !LINE_BLOCKERS.has(blocker.pos)) {
+      return;
+    }
+    const impulse = Math.hypot(x, y);
+    if (impulse < (engaged ? 2 : MIN_DRIVE_IMPULSE)) return;
+    const previous = blocker.indirectDrive;
+    if (previous?.defender === defender.key && previous.blockers.length === 1) {
+      const retained = previous.remaining / DRIVE_LIFETIME;
+      x += previous.x * retained;
+      y += previous.y * retained;
+    } else if (previous && Math.hypot(previous.x, previous.y) > impulse) {
+      return;
+    }
+    blocker.indirectDrive = {
+      defender: defender.key,
+      blockers: [blocker.key],
+      x,
+      y,
+      remaining: DRIVE_LIFETIME
+    };
+  }
+  function transmittedDrive(blocker, teammate, normalX, normalY, approach, impulse) {
+    const drive2 = blocker.indirectDrive;
+    if (!drive2 || drive2.blockers.includes(teammate.key) || approach < 0.6) {
+      return null;
+    }
+    const projection = drive2.x * normalX + drive2.y * normalY;
+    const transmitted = Math.min(impulse, projection);
+    if (transmitted < MIN_DRIVE_IMPULSE) return null;
+    drive2.x -= transmitted * normalX;
+    drive2.y -= transmitted * normalY;
+    return {
+      defender: drive2.defender,
+      blockers: [...drive2.blockers, teammate.key],
+      x: transmitted * normalX,
+      y: transmitted * normalY,
+      remaining: drive2.remaining
+    };
+  }
+  function resolveTeammateImpact(state2, blocker, teammate, normalX, normalY, approach, speed, impulse, mass2) {
+    if (!indirectContactActive(state2) || blocker.team !== 0 || teammate.team !== 0) {
+      return;
+    }
+    if (blocker === state2.ballCarrier) return;
+    const drive2 = transmittedDrive(
+      blocker,
+      teammate,
+      normalX,
+      normalY,
+      approach,
+      impulse
+    );
+    if (teammate !== state2.ballCarrier) {
+      if (drive2 && (!teammate.indirectDrive || Math.hypot(drive2.x, drive2.y) > Math.hypot(teammate.indirectDrive.x, teammate.indirectDrive.y))) {
+        teammate.indirectDrive = drive2;
+      }
+      return;
+    }
+    if (teammate.ground || speed < 1.1 || impulse < 45) return;
+    const causalImpulse = drive2 ? Math.hypot(drive2.x, drive2.y) : 0;
+    const facing = Math.cos(teammate.face || 0) * -normalX + Math.sin(teammate.face || 0) * -normalY;
+    const ratings = teammate.STR * 0.25 + teammate.AWR * 0.25 + teammate.AGI * 0.3 + teammate.STA * 0.2;
+    const stability = clamp(
+      0.58 + (ratings - 65) * 6e-3 + teammate.balance * 0.36 + facing * 0.07 - (teammate.airState ? 0.12 : 0),
+      0.58,
+      1.35
+    );
+    const severity = (drive2 ? causalImpulse : impulse * 0.44) / (mass2 * 3.6 * stability);
+    const before = teammate.balance;
+    const fall = drive2 ? severity > 1.12 && (before < 0.7 || severity > 1.42) : severity > 1.35 && before < 0.52;
+    const stagger = severity > (drive2 ? 0.52 : 0.8);
+    teammate.lastIndirectContact = {
+      kind: !drive2 ? "teammate-bump" : drive2.blockers.length > 2 ? "chain-collapse" : "driven-blocker",
+      blocker: blocker.key,
+      defender: drive2?.defender ?? null,
+      chain: drive2?.blockers.slice(0, -1) ?? [blocker.key],
+      impulse,
+      causalImpulse,
+      speed,
+      severity,
+      outcome: fall ? "fall" : stagger ? "stagger" : "deflect"
+    };
+    if (!stagger) return;
+    teammate.balance = clamp(before - severity * 0.14, 0.25, 1);
+    teammate.stumbleTime = Math.max(
+      teammate.stumbleTime || 0,
+      clamp(severity * 0.28, 0.16, 0.55)
+    );
+    if (fall) {
+      teammate.action = null;
+      teammate.airState = null;
+      teammate.sprinting = false;
+      teammate.ground = {
+        stage: "fall",
+        time: 0.17,
+        fall: 0.17,
+        rest: 0.32,
+        rise: 0.25,
+        age: 0,
+        from: blocker.key,
+        kind: "indirect-contact",
+        dir: Math.atan2(normalY, normalX),
+        severity
+      };
+    }
+  }
+
   // src/ai/carrier_obstacles.js
   var BLOCKER_POSITIONS = /* @__PURE__ */ new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
+  var BLOCKING_INTENTS = /* @__PURE__ */ new Set([
+    "block",
+    "user-block",
+    "run-block",
+    "edge-stalk",
+    "catch-block",
+    "catch-screen",
+    "lead-return-block",
+    "return-block"
+  ]);
   var PAD_MARGIN = 0.14;
   function reactionTiming(runner) {
     const awareness = clamp(
@@ -7373,7 +7504,7 @@
     });
   }
   function readCarrierObstacle(runner, state2, radius, dt, fieldWidth) {
-    if (state2.selectedPlay !== "inside" || state2.specialState || state2.suppressManualUntilNeutral || runner.pos !== "RB" || runner.vx < 1.8 || runner.stun > 0 || runner.action || runner.ground || runner.airState || runner.stumbleTime > 0 || state2.tackleLinks.size) {
+    if (state2.suppressManualUntilNeutral || runner.vx < 1.8 || runner.stun > 0 || runner.action || runner.ground || runner.airState || runner.stumbleTime > 0 || state2.tackleLinks.size) {
       if (runner.carrierObstacle) runner.carrierObstacle = null;
       return null;
     }
@@ -7381,18 +7512,20 @@
     const { lookAhead, delay } = reactionTiming(runner);
     let threat2 = null;
     for (const blocker2 of state2.off) {
-      if (blocker2 === runner || !BLOCKER_POSITIONS.has(blocker2.pos) || blocker2.ground || blocker2.indirectDrive || state2.blockLinks.has(blocker2.key) || Math.hypot(blocker2.vx, blocker2.vy) > 1.15)
+      if (blocker2 === runner || !BLOCKER_POSITIONS.has(blocker2.pos) && !BLOCKING_INTENTS.has(blocker2.intent) && !state2.blockLinks.has(blocker2.key) || blocker2.ground || blocker2.airState || blocker2.indirectDrive && Math.hypot(blocker2.indirectDrive.x, blocker2.indirectDrive.y) >= MIN_DRIVE_IMPULSE || blocker2.vx < -0.45)
         continue;
       const clearance3 = radius(runner) + radius(blocker2) + PAD_MARGIN;
       const dx = blocker2.x - runner.x;
       const closing = runner.vx - blocker2.vx;
-      const time2 = (dx - clearance3) / closing;
-      if (dx <= 0 || closing < 1.2 || time2 < 0 || time2 > lookAhead || threat2 && time2 >= threat2.time)
+      const committed = previous?.key === blocker2.key && previous.side;
+      const approachTime = (dx - clearance3) / closing;
+      const time2 = Math.max(0, approachTime);
+      if (dx <= 0 || closing < 1.2 || !committed && approachTime < 0 || time2 > lookAhead || threat2 && time2 >= threat2.time)
         continue;
       const offset = blocker2.y - runner.y;
+      const fromBehind = dx * Math.cos(blocker2.face) + offset * Math.sin(blocker2.face) > 0;
       const intercept2 = offset + (blocker2.vy - runner.vy) * time2;
-      const committed = previous?.key === blocker2.key && previous.side;
-      if (Math.abs(offset) > clearance3 + 0.42 || !committed && Math.abs(intercept2) >= clearance3 || !canSeeBlocker(runner, blocker2, state2.players, radius))
+      if (!committed && !fromBehind || committed && Math.abs(offset) > clearance3 + 0.42 || !committed && Math.abs(intercept2) >= clearance3 || !canSeeBlocker(runner, blocker2, state2.players, radius))
         continue;
       threat2 = { blocker: blocker2, clearance: clearance3, time: time2, intercept: intercept2 };
     }
@@ -7404,7 +7537,7 @@
     const read = previous?.key === blocker.key ? previous : { key: blocker.key, elapsed: 0, side: 0, steeringTime: 0 };
     if (read === previous) read.elapsed += dt;
     runner.carrierObstacle = read;
-    if (read.elapsed < delay || time < 0.11) return null;
+    if (!read.side && (read.elapsed < delay || time < 0.11)) return null;
     const agility = clamp((runner.AGI - 30) / 69, 0, 1);
     const steeringLimit = (0.23 + 0.55 * agility) * clamp(runner.balance, 0.45, 1);
     const side = intercept >= 0 ? -1 : 1;
@@ -7464,9 +7597,9 @@
       }
       const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
       const dx = Math.max(2, aheadX - p.x);
-      const avoidingDefender = inFront || p.intent === "cutback";
-      if (avoidingDefender && p.carrierObstacle) p.carrierObstacle = null;
-      const obstacle = avoidingDefender ? null : readCarrierObstacle(p, matchState, radius, dt, H2);
+      const cuttingBack = p.intent === "cutback";
+      if (cuttingBack && p.carrierObstacle) p.carrierObstacle = null;
+      const obstacle = cuttingBack ? null : readCarrierObstacle(p, matchState, radius, dt, H2);
       const dy = obstacle ? dx * obstacle.slope : (targetY - p.y) * 2;
       if (obstacle) p.intentTarget = obstacle.key;
       steer(p, dx, dy, dt, 1.02);
@@ -8144,127 +8277,6 @@
       groundContact,
       tickGround
     };
-  }
-
-  // src/physics/indirect_contact.js
-  var DRIVE_LIFETIME = 0.14;
-  var MIN_DRIVE_IMPULSE = 30;
-  var LINE_BLOCKERS = /* @__PURE__ */ new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
-  function indirectContactActive(state2) {
-    return state2.phase === "live" && state2.selectedPlay === "inside" && !state2.specialState && state2.ballCarrier?.team === 0;
-  }
-  function ageIndirectDrive(player, dt) {
-    const drive2 = player.indirectDrive;
-    if (!drive2) return;
-    drive2.remaining -= dt;
-    if (drive2.remaining <= 0) player.indirectDrive = null;
-  }
-  function recordDefenderDrive(state2, blocker, defender, x, y, engaged = false) {
-    if (!indirectContactActive(state2) || blocker.team !== 0 || defender.team !== 1 || blocker === state2.ballCarrier || x >= 0 || !engaged && !LINE_BLOCKERS.has(blocker.pos)) {
-      return;
-    }
-    const impulse = Math.hypot(x, y);
-    if (impulse < (engaged ? 2 : MIN_DRIVE_IMPULSE)) return;
-    const previous = blocker.indirectDrive;
-    if (previous?.defender === defender.key && previous.blockers.length === 1) {
-      const retained = previous.remaining / DRIVE_LIFETIME;
-      x += previous.x * retained;
-      y += previous.y * retained;
-    } else if (previous && Math.hypot(previous.x, previous.y) > impulse) {
-      return;
-    }
-    blocker.indirectDrive = {
-      defender: defender.key,
-      blockers: [blocker.key],
-      x,
-      y,
-      remaining: DRIVE_LIFETIME
-    };
-  }
-  function transmittedDrive(blocker, teammate, normalX, normalY, approach, impulse) {
-    const drive2 = blocker.indirectDrive;
-    if (!drive2 || drive2.blockers.includes(teammate.key) || approach < 0.6) {
-      return null;
-    }
-    const projection = drive2.x * normalX + drive2.y * normalY;
-    const transmitted = Math.min(impulse, projection);
-    if (transmitted < MIN_DRIVE_IMPULSE) return null;
-    drive2.x -= transmitted * normalX;
-    drive2.y -= transmitted * normalY;
-    return {
-      defender: drive2.defender,
-      blockers: [...drive2.blockers, teammate.key],
-      x: transmitted * normalX,
-      y: transmitted * normalY,
-      remaining: drive2.remaining
-    };
-  }
-  function resolveTeammateImpact(state2, blocker, teammate, normalX, normalY, approach, speed, impulse, mass2) {
-    if (!indirectContactActive(state2) || blocker.team !== 0 || teammate.team !== 0) {
-      return;
-    }
-    if (blocker === state2.ballCarrier) return;
-    const drive2 = transmittedDrive(
-      blocker,
-      teammate,
-      normalX,
-      normalY,
-      approach,
-      impulse
-    );
-    if (teammate !== state2.ballCarrier) {
-      if (drive2 && (!teammate.indirectDrive || Math.hypot(drive2.x, drive2.y) > Math.hypot(teammate.indirectDrive.x, teammate.indirectDrive.y))) {
-        teammate.indirectDrive = drive2;
-      }
-      return;
-    }
-    if (teammate.ground || speed < 1.1 || impulse < 45) return;
-    const causalImpulse = drive2 ? Math.hypot(drive2.x, drive2.y) : 0;
-    const facing = Math.cos(teammate.face || 0) * -normalX + Math.sin(teammate.face || 0) * -normalY;
-    const ratings = teammate.STR * 0.25 + teammate.AWR * 0.25 + teammate.AGI * 0.3 + teammate.STA * 0.2;
-    const stability = clamp(
-      0.58 + (ratings - 65) * 6e-3 + teammate.balance * 0.36 + facing * 0.07 - (teammate.airState ? 0.12 : 0),
-      0.58,
-      1.35
-    );
-    const severity = (drive2 ? causalImpulse : impulse * 0.44) / (mass2 * 3.6 * stability);
-    const before = teammate.balance;
-    const fall = drive2 ? severity > 1.12 && (before < 0.7 || severity > 1.42) : severity > 1.35 && before < 0.52;
-    const stagger = severity > (drive2 ? 0.52 : 0.8);
-    teammate.lastIndirectContact = {
-      kind: !drive2 ? "teammate-bump" : drive2.blockers.length > 2 ? "chain-collapse" : "driven-blocker",
-      blocker: blocker.key,
-      defender: drive2?.defender ?? null,
-      chain: drive2?.blockers.slice(0, -1) ?? [blocker.key],
-      impulse,
-      causalImpulse,
-      speed,
-      severity,
-      outcome: fall ? "fall" : stagger ? "stagger" : "deflect"
-    };
-    if (!stagger) return;
-    teammate.balance = clamp(before - severity * 0.14, 0.25, 1);
-    teammate.stumbleTime = Math.max(
-      teammate.stumbleTime || 0,
-      clamp(severity * 0.28, 0.16, 0.55)
-    );
-    if (fall) {
-      teammate.action = null;
-      teammate.airState = null;
-      teammate.sprinting = false;
-      teammate.ground = {
-        stage: "fall",
-        time: 0.17,
-        fall: 0.17,
-        rest: 0.32,
-        rise: 0.25,
-        age: 0,
-        from: blocker.key,
-        kind: "indirect-contact",
-        dir: Math.atan2(normalY, normalX),
-        severity
-      };
-    }
   }
 
   // src/ai/blocking_policy.js

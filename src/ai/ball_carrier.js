@@ -96,9 +96,9 @@ export function createBallCarrierAI() {
     }
     const aheadX = Math.max(p.x + 9, matchState.playStart + 10);
     const dx = Math.max(2, aheadX - p.x);
-    const avoidingDefender = inFront || p.intent === "cutback";
-    if (avoidingDefender && p.carrierObstacle) p.carrierObstacle = null;
-    const obstacle = avoidingDefender
+    const cuttingBack = p.intent === "cutback";
+    if (cuttingBack && p.carrierObstacle) p.carrierObstacle = null;
+    const obstacle = cuttingBack
       ? null
       : readCarrierObstacle(p, matchState, radius, dt, H);
     // Use ordinary steering/traction. The collision solver still owns every impact.

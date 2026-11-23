@@ -1,7 +1,7 @@
 import { clamp } from "../core/math.js";
 
 const DRIVE_LIFETIME = 0.14;
-const MIN_DRIVE_IMPULSE = 30;
+export const MIN_DRIVE_IMPULSE = 30;
 const LINE_BLOCKERS = new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
 
 export function indirectContactActive(state) {

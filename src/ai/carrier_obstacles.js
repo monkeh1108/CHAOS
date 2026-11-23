@@ -1,6 +1,17 @@
 import { clamp } from "../core/math.js";
+import { MIN_DRIVE_IMPULSE } from "../physics/indirect_contact.js";
 
 const BLOCKER_POSITIONS = new Set(["LT", "LG", "C", "RG", "RT", "TE", "FB"]);
+const BLOCKING_INTENTS = new Set([
+  "block",
+  "user-block",
+  "run-block",
+  "edge-stalk",
+  "catch-block",
+  "catch-screen",
+  "lead-return-block",
+  "return-block",
+]);
 const PAD_MARGIN = 0.14;
 
 function reactionTiming(runner) {
@@ -53,10 +64,7 @@ function laneIsOpen(runner, blocker, players, radius, time, targetY) {
 
 export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
   if (
-    state.selectedPlay !== "inside" ||
-    state.specialState ||
     state.suppressManualUntilNeutral ||
-    runner.pos !== "RB" ||
     runner.vx < 1.8 ||
     runner.stun > 0 ||
     runner.action ||
@@ -72,34 +80,44 @@ export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
   const previous = runner.carrierObstacle;
   const { lookAhead, delay } = reactionTiming(runner);
   let threat = null;
+  // Start a read from behind a teammate. A blocker being driven back stays a
+  // physical impact, even when the runner sees it coming.
   for (const blocker of state.off) {
     if (
       blocker === runner ||
-      !BLOCKER_POSITIONS.has(blocker.pos) ||
+      (!BLOCKER_POSITIONS.has(blocker.pos) &&
+        !BLOCKING_INTENTS.has(blocker.intent) &&
+        !state.blockLinks.has(blocker.key)) ||
       blocker.ground ||
-      blocker.indirectDrive ||
-      state.blockLinks.has(blocker.key) ||
-      Math.hypot(blocker.vx, blocker.vy) > 1.15
+      blocker.airState ||
+      (blocker.indirectDrive &&
+        Math.hypot(blocker.indirectDrive.x, blocker.indirectDrive.y) >=
+          MIN_DRIVE_IMPULSE) ||
+      blocker.vx < -0.45
     )
       continue;
 
     const clearance = radius(runner) + radius(blocker) + PAD_MARGIN;
     const dx = blocker.x - runner.x;
     const closing = runner.vx - blocker.vx;
-    const time = (dx - clearance) / closing;
+    const committed = previous?.key === blocker.key && previous.side;
+    const approachTime = (dx - clearance) / closing;
+    const time = Math.max(0, approachTime);
     if (
       dx <= 0 ||
       closing < 1.2 ||
-      time < 0 ||
+      (!committed && approachTime < 0) ||
       time > lookAhead ||
       (threat && time >= threat.time)
     )
       continue;
     const offset = blocker.y - runner.y;
+    const fromBehind =
+      dx * Math.cos(blocker.face) + offset * Math.sin(blocker.face) > 0;
     const intercept = offset + (blocker.vy - runner.vy) * time;
-    const committed = previous?.key === blocker.key && previous.side;
     if (
-      Math.abs(offset) > clearance + 0.42 ||
+      (!committed && !fromBehind) ||
+      (committed && Math.abs(offset) > clearance + 0.42) ||
       (!committed && Math.abs(intercept) >= clearance) ||
       !canSeeBlocker(runner, blocker, state.players, radius)
     )
@@ -119,7 +137,7 @@ export function readCarrierObstacle(runner, state, radius, dt, fieldWidth) {
       : { key: blocker.key, elapsed: 0, side: 0, steeringTime: 0 };
   if (read === previous) read.elapsed += dt;
   runner.carrierObstacle = read;
-  if (read.elapsed < delay || time < 0.11) return null;
+  if (!read.side && (read.elapsed < delay || time < 0.11)) return null;
 
   const agility = clamp((runner.AGI - 30) / 69, 0, 1);
   const steeringLimit =

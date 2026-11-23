@@ -1,33 +1,39 @@
 # Task 006 carrier awareness
 
-On Inside Zone, automatic running can steer an RB around a nearly stationary,
-unengaged teammate. The runner needs a forward view of the blocker, time to
-react, and enough room on one side. Awareness and any existing vision rating
-set the look-ahead and reaction delay. Agility and current balance cap the
-steering request. The ordinary movement step still applies acceleration,
-traction, body mass, and the speed cap.
+An automatically controlled ball carrier can steer around a visible teammate
+he is catching from behind. The same read works on handoffs, catches,
+scrambles, and kick returns. Moving blockers can qualify, including a
+blocker holding an engagement or a receiver blocking downfield. A blocker
+moving backward into the runner or carrying enough defender impulse to
+transfer it to the runner is excluded. Inside Zone still uses Task 005 to
+resolve the actual impact when contact happens.
+
+Awareness and any existing vision rating set the look-ahead and reaction delay.
+Agility and balance cap the turn. Closing speed determines how much time
+the runner has, and the intended side needs room. The normal movement step
+applies acceleration, traction, body mass, and the speed cap. A partial or
+late turn can still end in contact.
 
 Deliberate stick or keyboard movement takes control immediately. Releasing
-movement after taking control keeps the existing coast/brake behavior. An
-engaged or defender-driven blocker remains part of Task 005's physical contact
-logic. The sidestep can be late or too small to prevent a bump.
+movement after taking control keeps the existing coast and brake behavior.
 
 ## Playtest checklist
 
-1. Call Inside Zone and leave the movement controls neutral through the handoff.
-   Across several plays, watch whether the RB starts a small turn before an
-   open-side teammate bump. Repeat with both sides crowded and look for normal
-   contact when there is no usable gap.
-2. Run Inside Zone again and steer deliberately toward a chosen lane after the
-   handoff. Check that the RB follows that input. Release movement and check that
-   the runner coasts or brakes as before.
-3. Watch an inside play where a defender drives a blocker into the runner. The
-   physical bump, stagger, or fall should still follow the contact. Review
-   repeated plays to judge how often the reaction occurs in a full lineup.
-4. Compare a normal approach to a quicker one. The quicker approach can leave
-   too little time to clear the blocker, even when the runner starts turning.
+1. Call Stretch from the default formation. Snap and leave movement neutral
+   through the handoff. Watch the runner start to turn away from the center.
+   Power and Counter can offer a similar read on a guard.
+2. Try Inside Zone with the same neutral input. In congestion, the runner may
+   start turning and still brush the blocker. When both sides close, normal
+   contact should decide what happens.
+3. Try a catch or a kick return with neutral movement and watch for the same
+   turn when the carrier catches up to a blocker from behind. Automatic
+   movement can apply the same read during a CPU scramble.
+4. Steer deliberately after the handoff and check that the carrier follows
+   your input. Release movement and check that he coasts or brakes as before.
+5. Watch an Inside Zone block where a defender drives the blocker backward.
+   The physical bump, stagger, or fall should still follow the contact.
 
-The current build uses ordinary turning and footwork to show the sidestep.
-Specific hand placement or bracing poses are outside this phase. Controlled tests
-cover ratings, timing, and collisions in fixed geometry. Natural play frequency
-and animation readability still need this playtest.
+The sidestep uses ordinary turning and footwork. Seeded 22-player replays
+exercise real pre-contact turns on runs. Controlled pass and kickoff
+encounters exercise the same decision for other carriers. Use the checklist
+to judge readability and frequency in your own games.
