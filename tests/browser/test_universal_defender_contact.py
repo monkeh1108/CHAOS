@@ -1,5 +1,9 @@
 def test_universal_defender_contact(browser_session, standalone_html):
-    html=standalone_html
+    # The test supplies its own contact tick. Letting animation frames move
+    # the players between positioning and impact changes the collision geometry.
+    html=standalone_html.replace(
+     '<script>', '<script>window.requestAnimationFrame = () => 0;</script><script>', 1,
+    )
     with browser_session(headless=True, args=['--no-sandbox']) as b:
      p=b.new_page();errors=[];p.on('pageerror',lambda e:errors.append(str(e)))
      p.set_content(html,wait_until='load')
@@ -8,7 +12,8 @@ def test_universal_defender_contact(browser_session, standalone_html):
      p.evaluate('''()=>{
   const g=GRIDIRON_DEBUG, state=g.getState();
   for(const player of state.players){if(player.key!=='MLB'&&player.key!=='WR1')g.debugMovePlayer(player.key,player.team===0?20:100,player.team===0?5:48);}
-  g.debugMovePlayer('MLB',75,26);g.debugMovePlayer('WR1',75.9,26);
+  g.debugMovePlayer('MLB',75,26);g.debugMovePlayer('WR1',75.75,26);
+  g.debugSetDefenderState('MLB',{face:0});
   g.debugSetVelocity('MLB',6,0);g.debugSetVelocity('WR1',0,0);
  }''')
      # Directly test manually committed hit-stick through stick direction.

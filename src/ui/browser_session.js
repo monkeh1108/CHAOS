@@ -1230,6 +1230,8 @@ export function attachGameBrowser(session) {
       return status;
     },
     getSheetItems: playbook.getSheetItems,
+    moveSheetFocus,
+    chooseSheetFocused,
     refreshPauseUI,
     render,
     getVisual,

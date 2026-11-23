@@ -25,7 +25,11 @@ def test_camera_gaps_toss(browser_session, standalone_html):
       assert toss['firstHalfReceiver']!=toss['secondHalfReceiver']
       # Deterministic defensive pre-snap scene after the toss.
       page.evaluate('GRIDIRON_DEBUG.reset();GRIDIRON_DEBUG.debugDefensePresnap()')
-      page.wait_for_timeout(90)
+      page.wait_for_function("""() => {
+       const game = GRIDIRON_DEBUG;
+       const visual = game.getVisual();
+       return visual?.presnapView && Math.abs(visual.focusX - game.getState().yard) < .05;
+      }""")
       assert page.evaluate('GRIDIRON_DEBUG.getState().controlMode')=='defense'
       before=page.evaluate('GRIDIRON_DEBUG.getVisual()')
       assert before and before['presnapView'] and before['desiredZoom']==1.4,before
