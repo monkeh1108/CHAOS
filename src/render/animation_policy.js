@@ -96,6 +96,21 @@ export function runningBody(cycle) {
   };
 }
 
+// Presentation offsets around the existing waist and collar pivots. Running
+// keeps its tested rotation; planted stances let the chest and helmet lift
+// independently while the root and hips remain where the stance places them.
+export function upperBodyArticulation(pose, running, gait, cutWeight) {
+  const stanceLean = pose.stance ? Math.max(0, -pose.stanceLean) : 0;
+  return {
+    pelvisYaw: running ? running.pelvisYaw * gait * (1 - cutWeight) : 0,
+    chestYaw: running ? -running.pelvisYaw * 0.8 * gait : 0,
+    chestPitch: running
+      ? -running.lean * gait
+      : limit(stanceLean * 0.16, 0, 0.055),
+    neckPitch: limit(stanceLean * 0.48, 0, 0.18),
+  };
+}
+
 export function runningWeight(p, pose, cutting = false) {
   // Keep the established poses for a plant, contact, or special action.
   if (
