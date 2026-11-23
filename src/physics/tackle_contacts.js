@@ -153,6 +153,7 @@ export function createTackleContacts() {
           anatomical || ChaosContactOutcomes.evaluate(a, d);
         // Preserve real pre-separation body evidence when post-solver geometry no
         // longer intersects. This never turns bare proximity into a tackle.
+        const padImpact = physicalContact?.padImpact;
         const contactState =
           physicalContact &&
           (!currentContact.bodyContact ||
@@ -178,7 +179,7 @@ export function createTackleContacts() {
         // stable standing-wrap solver until its full-body geometry is calibrated.
         if (
           (committedDive && contactState.kind === "miss" && !swept) ||
-          (contactState.kind === "light contact" && !swept)
+          (contactState.kind === "light contact" && !swept && !padImpact)
         ) {
           report?.push({
             defender: d.key,
@@ -189,6 +190,7 @@ export function createTackleContacts() {
           continue;
         }
         const hit = tackleLeverage(a, d);
+        if (padImpact) hit.impulse = Math.max(hit.impulse, padImpact.impulse);
         const style = tackleStyle(a, d, hit);
         if (style === "cut" && !d.action)
           d.action = { kind: "cut-stick", time: 0.4, age: 0, used: false };
@@ -241,19 +243,23 @@ export function createTackleContacts() {
               : style === "dive"
                 ? -clamp((95 - d.TAK) * 0.0025, 0.015, 0.13)
                 : 0;
-        const placementQuality = ChaosGripAttachment.contactQuality(
+        const anatomicalQuality = ChaosGripAttachment.contactQuality(
           contactState,
           d,
           hit,
           style,
         );
+        const placementQuality = padImpact
+          ? Math.max(anatomicalQuality, 0.65 + 0.12 * padImpact.alignment)
+          : anatomicalQuality;
+        const padGrip = padImpact ? clamp(0.39 + (d.TAK - 60) * 0.004, 0.34, 0.54) : 0.055;
         const handPosition = clamp(
           (0.24 +
             hit.advantage * 0.011 +
             (style === "hit" ? 0.05 : 0) +
             techniqueBonus) *
             (0.72 + 0.28 * placementQuality),
-          0.055,
+          padGrip,
           0.72,
         );
         if (

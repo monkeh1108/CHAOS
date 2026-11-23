@@ -236,6 +236,15 @@ export function createTackleResolution() {
       finishTackle(a, contacts, "Textbook secured wrap");
       return;
     }
+    // A stumble leaves the ball live. An attached, close defender can finish
+    // sooner when the runner is still trying to regain a planted base.
+    if (scrimmage && a.stumbleTime > 0 && a.balance < 0.84 &&
+        contacts.some(({ t, d }) =>
+          t.age >= 0.23 && t.grip >= 0.58 && t.quality >= 0.63 &&
+          dist(a, d) <= radius(a) + radius(d) + 0.28)) {
+      finishTackle(a, contacts, "Wrapped while stumbling");
+      return;
+    }
     const oldest = Math.max(...contacts.map((c) => c.t.age));
     // Rear-angle drag: once a pursuing defender gets hands onto a runner and
     // maintains a secure grip, forward momentum should not endlessly tow him.

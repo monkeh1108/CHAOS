@@ -1389,12 +1389,13 @@
         }
         if (touching && !linkActive && d.blocked < 0.25) {
           const currentContact = anatomical || ChaosContactOutcomes.evaluate(a, d);
+          const padImpact = physicalContact?.padImpact;
           const contactState = physicalContact && (!currentContact.bodyContact || physicalContact.penetration > currentContact.penetration) ? physicalContact : currentContact;
           const swept = ChaosContactEvidence2.history().slice(-12).some(
             (e) => e.pair.includes(a.key) && e.pair.includes(d.key) && matchState.playClock - e.time >= 0 && matchState.playClock - e.time < 0.075 && e.penetration >= 0.095
           );
           const committedDive2 = d.action?.kind === "tackle-dive" && d.action.time > 0;
-          if (committedDive2 && contactState.kind === "miss" && !swept || contactState.kind === "light contact" && !swept) {
+          if (committedDive2 && contactState.kind === "miss" && !swept || contactState.kind === "light contact" && !swept && !padImpact) {
             report?.push({
               defender: d.key,
               reason: contactState.kind === "miss" ? "missed dive" : "light contact",
@@ -1403,6 +1404,7 @@
             continue;
           }
           const hit = tackleLeverage(a, d);
+          if (padImpact) hit.impulse = Math.max(hit.impulse, padImpact.impulse);
           const style = tackleStyle(a, d, hit);
           if (style === "cut" && !d.action)
             d.action = { kind: "cut-stick", time: 0.4, age: 0, used: false };
@@ -1443,15 +1445,17 @@
               category: contactState.kind
             };
           const techniqueBonus = style === "cut" ? clamp((d.TAK - 70) * 3e-3 - (a.w - 220) * 3e-4, -0.06, 0.12) : d.conservativeHeld || d.conservativeUntil > matchState.playClock || d.action?.kind === "conservative" ? DefensiveControls.conservativeGrip(d.TAK) : style === "dive" ? -clamp((95 - d.TAK) * 25e-4, 0.015, 0.13) : 0;
-          const placementQuality = ChaosGripAttachment.contactQuality(
+          const anatomicalQuality = ChaosGripAttachment.contactQuality(
             contactState,
             d,
             hit,
             style
           );
+          const placementQuality = padImpact ? Math.max(anatomicalQuality, 0.65 + 0.12 * padImpact.alignment) : anatomicalQuality;
+          const padGrip = padImpact ? clamp(0.39 + (d.TAK - 60) * 4e-3, 0.34, 0.54) : 0.055;
           const handPosition = clamp(
             (0.24 + hit.advantage * 0.011 + (style === "hit" ? 0.05 : 0) + techniqueBonus) * (0.72 + 0.28 * placementQuality),
-            0.055,
+            padGrip,
             0.72
           );
           if (d.action && ["hit-stick", "cut-stick", "conservative", "tackle-dive"].includes(
@@ -8887,14 +8891,19 @@
           }
         }
       }
+      const relX = b.vx - a.vx;
+      const relY = b.vy - a.vy;
+      const closing = relX * nx + relY * ny;
       if (pass === 0 && matchState.ballCarrier && a.team !== b.team && !a.ground && !b.ground && (a === matchState.ballCarrier || b === matchState.ballCarrier)) {
-        const runner = a === matchState.ballCarrier ? a : b, defender = runner === a ? b : a;
+        const runner = a === matchState.ballCarrier ? a : b;
+        const defender = runner === a ? b : a;
+        const sign = defender === a ? 1 : -1;
+        const facing = (Math.cos(defender.face) * nx + Math.sin(defender.face) * ny) * sign;
+        const aligned = -closing / Math.max(0.01, Math.hypot(relX, relY));
+        const padImpact = !matchState.specialState && !["tackle-dive", "cut-stick"].includes(defender.action?.kind) && closing < -1.25 && aligned > 0.68 && facing > 0.23 ? { alignment: aligned, impulse: -closing * YARD_M2 / (invA + invB) } : null;
         const body = ChaosContactOutcomes.evaluate(runner, defender);
-        if (body.bodyContact && body.penetration >= 0.095) {
-          const old = matchState.liveTackleContacts.get(defender.key);
-          if (!old || body.penetration > old.penetration)
-            matchState.liveTackleContacts.set(defender.key, body);
-        }
+        if (padImpact || body.bodyContact && body.penetration >= 0.095)
+          matchState.liveTackleContacts.set(defender.key, { ...body, padImpact });
       }
       const penetration = Math.max(0, minSep - sep);
       const candidate = !a.ground && !b.ground && a.team !== b.team && matchState.ballCarrier && (a === matchState.ballCarrier || b === matchState.ballCarrier) ? ChaosSquareContact.classify(a, b, nx, ny) : null;
@@ -8924,7 +8933,6 @@
         b.x += nx * correction2 * invB / (invA + invB);
         b.y += ny * correction2 * invB / (invA + invB);
       }
-      const relX = b.vx - a.vx, relY = b.vy - a.vy, closing = relX * nx + relY * ny;
       if (closing >= -0.025) return penetration > 0;
       const tracksDrive = indirectContactActive(matchState);
       const approachA = tracksDrive ? a.vx * nx + a.vy * ny : 0;
@@ -10020,6 +10028,10 @@
       );
       if (textbook) {
         finishTackle(a, contacts2, "Textbook secured wrap");
+        return;
+      }
+      if (scrimmage && a.stumbleTime > 0 && a.balance < 0.84 && contacts2.some(({ t, d }) => t.age >= 0.23 && t.grip >= 0.58 && t.quality >= 0.63 && distance2D(a, d) <= radius(a) + radius(d) + 0.28)) {
+        finishTackle(a, contacts2, "Wrapped while stumbling");
         return;
       }
       const oldest = Math.max(...contacts2.map((c) => c.t.age));

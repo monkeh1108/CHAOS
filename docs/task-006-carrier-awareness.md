@@ -92,3 +92,20 @@ can still win that contest again if leverage, balance and stamina allow it.
 For coverage, try Verticals in the red zone and watch the safeties stay behind
 the routes while the corners close underneath. For tackling, compare ordinary
 backs with high-strength and high-trucking backs against the same defense.
+
+## Pad contact and stumbles
+
+A substantial, aligned standing pad collision on a scrimmage play gives the
+defender evidence for a tackle attempt even when torso separation prevents
+the standing arm capsules from overlapping. The defender must still be
+eligible to tackle and has to maintain his grip. A graze or a gap between
+players cannot use that path.
+
+A low contact that produces a stumble leaves the ball live and does not
+award a broken tackle. Another defender who physically establishes a grip
+can finish the tackle while the runner is recovering his balance.
+
+For a playtest, run squarely into an upright defender without using a move.
+Then try cutting past a defender's outside shoulder. A solid collision
+should produce a wrap attempt, while a glancing touch can leave the runner
+upright. An ankle clip can buy the next defender time to finish the tackle.
