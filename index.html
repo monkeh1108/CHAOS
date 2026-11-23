@@ -847,6 +847,57 @@
     t = limit(t, 0, 1);
     return t * t * (3 - 2 * t);
   };
+  var thighLength = Math.hypot(0.03, 0.48);
+  var thighOffset = Math.atan2(0.03, 0.48);
+  var shinLength = 0.405;
+  var strideEffort = (speed) => ease2((speed - 2.5) / 4.8);
+  function runningCycle(travel, speed, scale, previous) {
+    const stride = (1.4 + 0.68 * strideEffort(speed)) * scale;
+    const phase = previous && travel >= previous.travel ? previous.phase + (travel - previous.travel) / stride : travel / stride;
+    return { travel, phase: phase % 1, stride };
+  }
+  function runningWeight(p, pose2) {
+    if (pose2.action || pose2.air || pose2.ground || pose2.stance || pose2.plant || p.airState || p.stumbleTime > 0 || pose2.standUp > 0.05 || pose2.escapePulse > 0 || pose2.blockArms || pose2.escapeStrain > 0.12)
+      return 0;
+    const forward = (p.vx || 0) * Math.cos(p.face) + (p.vy || 0) * Math.sin(p.face);
+    return ease2((pose2.speed - 0.7) / 2.4) * ease2((forward / Math.max(0.01, pose2.speed) - 0.28) / 0.54);
+  }
+  function runningLeg(cycle, speed, side, scale, hip) {
+    const effort = strideEffort(speed);
+    const support = 0.56 - 0.11 * effort;
+    const phase = (cycle.phase + (side > 0 ? 0.5 : 0)) % 1;
+    const swing = limit((phase - support) / (1 - support), 0, 1);
+    const rollOff = 0.36 + 0.26 * effort;
+    const pitch = phase < support ? 0.12 * (1 - ease2(phase / 0.13)) - rollOff * ease2((phase / support - 0.57) / 0.43) : -rollOff + (rollOff + 0.12) * ease2(swing);
+    const x = cycle.stride / scale * (support * 0.5 - phase + ease2(swing)) - (0.025 + 0.035 * effort);
+    const lift = (0.145 + 0.17 * effort) * Math.sin(Math.PI * swing) ** 2 * (1.17 - 0.34 * swing);
+    const sole = Math.hypot(0.185 * Math.sin(pitch), 0.0725 * Math.cos(pitch)) - 0.12 * Math.sin(pitch);
+    const y = ((sole + lift) * scale - hip[13] - hip[1] * x) / hip[5];
+    const distance2 = limit(
+      Math.hypot(x, y),
+      0.21,
+      thighLength + shinLength - 2e-3
+    );
+    const hipAngle = Math.atan2(x, -y) + Math.acos(
+      limit(
+        (thighLength ** 2 + distance2 ** 2 - shinLength ** 2) / (2 * thighLength * distance2),
+        -1,
+        1
+      )
+    ) - thighOffset;
+    const knee = -Math.acos(
+      limit(
+        (distance2 ** 2 - thighLength ** 2 - shinLength ** 2) / (2 * thighLength * shinLength),
+        -1,
+        1
+      )
+    ) + thighOffset;
+    return {
+      hip: hipAngle,
+      knee,
+      ankle: pitch - hipAngle - knee - Math.atan2(hip[1], hip[5])
+    };
+  }
   function preSnapStance(p) {
     const pos = p.pos || "";
     if (["LT", "LG", "C", "RG", "RT", "OL", "DT", "NT", "DE", "EDGE"].includes(pos))
@@ -13793,6 +13844,7 @@
       if (rec && rec !== selected)
         groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
     }
+    const strideCycles = /* @__PURE__ */ new WeakMap();
     function player(p, clock, selected, carrier, contacts2, possession, presnap, blockOpponent) {
       const s = (p.h || 74) / 74, breadth = Math.max(0.76, Math.min(1.4, (p.w || 205) / 215));
       const partner = blockOpponent?.get(p.key);
@@ -13803,6 +13855,10 @@
       const involved = contacts2?.has(p.key) || p.pushing;
       const pose2 = AnimationPolicy.sample(p, involved, presnap);
       const run = pose2.run * (1 - (pose2.standUp || 0) * 0.65), step3 = pose2.cycle, bob = pose2.bob;
+      const gait = involved || presnap ? 0 : runningWeight(p, pose2);
+      const previousCycle = strideCycles.get(p);
+      const cycle = gait > 0 || previousCycle ? runningCycle(p.travel || 0, pose2.speed, s, previousCycle) : null;
+      if (cycle) strideCycles.set(p, cycle);
       if (ground) {
         const fall = ground.stage === "fall" ? Math.min(1, (ground.age || 0) / Math.max(0.05, ground.fall || 0.25)) : 1;
         const up = rising ? Math.max(
@@ -13816,7 +13872,7 @@
         root = mul(root, rotZ(tilt));
         root = at(root, 0, ground.stage === "rise" ? 0.31 : 0.2, 0);
       } else {
-        root = at(root, 0, bob - pose2.crouch, 0);
+        root = at(root, 0, bob - pose2.crouch - gait * (0.067 * s + bob), 0);
         root = mul(root, rotZ(pose2.lean + pose2.stanceLean - pose2.impactAccent));
         root = mul(root, rotX(pose2.bank));
         root = mul(root, rotY(pose2.yaw));
@@ -13903,14 +13959,12 @@
       box(root, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
       for (const side of [-1, 1]) {
         let hip = at(root, 0, 0.87, side * 0.2 * breadth);
-        hip = mul(
-          hip,
-          rotZ(
-            (run ? side * legAmp * step3 : 0) + (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) + (pose2.stance === "three-point" ? 0.26 : pose2.stance === "coverage-ready" ? 0.13 : pose2.stance === "receiver" ? 0.16 : 0) + (hurdle || dive ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT)) : 0) + (rise > 0 ? -0.22 * arc : 0) + (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0)
-          )
-        );
+        const leg = gait > 0 ? runningLeg(cycle, pose2.speed, side, s, hip) : null;
+        const hipSwing = (run ? side * legAmp * step3 : 0) + (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) + (pose2.stance === "three-point" ? 0.26 : pose2.stance === "coverage-ready" ? 0.13 : pose2.stance === "receiver" ? 0.16 : 0) + (hurdle || dive ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT)) : 0) + (rise > 0 ? -0.22 * arc : 0) + (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
+        hip = mul(hip, rotZ(hipSwing * (1 - gait) + (leg?.hip || 0) * gait));
         const kneePivot = at(hip, 0.03, -0.48, 0);
-        const kneeBend = (run ? Math.abs(step3 * legAmp) * 0.5 : 0) + (pose2.stance ? 0.2 : 0) + (ground ? groundFold * 0.72 : 0) + (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) + (rise > 0 ? 0.3 * arc : 0);
+        const baseKnee = (run ? Math.abs(step3 * legAmp) * 0.5 : 0) + (pose2.stance ? 0.2 : 0) + (ground ? groundFold * 0.72 : 0) + (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) + (rise > 0 ? 0.3 * arc : 0);
+        const kneeBend = baseKnee * (1 - gait) + (leg?.knee || 0) * gait;
         drawLimb(
           meshes.leg,
           kneePivot,
@@ -13922,7 +13976,13 @@
           C.pants
         );
         const knee = mul(kneePivot, rotZ(kneeBend));
-        sphere(knee, [0.12, -0.405, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
+        const foot = at(knee, 0, -0.405, 0);
+        sphere(
+          leg ? mul(foot, rotZ(leg.ankle * gait)) : foot,
+          [0.12, 0, 0],
+          [0.37, 0.145, 0.225 * breadth],
+          C.shoe
+        );
         let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
         const stiffExtended = action === "stiff" && side < 0;
         const overhead = ["aggressive", "ball", "swat"].includes(aKind);

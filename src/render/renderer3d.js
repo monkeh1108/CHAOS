@@ -1,7 +1,12 @@
 import { RUN_LANDMARKS } from "../sim/match_config.js";
 import { ChaosDiveReach } from "../physics/dive_reach.js";
 import { ChaosLowContact } from "../physics/low_contact.js";
-import { AnimationPolicy } from "./animation_policy.js";
+import {
+  AnimationPolicy,
+  runningCycle,
+  runningLeg,
+  runningWeight,
+} from "./animation_policy.js";
 
 // Original lightweight WebGL renderer. No network, textures, assets, or
 // third-party packages. It only reads simulation state; never resolves contact.
@@ -576,6 +581,7 @@ export function createGridironRenderer(canvas) {
     if (rec && rec !== selected)
       groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
   }
+  const strideCycles = new WeakMap();
   function player(
     p,
     clock,
@@ -604,6 +610,13 @@ export function createGridironRenderer(canvas) {
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
+    const gait = involved || presnap ? 0 : runningWeight(p, pose);
+    const previousCycle = strideCycles.get(p);
+    const cycle =
+      gait > 0 || previousCycle
+        ? runningCycle(p.travel || 0, pose.speed, s, previousCycle)
+        : null;
+    if (cycle) strideCycles.set(p, cycle);
     // The same physical contact and knocked-down states drive the pose.
     if (ground) {
       const fall =
@@ -624,7 +637,7 @@ export function createGridironRenderer(canvas) {
       root = mul(root, rotZ(tilt));
       root = at(root, 0, ground.stage === "rise" ? 0.31 : 0.2, 0);
     } else {
-      root = at(root, 0, bob - pose.crouch, 0);
+      root = at(root, 0, bob - pose.crouch - gait * (0.067 * s + bob), 0);
       root = mul(root, rotZ(pose.lean + pose.stanceLean - pose.impactAccent));
       root = mul(root, rotX(pose.bank));
       root = mul(root, rotY(pose.yaw));
@@ -752,33 +765,31 @@ export function createGridironRenderer(canvas) {
     box(root, [0.27, 1.94 + shift, 0], [0.035, 0.028, 0.36], C.bar);
     for (const side of [-1, 1]) {
       let hip = at(root, 0, 0.87, side * 0.2 * breadth);
-      hip = mul(
-        hip,
-        rotZ(
-          (run ? side * legAmp * step : 0) +
-            (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
-            (pose.stance === "three-point"
-              ? 0.26
-              : pose.stance === "coverage-ready"
-                ? 0.13
-                : pose.stance === "receiver"
-                  ? 0.16
-                  : 0) +
-            (hurdle || dive
-              ? (0.6 + side * 0.22) *
-                Math.sin(Math.PI * (hurdle ? hurdleT : diveT))
+      const leg = gait > 0 ? runningLeg(cycle, pose.speed, side, s, hip) : null;
+      const hipSwing =
+        (run ? side * legAmp * step : 0) +
+        (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
+        (pose.stance === "three-point"
+          ? 0.26
+          : pose.stance === "coverage-ready"
+            ? 0.13
+            : pose.stance === "receiver"
+              ? 0.16
               : 0) +
-            (rise > 0 ? -0.22 * arc : 0) +
-            (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0),
-        ),
-      );
+        (hurdle || dive
+          ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT))
+          : 0) +
+        (rise > 0 ? -0.22 * arc : 0) +
+        (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
+      hip = mul(hip, rotZ(hipSwing * (1 - gait) + (leg?.hip || 0) * gait));
       const kneePivot = at(hip, 0.03, -0.48, 0);
-      const kneeBend =
+      const baseKnee =
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
         (pose.stance ? 0.2 : 0) +
         (ground ? groundFold * 0.72 : 0) +
         (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) +
         (rise > 0 ? 0.3 * arc : 0);
+      const kneeBend = baseKnee * (1 - gait) + (leg?.knee || 0) * gait;
       // A wider blend gives the knee room to fold while the ankle and the
       // portion of the calf below the bend still follow the original hinge.
       drawLimb(
@@ -792,7 +803,13 @@ export function createGridironRenderer(canvas) {
         C.pants,
       );
       const knee = mul(kneePivot, rotZ(kneeBend));
-      sphere(knee, [0.12, -0.405, 0], [0.37, 0.145, 0.225 * breadth], C.shoe);
+      const foot = at(knee, 0, -0.405, 0);
+      sphere(
+        leg ? mul(foot, rotZ(leg.ankle * gait)) : foot,
+        [0.12, 0, 0],
+        [0.37, 0.145, 0.225 * breadth],
+        C.shoe,
+      );
       let shoulder = at(root, 0, 1.57 + shift, side * 0.36 * breadth);
       const stiffExtended = action === "stiff" && side < 0;
       // The stiff arm extends *forward* from one shoulder; the other arm stays
