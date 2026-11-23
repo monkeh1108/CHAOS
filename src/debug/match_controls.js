@@ -121,6 +121,9 @@ export function createMatchDebug({
         defenderY,
       ),
     defensiveFaceButton,
+    moveSheetFocus: (direction) =>
+      presentation?.moveSheetFocus?.(direction) ?? false,
+    chooseSheetFocused: () => presentation?.chooseSheetFocused?.() ?? false,
     cycleSheetFormation,
     debugDefensePresnap: () => {
       matchState.possession = 1;

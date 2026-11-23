@@ -10,7 +10,7 @@ def test_kickoff_control_returns(browser_session, standalone_html):
      for width in [1120,390]:
       page=browser.new_page(viewport={'width':width,'height':850})
       errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-      page.set_content(HTML,wait_until='load')
+      page.set_content(HTML,wait_until='load');page.evaluate("GRIDIRON_DEBUG.debugFinishCoinToss('heads','receive')")
       page.wait_for_timeout(120)
       d='GRIDIRON_DEBUG'
       get=lambda:page.evaluate(f'{d}.getMatch()')
@@ -20,7 +20,7 @@ def test_kickoff_control_returns(browser_session, standalone_html):
       assert page.locator('[data-kickaim]').count()==0
       kick_locations=[]
       for call in ('left','middle','right'):
-       page.evaluate(f'{d}.newGame()')
+       page.evaluate(f'{d}.newGame();{d}.debugFinishCoinToss()')
        page.locator(f'[data-returncall="{call}"]').click()
        assert get()['returnCall']==call
        assert get()['specialState']['returnLaneY']=={'left':13.5,'middle':26.65,'right':39.8}[call],get()
@@ -36,7 +36,7 @@ def test_kickoff_control_returns(browser_session, standalone_html):
        kick_locations.append((m['specialState']['landingX'],m['specialState']['targetY']))
       assert len(set(kick_locations))==1,kick_locations
       # With kicking team unselected for catch, the cover unit holds until arrival.
-      page.evaluate(f'{d}.newGame();{d}.debugSeed(412)')
+      page.evaluate(f'{d}.newGame();{d}.debugFinishCoinToss();{d}.debugSeed(412)')
       page.locator('[data-returncall="middle"]').click()
       page.locator('#sheetSnap').click()
       before=state();page.evaluate(f'{d}.step(75)');mid=state()
@@ -49,10 +49,20 @@ def test_kickoff_control_returns(browser_session, standalone_html):
       page.evaluate(f'{d}.step(78)');aft=state()
       assert aft['phase'] in ('live','dead')
       # TD -> try -> opposing kickoff. "Away" receives and home controls the defense.
-      page.evaluate(f'{d}.newGame();{d}.startKick();{d}.step(149)')
-      if state()['phase']=='live':
-       page.evaluate(f"{d}.debugSetContactEnabled(false);{d}.debugMovePlayer('RB',45,0);{d}.step(2)")
-      if state()['phase']=='dead':page.evaluate(f'{d}.nextDown()')
+      page.evaluate(f'{d}.newGame();{d}.debugFinishCoinToss();{d}.debugSeed(3);{d}.startKick()')
+      finish_return = """() => {
+       const g = GRIDIRON_DEBUG;
+       for (let i = 0; i < 240 && g.getState().phase === 'live' && !g.getState().ballCarrier; i++) g.step(1);
+       const carrier = g.getState().ballCarrier;
+       if (g.getState().phase === 'live' && carrier) {
+        g.debugSetContactEnabled(false);
+        g.debugMovePlayer(carrier, 45, 0);
+        g.step(2);
+       }
+       return g.getState().phase;
+      }"""
+      assert page.evaluate(finish_return)=='dead',state()
+      page.evaluate(f'{d}.nextDown()')
       assert state()['phase']=='presnap',state()['phase']
       page.evaluate(f"{d}.select('inside');{d}.snap();{d}.debugSetContactEnabled(false);{d}.debugWhistle('touchdown')")
       assert get()['teamPoints']==[6,0],get()
@@ -62,13 +72,14 @@ def test_kickoff_control_returns(browser_session, standalone_html):
       assert page.locator('[data-returncall]').count()==0
       assert page.locator('[data-kickready]').count()==1
       assert page.locator('#inputStatus').inner_text()!=''
-      page.evaluate(f'{d}.debugSeed(431);{d}.startKick();{d}.step(180)')
-      # Force the return to finish with no touchdown, then user's defensive calls
-      if state()['phase']=='live':
-       page.evaluate(f"{d}.debugSetContactEnabled(false);{d}.debugMovePlayer('RB',34,0);{d}.step(2)")
-      if state()['phase']=='dead':page.evaluate(f'{d}.nextDown()')
+      page.evaluate(f'{d}.debugSeed(431);{d}.startKick()')
+      # Finish the return using the player who actually fielded the kick.
+      assert page.evaluate(finish_return)=='dead',state()
+      page.evaluate(f'{d}.nextDown()')
       m=get();s=state()
       assert m['possession']==1 and m['controlMode']=='defense',(m,s['phase'])
+      if not get()['playbookOpen']:
+       page.locator('#playbookBtn').click()
       assert page.locator('[data-defense-coverage]').count()==5
       assert page.locator('[data-defense-pressure]').count()==6
       assert 'Multiple & Power' in page.locator('#callSheetSub').inner_text()
