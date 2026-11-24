@@ -721,7 +721,7 @@ export function createGridironRenderer(canvas) {
   function wrapPairs(sim, byKey) {
     const pairs = new Map();
     const live = sim.phase === "live";
-    const runner = sim.carrier;
+    const runner = sim.tackleRunner ?? sim.carrier;
     for (const link of sim.tackles) {
       const defender = byKey.get(link.defender);
       if (link.style !== "wrap" || !defender || !runner || !live) continue;
@@ -1829,9 +1829,10 @@ export function createGridironRenderer(canvas) {
         blockOpponent.set(d.key, o);
       }
     }
+    const tackleRunner = sim.tackleRunner ?? sim.carrier;
     for (const c of sim.tackles) {
       contacts.add(c.defender);
-      if (sim.carrier) contacts.add(sim.carrier.key);
+      if (tackleRunner) contacts.add(tackleRunner.key);
     }
     const wraps = wrapPairs(sim, byKey);
     const finish = sim.phase === "dead" ? sim.wrapFinish : null;

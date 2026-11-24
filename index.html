@@ -2324,9 +2324,9 @@
   // src/sim/play_lifecycle.js
   function createPlayLifecycle() {
     let DefensiveMemory2, PRESNAP_PLAY_SECONDS2, TEAM_NAMES2, advancePeriodIfNeeded, chooseCPUPlay, chooseSpecial, emitPresentation, finishReturn, hidePlaybook, hud, log, matchState, message, newPossession, rand, setup, setupKickoff, showPlaybook, spotText, startThirdQuarter, traceSample;
-    function finish(type, x, detail) {
+    function finish(type, x, detail, tackle) {
       if (matchState.phase !== "live") return;
-      const runner = matchState.ballCarrier;
+      const runner = tackle?.runner ?? matchState.ballCarrier;
       const landingRunner = (type === "tackle" || type === "sack") && runner?.ground?.kind === "tackle" && runner.ground.stage === "fall" ? runner.key : null;
       if (matchState.specialState) {
         finishReturn(type, x, detail, landingRunner);
@@ -2397,7 +2397,8 @@
         heading,
         detail: detail + " · " + (type === "intercept" ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained"),
         action: "NEXT SNAP",
-        ...landingRunner ? { landingRunner } : {}
+        ...landingRunner ? { landingRunner } : {},
+        ...type === "sack" && landingRunner && tackle?.pairedDefender ? { landingPartner: tackle.pairedDefender } : {}
       });
       log(
         heading + " · " + (type === "intercept" ? "change of possession at " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yd")
@@ -10016,7 +10017,10 @@
         upright: !d.ground
       }));
       const clock = matchState.totalClock || 0;
-      finish(a === P("QB") ? "sack" : "tackle", a.x, description2);
+      finish(a === P("QB") ? "sack" : "tackle", a.x, description2, {
+        runner: a,
+        pairedDefender
+      });
       if (wraps.length)
         emitPresentation({
           type: "wrapFinished",
@@ -14202,7 +14206,7 @@
     function wrapPairs(sim, byKey) {
       const pairs = /* @__PURE__ */ new Map();
       const live = sim.phase === "live";
-      const runner = sim.carrier;
+      const runner = sim.tackleRunner ?? sim.carrier;
       for (const link of sim.tackles) {
         const defender = byKey.get(link.defender);
         if (link.style !== "wrap" || !defender || !runner || !live) continue;
@@ -14871,9 +14875,10 @@
           blockOpponent.set(d.key, o);
         }
       }
+      const tackleRunner = sim.tackleRunner ?? sim.carrier;
       for (const c of sim.tackles) {
         contacts2.add(c.defender);
-        if (sim.carrier) contacts2.add(sim.carrier.key);
+        if (tackleRunner) contacts2.add(tackleRunner.key);
       }
       const wraps = wrapPairs(sim, byKey);
       const finish = sim.phase === "dead" ? sim.wrapFinish : null;
@@ -15498,7 +15503,7 @@
       }
     }
     function drawContactLinks(v2) {
-      const { phase, blockLinks, tackleLinks, ballCarrier } = readState();
+      const { phase, blockLinks, tackleLinks, tackleRunner } = readState();
       if (phase !== "live") return;
       ctx.save();
       ctx.lineCap = "round";
@@ -15515,7 +15520,7 @@
         ctx.stroke();
       }
       for (const e of tackleLinks.values()) {
-        const a = P(e.defender), b = ballCarrier;
+        const a = P(e.defender), b = tackleRunner;
         if (!a || !b) continue;
         const [ax, ay] = xy(a.x, a.y, v2), [bx, by] = xy(b.x, b.y, v2);
         ctx.strokeStyle = "#ff8295";
@@ -15581,6 +15586,7 @@
         intended,
         blockLinks,
         tackleLinks,
+        tackleRunner,
         wrapFinish,
         possession,
         first,
@@ -15631,6 +15637,7 @@
           renderer3d.draw({
             players,
             carrier: ballCarrier,
+            tackleRunner,
             markerCarrier,
             active,
             intended,
@@ -16155,7 +16162,7 @@
         if (session.flash > 0)
           session.flash = Math.max(0, session.flash - elapsed);
       }
-      if (pendingTackleResult && P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall") {
+      if (pendingTackleResult && P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall" && (!pendingTackleResult.landingPartner || P(pendingTackleResult.landingPartner)?.ground?.stage !== "fall")) {
         const result = pendingTackleResult;
         pendingTackleResult = null;
         if (session.phase === "dead") {
@@ -16693,6 +16700,7 @@
         totalClock: session.totalClock,
         pileState: session.pileState,
         tackleLinks: session.tackleLinks,
+        tackleRunner: session.ballCarrier ?? (session.phase === "live" && !session.specialState && !session.passThrown && session.tackleLinks.size ? P("QB") : null),
         wrapFinish,
         burstTime: session.burstTime,
         players: session.players,
