@@ -16,7 +16,7 @@ export function createKickReturn() {
     spotText,
     steer;
 
-  function finishReturn(type, x, detail) {
+  function finishReturn(type, x, detail, landingRunner) {
     if (matchState.phase !== "live" || !matchState.specialState) return;
     const k = matchState.specialState;
     // A returner who fields a free kick in his own end zone may choose to
@@ -80,6 +80,7 @@ export function createKickReturn() {
       name,
       detail || `${TEAM_NAMES[matchState.possession]} starts at ${spotText()}`,
       touchdown ? "CHOOSE TRY" : "CALL OFFENSE",
+      landingRunner,
     );
     hud();
   }

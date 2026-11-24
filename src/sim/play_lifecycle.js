@@ -25,8 +25,16 @@ export function createPlayLifecycle() {
 
   function finish(type, x, detail) {
     if (matchState.phase !== "live") return;
+    const runner = matchState.ballCarrier;
+    // Presentation can follow an existing fall while the ruling takes effect now.
+    const landingRunner =
+      (type === "tackle" || type === "sack") &&
+      runner?.ground?.kind === "tackle" &&
+      runner.ground.stage === "fall"
+        ? runner.key
+        : null;
     if (matchState.specialState) {
-      finishReturn(type, x, detail);
+      finishReturn(type, x, detail, landingRunner);
       return;
     }
     traceSample();
@@ -121,7 +129,7 @@ export function createPlayLifecycle() {
       matchState.flash = 2;
     }
     matchState.result = heading;
-    message("<strong>" + heading + ".</strong> " + detail);
+    message("<strong>" + heading + ".</strong> " + detail, landingRunner);
     emitPresentation({
       type: "resultShown",
       heading,
@@ -132,6 +140,7 @@ export function createPlayLifecycle() {
           ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109))
           : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained"),
       action: "NEXT SNAP",
+      ...(landingRunner ? { landingRunner } : {}),
     });
     log(
       heading +

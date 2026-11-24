@@ -102,10 +102,16 @@ export function createGame(
     return y < 60 ? "OWN " + Math.round(y - 10) : "OPP " + Math.round(110 - y);
   }
 
-  function setResultUI(heading, detail, action = "NEXT PLAY") {
+  function setResultUI(heading, detail, action = "NEXT PLAY", landingRunner) {
     matchState.result = heading;
-    message("<strong>" + heading + ".</strong> " + detail);
-    emitPresentation({ type: "resultShown", heading, detail, action });
+    message("<strong>" + heading + ".</strong> " + detail, landingRunner);
+    emitPresentation({
+      type: "resultShown",
+      heading,
+      detail,
+      action,
+      ...(landingRunner ? { landingRunner } : {}),
+    });
     log(heading + " · " + detail);
   }
 
@@ -202,9 +208,13 @@ export function createGame(
     matchState.logs = matchState.logs.slice(0, 14);
     emitPresentation({ type: "logChanged", logs: matchState.logs });
   }
-  function message(t) {
+  function message(t, landingRunner) {
     matchState.msg = t;
-    emitPresentation({ type: "messageChanged", text: t });
+    emitPresentation({
+      type: "messageChanged",
+      text: t,
+      ...(landingRunner ? { landingRunner } : {}),
+    });
   }
 
   function stickInput() {

@@ -2326,8 +2326,10 @@
     let DefensiveMemory2, PRESNAP_PLAY_SECONDS2, TEAM_NAMES2, advancePeriodIfNeeded, chooseCPUPlay, chooseSpecial, emitPresentation, finishReturn, hidePlaybook, hud, log, matchState, message, newPossession, rand, setup, setupKickoff, showPlaybook, spotText, startThirdQuarter, traceSample;
     function finish(type, x, detail) {
       if (matchState.phase !== "live") return;
+      const runner = matchState.ballCarrier;
+      const landingRunner = (type === "tackle" || type === "sack") && runner?.ground?.kind === "tackle" && runner.ground.stage === "fall" ? runner.key : null;
       if (matchState.specialState) {
-        finishReturn(type, x, detail);
+        finishReturn(type, x, detail, landingRunner);
         return;
       }
       traceSample();
@@ -2389,12 +2391,13 @@
         matchState.flash = 2;
       }
       matchState.result = heading;
-      message("<strong>" + heading + ".</strong> " + detail);
+      message("<strong>" + heading + ".</strong> " + detail, landingRunner);
       emitPresentation({
         type: "resultShown",
         heading,
         detail: detail + " · " + (type === "intercept" ? "Next drive: " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained"),
-        action: "NEXT SNAP"
+        action: "NEXT SNAP",
+        ...landingRunner ? { landingRunner } : {}
       });
       log(
         heading + " · " + (type === "intercept" ? "change of possession at " + spotText(clamp(120 - (x >= 110 ? 90 : x), 11, 109)) : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yd")
@@ -3579,7 +3582,7 @@
   // src/sim/kick_return.js
   function createKickReturn() {
     let H2, P, TEAM_NAMES2, blockBattle, hud, isFreeKick, matchState, pursuitAim, setDriveSpot, setResultUI, speed, spotText, steer;
-    function finishReturn(type, x, detail) {
+    function finishReturn(type, x, detail, landingRunner) {
       if (matchState.phase !== "live" || !matchState.specialState) return;
       const k = matchState.specialState;
       if (isFreeKick(k) && k.returnCaughtInEndzone && !k.advancedOutOfEndzone && x <= 10.05 && type !== "touchdown") {
@@ -3617,7 +3620,8 @@
       setResultUI(
         name,
         detail || `${TEAM_NAMES2[matchState.possession]} starts at ${spotText()}`,
-        touchdown ? "CHOOSE TRY" : "CALL OFFENSE"
+        touchdown ? "CHOOSE TRY" : "CALL OFFENSE",
+        landingRunner
       );
       hud();
     }
@@ -12847,10 +12851,16 @@
     function spotText(y = matchState.yard) {
       return y < 60 ? "OWN " + Math.round(y - 10) : "OPP " + Math.round(110 - y);
     }
-    function setResultUI(heading, detail, action = "NEXT PLAY") {
+    function setResultUI(heading, detail, action = "NEXT PLAY", landingRunner) {
       matchState.result = heading;
-      message("<strong>" + heading + ".</strong> " + detail);
-      emitPresentation({ type: "resultShown", heading, detail, action });
+      message("<strong>" + heading + ".</strong> " + detail, landingRunner);
+      emitPresentation({
+        type: "resultShown",
+        heading,
+        detail,
+        action,
+        ...landingRunner ? { landingRunner } : {}
+      });
       log(heading + " · " + detail);
     }
     function rand() {
@@ -12920,9 +12930,13 @@
       matchState.logs = matchState.logs.slice(0, 14);
       emitPresentation({ type: "logChanged", logs: matchState.logs });
     }
-    function message(t) {
+    function message(t, landingRunner) {
       matchState.msg = t;
-      emitPresentation({ type: "messageChanged", text: t });
+      emitPresentation({
+        type: "messageChanged",
+        text: t,
+        ...landingRunner ? { landingRunner } : {}
+      });
     }
     function stickInput() {
       return matchState.controls.move;
@@ -13349,7 +13363,8 @@
         paused,
         manualDrive,
         manualReceiver,
-        gameFlowNote
+        gameFlowNote,
+        tackleLandingPending
       } = readState();
       if (phase === "live" || phase === "presnap" || phase === "dead") {
         const suffix = ["", "ST", "ND", "RD", "TH"][down] || "TH";
@@ -13391,7 +13406,7 @@
         const count = def.filter((d) => d.runRead).length;
         read.textContent = "DEFENSE · " + count + "/11 RECOGNIZED RUN · GAP FITS / CONTAIN / PURSUIT";
       } else if (read) {
-        read.textContent = "DEFENSE · " + (phase === "presnap" ? "ALIGNING" : phase === "dead" ? "WHISTLE" : "COVERAGE ASSIGNMENTS");
+        read.textContent = "DEFENSE · " + (phase === "presnap" ? "ALIGNING" : phase === "dead" ? tackleLandingPending ? "TAKEDOWN" : "WHISTLE" : "COVERAGE ASSIGNMENTS");
       }
       const control = $("inputStatus");
       if (control && specialState)
@@ -13399,7 +13414,7 @@
       else if (control && phase === "halftime")
         control.textContent = "HALFTIME · " + TEAM_NAMES2[secondHalfReceiver] + " RECEIVES NEXT · PRESS START THIRD QUARTER";
       else if (control)
-        control.textContent = pendingPass ? "PASS CHARGING · " + (playClock - pendingPass.start < 0.2 ? "LOB" : playClock - pendingPass.start < 0.45 ? "TOUCH" : "BULLET") + " · RELEASE RECEIVER BUTTON" : pileState?.active ? "STANDING PILE · " + pileState.wrappers.length + " DEFENDERS · " + pileState.pushers.length + " OFFENSIVE PUSHERS" : paused ? "PAUSED · MENU TO RESUME" : phase === "presnap" ? controlMode === "defense" ? "DEFENSE · " + (P(selectedDefenderKey)?.key || "DEFENDER") + " · " + DefensivePresnap.description(P(selectedDefenderKey)) + " · LEFT STICK MOVE · B SWITCH · X AUDIBLE" : "SNAP TO START · X AUDIBLE · A SNAP" : phase === "dead" ? "WHISTLE · NEXT SNAP" : controlMode === "defense" && ball?.flying ? "PASS AIRBORNE · " + (defenderAirInteractionZone(P(selectedDefenderKey)) ? "ON THE PLAY · X SWAT / A PLAY RECEIVER / Y BALL HAWK" : "NOT IN CONTEST · X DIVES / B SWITCH DEFENDER") : controlMode === "defense" ? "DEFENSE · YOU CONTROL " + (P(selectedDefenderKey)?.pos || "DEFENDER") + " · B SWITCH · A WRAP · X HIT/DIVE · RIGHT STICK HIT/CUT" : controlMode === "line" ? "O-LINE · YOU CONTROL " + selectedLinemanKey + " · RIGHT STICK UP IMPACT/PUSH" : ballCarrier && ballCarrier.team === 0 ? manualDrive ? "YOU CONTROL " + ballCarrier.pos + " · GIVE AI CONTROL TO RELEASE" : "AUTO RUN " + ballCarrier.pos + " · STEER TO TAKE OVER" : ball ? manualReceiver ? "USER RECEIVER · LEFT STICK STEERS · X RAC / A POSSESSION / Y AGGRESSIVE" : "PASS AIRBORNE · B SWITCH RECEIVER · X RAC / A POSSESSION / Y AGGRESSIVE" : RUNS2.has(selectedPlay) ? "HANDOFF COMING · MOVE TO TAKE CONTROL" : "QB CONTROL · WASD / ARROWS";
+        control.textContent = pendingPass ? "PASS CHARGING · " + (playClock - pendingPass.start < 0.2 ? "LOB" : playClock - pendingPass.start < 0.45 ? "TOUCH" : "BULLET") + " · RELEASE RECEIVER BUTTON" : pileState?.active ? "STANDING PILE · " + pileState.wrappers.length + " DEFENDERS · " + pileState.pushers.length + " OFFENSIVE PUSHERS" : paused ? "PAUSED · MENU TO RESUME" : phase === "presnap" ? controlMode === "defense" ? "DEFENSE · " + (P(selectedDefenderKey)?.key || "DEFENDER") + " · " + DefensivePresnap.description(P(selectedDefenderKey)) + " · LEFT STICK MOVE · B SWITCH · X AUDIBLE" : "SNAP TO START · X AUDIBLE · A SNAP" : phase === "dead" ? tackleLandingPending ? "TAKEDOWN" : "WHISTLE · NEXT SNAP" : controlMode === "defense" && ball?.flying ? "PASS AIRBORNE · " + (defenderAirInteractionZone(P(selectedDefenderKey)) ? "ON THE PLAY · X SWAT / A PLAY RECEIVER / Y BALL HAWK" : "NOT IN CONTEST · X DIVES / B SWITCH DEFENDER") : controlMode === "defense" ? "DEFENSE · YOU CONTROL " + (P(selectedDefenderKey)?.pos || "DEFENDER") + " · B SWITCH · A WRAP · X HIT/DIVE · RIGHT STICK HIT/CUT" : controlMode === "line" ? "O-LINE · YOU CONTROL " + selectedLinemanKey + " · RIGHT STICK UP IMPACT/PUSH" : ballCarrier && ballCarrier.team === 0 ? manualDrive ? "YOU CONTROL " + ballCarrier.pos + " · GIVE AI CONTROL TO RELEASE" : "AUTO RUN " + ballCarrier.pos + " · STEER TO TAKE OVER" : ball ? manualReceiver ? "USER RECEIVER · LEFT STICK STEERS · X RAC / A POSSESSION / Y AGGRESSIVE" : "PASS AIRBORNE · B SWITCH RECEIVER · X RAC / A POSSESSION / Y AGGRESSIVE" : RUNS2.has(selectedPlay) ? "HANDOFF COMING · MOVE TO TAKE CONTROL" : "QB CONTROL · WASD / ARROWS";
       const airRow = $("airActions");
       if (airRow) {
         const show = phase === "live" && !specialState && !!ball?.flying && !paused && controlMode !== "line" && (controlMode !== "defense" || defenderAirInteractionZone(P(selectedDefenderKey)));
@@ -13417,7 +13432,7 @@
       $("fairCatchBtn").style.display = phase === "live" && specialState?.kind === "punt" && !!ball?.flying ? "inline-flex" : "none";
       const stateRead = $("gameStateRead");
       if (stateRead) {
-        const status = phase === "halftime" ? "HALFTIME · CONTINUE" : phase === "presnap" ? specialState ? "KICKOFF READY" : scrimmagePlayCalled ? possession !== localTeam ? "CPU PRE-SNAP" : "YOUR PRE-SNAP" : "PICK A PLAY" : phase === "live" ? specialState ? "LIVE RETURN" : "LIVE PLAY" : phase === "dead" ? "WHISTLE · NEXT" : phase.toUpperCase();
+        const status = phase === "halftime" ? "HALFTIME · CONTINUE" : phase === "presnap" ? specialState ? "KICKOFF READY" : scrimmagePlayCalled ? possession !== localTeam ? "CPU PRE-SNAP" : "YOUR PRE-SNAP" : "PICK A PLAY" : phase === "live" ? specialState ? "LIVE RETURN" : "LIVE PLAY" : phase === "dead" ? tackleLandingPending ? "TAKEDOWN" : "WHISTLE · NEXT" : phase.toUpperCase();
         stateRead.textContent = "STATE: " + status + " · " + gameFlowNote;
         stateRead.dataset.phase = phase;
       }
@@ -15433,7 +15448,12 @@
     let gamepadStatusLast = "";
     let rightStickLatched = false;
     let rightStickDirection = "";
-    const dispatch = (command) => session.dispatchInput({ ...command, playerSlot: session.localTeam });
+    let pendingTackleResult = null;
+    const dispatch = (command) => {
+      if (pendingTackleResult && (command.type === "nextDown" || command.type === "snap"))
+        return;
+      return session.dispatchInput({ ...command, playerSlot: session.localTeam });
+    };
     const action = (type, ...args) => dispatch({ type, args });
     const choosePlay = (play) => dispatch({ type: "selectPlay", play });
     const passTo = (receiver, hold) => dispatch({ type: "pass", receiver, hold });
@@ -15867,6 +15887,15 @@
         frame.acc = 0;
         if (session.flash > 0)
           session.flash = Math.max(0, session.flash - elapsed);
+      }
+      if (pendingTackleResult && P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall") {
+        const result = pendingTackleResult;
+        pendingTackleResult = null;
+        if (session.phase === "dead") {
+          if (result.message) emitHudEvent(result.message);
+          emitHudEvent(result);
+          session.hud();
+        }
       }
       if (session.phase === "presnap" && !session.paused)
         positionSelectedDefender(elapsed);
@@ -16358,7 +16387,8 @@
         paused: session.paused,
         manualDrive: session.manualDrive,
         manualReceiver: session.manualReceiver,
-        gameFlowNote: session.gameFlowNote
+        gameFlowNote: session.gameFlowNote,
+        tackleLandingPending: !!pendingTackleResult
       }),
       queries: {
         chooseCoinToss: (choice) => dispatch({ type: "coinToss", choice }),
@@ -16431,7 +16461,22 @@
       emit(event) {
         if (event.type === "coinTossInputReset") tossPadPrevious = [];
         else if (event.type === "wrapFinished") wrapFinish = event;
-        else if (event.type === "rightStickReset") {
+        else if (event.type === "messageChanged" && event.landingRunner) {
+          pendingTackleResult = { message: event };
+        } else if (event.type === "resultShown" && event.landingRunner) {
+          pendingTackleResult = {
+            ...event,
+            message: pendingTackleResult?.message
+          };
+          emitHudEvent({
+            type: "snapControlChanged",
+            text: "TAKEDOWN",
+            disabled: true
+          });
+        } else if (event.type === "resultHeadingChanged" && pendingTackleResult) {
+          pendingTackleResult.heading = event.heading;
+        } else if (event.type === "rightStickReset") {
+          pendingTackleResult = null;
           wrapFinish = null;
           rightStickLatched = false;
           rightStickDirection = "";

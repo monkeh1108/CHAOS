@@ -25,8 +25,15 @@ export function attachGameBrowser(session) {
   let gamepadStatusLast = "";
   let rightStickLatched = false;
   let rightStickDirection = "";
-  const dispatch = (command) =>
-    session.dispatchInput({ ...command, playerSlot: session.localTeam });
+  let pendingTackleResult = null;
+  const dispatch = (command) => {
+    if (
+      pendingTackleResult &&
+      (command.type === "nextDown" || command.type === "snap")
+    )
+      return;
+    return session.dispatchInput({ ...command, playerSlot: session.localTeam });
+  };
   const action = (type, ...args) => dispatch({ type, args });
   const choosePlay = (play) => dispatch({ type: "selectPlay", play });
   const passTo = (receiver, hold) => dispatch({ type: "pass", receiver, hold });
@@ -574,6 +581,18 @@ export function attachGameBrowser(session) {
       frame.acc = 0;
       if (session.flash > 0)
         session.flash = Math.max(0, session.flash - elapsed);
+    }
+    if (
+      pendingTackleResult &&
+      P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall"
+    ) {
+      const result = pendingTackleResult;
+      pendingTackleResult = null;
+      if (session.phase === "dead") {
+        if (result.message) emitHudEvent(result.message);
+        emitHudEvent(result);
+        session.hud();
+      }
     }
     if (session.phase === "presnap" && !session.paused)
       positionSelectedDefender(elapsed);
@@ -1160,6 +1179,7 @@ export function attachGameBrowser(session) {
       manualDrive: session.manualDrive,
       manualReceiver: session.manualReceiver,
       gameFlowNote: session.gameFlowNote,
+      tackleLandingPending: !!pendingTackleResult,
     }),
     queries: {
       chooseCoinToss: (choice) => dispatch({ type: "coinToss", choice }),
@@ -1233,7 +1253,22 @@ export function attachGameBrowser(session) {
     emit(event) {
       if (event.type === "coinTossInputReset") tossPadPrevious = [];
       else if (event.type === "wrapFinished") wrapFinish = event;
-      else if (event.type === "rightStickReset") {
+      else if (event.type === "messageChanged" && event.landingRunner) {
+        pendingTackleResult = { message: event };
+      } else if (event.type === "resultShown" && event.landingRunner) {
+        pendingTackleResult = {
+          ...event,
+          message: pendingTackleResult?.message,
+        };
+        emitHudEvent({
+          type: "snapControlChanged",
+          text: "TAKEDOWN",
+          disabled: true,
+        });
+      } else if (event.type === "resultHeadingChanged" && pendingTackleResult) {
+        pendingTackleResult.heading = event.heading;
+      } else if (event.type === "rightStickReset") {
+        pendingTackleResult = null;
         wrapFinish = null;
         rightStickLatched = false;
         rightStickDirection = "";
