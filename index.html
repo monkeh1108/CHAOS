@@ -1631,11 +1631,11 @@
           const swept = ChaosContactEvidence2.history().slice(-12).some(
             (e) => e.pair.includes(a.key) && e.pair.includes(d.key) && matchState.playClock - e.time >= 0 && matchState.playClock - e.time < 0.075 && e.penetration >= 0.095
           );
-          const committedDive2 = d.action?.kind === "tackle-dive" && d.action.time > 0;
-          if (committedDive2 && contactState.kind === "miss" && !swept || contactState.kind === "light contact" && !swept && !padImpact) {
+          const opposing = a.vx * d.vx + a.vy * d.vy < -2;
+          if (contactState.kind === "miss" && !swept && (committedDive || opposing && !padImpact) || contactState.kind === "light contact" && !swept && !padImpact) {
             report?.push({
               defender: d.key,
-              reason: contactState.kind === "miss" ? "missed dive" : "light contact",
+              reason: contactState.kind === "miss" ? committedDive ? "missed dive" : "missed standing contact" : "light contact",
               contact: contactState
             });
             continue;
@@ -9252,45 +9252,28 @@
       if (pass === 0 && !meshRoutePair && !a.ground && !b.ground && hit > 240) {
         const closingA = Math.max(0, a.vx * nx + a.vy * ny);
         const closingB = Math.max(0, -b.vx * nx - b.vy * ny);
-        if (closingA > closingB * 1.28)
+        const carrier = matchState.ballCarrier;
+        const defender = carrier === a ? b : a;
+        const defenderClosing = carrier === a ? candidate?.bNormal : candidate?.aNormal;
+        const runnerClosing = carrier === a ? candidate?.aNormal : candidate?.bNormal;
+        const standingContest = candidate?.square > 0.32 && matchState.contactEnabled && matchState.liveTackleContacts.get(defender.key)?.padImpact && defenderClosing * 1.28 >= runnerClosing && defender.balance >= 0.45 && defender.blocked < 0.25 && defender.stun <= 0 && defender.tackleCooldown <= 0 && defender.diveRecovery <= 0 && !defender.reengage && (!(defender.action?.time > 0) || defender.action.kind === "conservative") && (!(carrier.action?.time > 0) || !["truck", "stiff"].includes(carrier.action.kind));
+        const bodyFall = (victim, attacker, x, y) => {
+          if (standingContest && victim === defender) return;
           groundContact(
-            b,
-            a,
-            hit * ChaosLowContact.bodyVulnerability(b),
+            victim,
+            attacker,
+            hit * ChaosLowContact.bodyVulnerability(victim),
             normalSpeed,
-            nx,
-            ny,
+            x,
+            y,
             "body"
           );
-        else if (closingB > closingA * 1.28)
-          groundContact(
-            a,
-            b,
-            hit * ChaosLowContact.bodyVulnerability(a),
-            normalSpeed,
-            -nx,
-            -ny,
-            "body"
-          );
+        };
+        if (closingA > closingB * 1.28) bodyFall(b, a, nx, ny);
+        else if (closingB > closingA * 1.28) bodyFall(a, b, -nx, -ny);
         else {
-          groundContact(
-            a,
-            b,
-            hit * ChaosLowContact.bodyVulnerability(a),
-            normalSpeed,
-            -nx,
-            -ny,
-            "body"
-          );
-          groundContact(
-            b,
-            a,
-            hit * ChaosLowContact.bodyVulnerability(b),
-            normalSpeed,
-            nx,
-            ny,
-            "body"
-          );
+          bodyFall(a, b, -nx, -ny);
+          bodyFall(b, a, nx, ny);
         }
       }
       if (hit > 13) {
