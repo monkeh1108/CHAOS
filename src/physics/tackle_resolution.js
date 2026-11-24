@@ -104,6 +104,8 @@ export function createTackleResolution() {
           1.6,
         ) * clamp(0.78 + 0.22 * t.quality, 0.6, 1.2);
       t.grip = clamp(t.grip + dt * gripRate, 0, security);
+      const incomingVx = d.vx;
+      const incomingVy = d.vy;
       // Linked players resist separation through a damped, bounded force rather
       // than teleporting into a tackle pose. This runs only after real contact.
       t.attachment = ChaosGripAttachment.step(
@@ -148,6 +150,15 @@ export function createTackleResolution() {
       const blend = clamp(dt * (0.43 + contribution * 0.82), 0, 0.12);
       d.vx += ((a.vx - d.vx) * blend * aMass) / (aMass + dMass);
       d.vy += ((a.vy - d.vy) * blend * aMass) / (aMass + dMass);
+      if (t.style === "wrap") {
+        // Retain the recent velocity change already applied by the grip.
+        // Decay it so a defender who regains footing can finish upright.
+        const retain = Math.max(0, 1 - dt * 6);
+        t.supportLoad = {
+          x: (t.supportLoad?.x || 0) * retain + d.vx - incomingVx,
+          y: (t.supportLoad?.y || 0) * retain + d.vy - incomingVy,
+        };
+      }
       // A low grip ceiling is NOT an automatic broken tackle. The old rule
       // released weak-grip wraps after ~0.7 seconds regardless of whether the
       // defender had caught the runner, producing endless chase/bend/recover loops.
