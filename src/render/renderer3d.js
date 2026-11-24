@@ -637,6 +637,306 @@ export function createGridironRenderer(canvas) {
       groundRing(rec.x, rec.y, 0.83, C.controlled, 14, 0.12);
   }
   const locomotion = new WeakMap();
+  const lastWrap = new WeakMap();
+  const wrapAnchors = new WeakMap();
+  const wrapTurns = new WeakMap();
+  const clamp01 = (n) => Math.min(1, Math.max(0, n));
+  const smooth = (n) => {
+    const t = clamp01(n);
+    return t * t * (3 - 2 * t);
+  };
+  const falling = (p) => p.ground?.stage === "fall";
+  const fallProgress = (p) =>
+    clamp01((p.ground.age || 0) / Math.max(0.05, p.ground.fall || 0.25));
+
+  function wrapPairs(sim, byKey) {
+    const pairs = new Map();
+    const live = sim.phase === "live";
+    const runner = sim.carrier;
+    for (const link of sim.tackles) {
+      const defender = byKey.get(link.defender);
+      if (link.style !== "wrap" || !defender || !runner || !live) continue;
+      const dx = runner.x - defender.x;
+      const dz = runner.y - defender.y;
+      const gap = Math.max(0.05, Math.hypot(dx, dz));
+      const pair = {
+        runner,
+        link,
+        angle: Math.atan2(dz, dx),
+        closing:
+          ((defender.vx - runner.vx) * dx + (defender.vy - runner.vy) * dz) /
+          gap,
+        weight:
+          (0.48 + 0.52 * smooth((link.age || 0) / 0.16)) *
+          (0.68 + 0.32 * clamp01(link.grip || 0)),
+        grip: clamp01(link.grip || 0),
+      };
+      pairs.set(defender, pair);
+      lastWrap.set(defender, pair);
+    }
+    const finish = sim.phase === "dead" && sim.wrapFinish;
+    const finishedRunner = finish && byKey.get(finish.runner);
+    if (
+      finishedRunner &&
+      falling(finishedRunner) &&
+      finishedRunner.ground.kind === "tackle"
+    ) {
+      const release = 1 - smooth(fallProgress(finishedRunner));
+      for (const grip of finish.wraps) {
+        const defender = byKey.get(grip.defender);
+        if (
+          !defender ||
+          (defender.ground &&
+            !(falling(defender) && defender.ground.from === finishedRunner.key))
+        )
+          continue;
+        pairs.set(defender, {
+          runner: finishedRunner,
+          grip: clamp01(grip.grip),
+          weight: 0.9 * release,
+          angle: grip.angle,
+          closing: grip.closing,
+        });
+      }
+    }
+    for (const defender of sim.players) {
+      if (pairs.has(defender)) continue;
+      const pair = lastWrap.get(defender);
+      if (!pair || byKey.get(pair.runner.key) !== pair.runner) {
+        if (
+          live &&
+          runner &&
+          defender.team !== runner.team &&
+          !defender.ground &&
+          !runner.ground &&
+          !defender.wrapLinked &&
+          defender.wrapReach > 0.01
+        ) {
+          pairs.set(defender, {
+            runner,
+            approach: true,
+            grip: 0,
+            weight: 0.65 * smooth(defender.wrapReach),
+          });
+        }
+        continue;
+      }
+      // A whistle can clear the link. Follow the recorded runner fall while
+      // the tackler finishes the reach or accompanies it in an actual fall.
+      if (
+        falling(pair.runner) &&
+        pair.runner.ground.kind === "tackle" &&
+        (pair.runner.ground.from === defender.key ||
+          (falling(defender) && defender.ground.from === pair.runner.key)) &&
+        (!defender.ground || falling(defender))
+      ) {
+        const shared = falling(defender);
+        const progress = Math.max(
+          fallProgress(pair.runner),
+          shared ? fallProgress(defender) : 0,
+        );
+        pairs.set(defender, {
+          ...pair,
+          weight: pair.weight * (1 - smooth(progress)) * (shared ? 1 : 0.75),
+        });
+      } else if (
+        live &&
+        runner === pair.runner &&
+        !defender.ground &&
+        !runner.ground &&
+        defender.escapeReaction?.time > 0
+      ) {
+        // Use the existing escape cue for a brief open-hand withdrawal.
+        pairs.set(defender, { ...pair, release: true });
+      } else {
+        lastWrap.delete(defender);
+      }
+    }
+    return pairs;
+  }
+
+  function gripPoint(link, chest, side, nx, nz, width) {
+    let angle = wrapAnchors.get(link);
+    if (angle === undefined) {
+      // Choose the near side of the posed torso once per earned grip.
+      angle = Math.atan2(
+        -nx * chest[8] - nz * chest[10],
+        -nx * chest[0] - nz * chest[2],
+      );
+      wrapAnchors.set(link, angle);
+    }
+    const around = angle + side * 0.73;
+    const x = 0.22 * Math.cos(around);
+    const y = 1.32 + side * 0.075;
+    const z = 0.27 * width * Math.sin(around);
+    return [0, 1, 2].map(
+      (i) => chest[12 + i] + x * chest[i] + y * chest[4 + i] + z * chest[8 + i],
+    );
+  }
+
+  function standingGrip(pair, chest, defender, gap) {
+    if (!pair?.link || !chest || gap < 0.05 || gap >= 1.47) return null;
+    const runner = pair.runner;
+    const width = Math.max(0.76, Math.min(1.4, (runner.w || 205) / 215));
+    return [-1, 1].map((side) =>
+      gripPoint(
+        pair.link,
+        chest,
+        side,
+        (runner.x - defender.x) / gap,
+        (runner.y - defender.y) / gap,
+        width,
+      ),
+    );
+  }
+
+  function followGrip(defender, pair, anchors, face, load, clock) {
+    const prior = wrapTurns.get(defender);
+    if (!anchors && !(pair?.release && prior?.link === pair.link)) {
+      if (prior) wrapTurns.delete(defender);
+      return 0;
+    }
+    const age = pair.link.age || 0;
+    const track = smooth((age - 0.04) / 0.12);
+    const dt = prior?.link === pair.link ? clock - prior.clock : 0;
+    const continuous = prior?.link === pair.link && dt >= 0 && dt < 0.18;
+    let turn = continuous ? prior.turn : 0;
+    if (anchors) {
+      const [left, right] = anchors;
+      const heading = Math.atan2(
+        (left[2] + right[2]) * 0.5 - defender.y,
+        (left[0] + right[0]) * 0.5 - defender.x,
+      );
+      const error = Math.atan2(
+        Math.sin(heading - face),
+        Math.cos(heading - face),
+      );
+      const goal = Math.max(-0.44, Math.min(0.44, error * 1.65)) * load * track;
+      if (continuous) turn += (goal - turn) * (1 - Math.exp(-dt * 22));
+    }
+    wrapTurns.set(defender, { link: pair.link, clock, turn });
+    if (!pair.release) return turn;
+    const escape = defender.escapeReaction;
+    return turn * smooth(escape.time / Math.max(0.01, escape.duration));
+  }
+
+  function solveGripArm(x, y, z, side, scale, strength, legacy, blend) {
+    const upper = 0.43;
+    const forearm = 0.43;
+    // The clavicle axes already contain one factor of world scale.
+    const span = Math.hypot(x, y, z) / (scale * scale);
+    const bearing = -Math.atan2(z, x);
+    const reachFade = 1 - smooth((span - 0.83) / 0.17);
+    const turnFade = 1 - smooth((Math.abs(bearing) - 0.95) / 0.52);
+    const weight = strength * reachFade * turnFade;
+    const elbowLimit = 1.65;
+    const cosine =
+      (span * span - upper * upper - forearm * forearm) / (2 * upper * forearm);
+    const flex = -Math.max(
+      0.24,
+      Math.min(elbowLimit, Math.acos(Math.max(-1, Math.min(1, cosine)))),
+    );
+    const aim = Math.atan2(Math.hypot(x, z), -y) - flex * 0.5;
+    const yaw = Math.max(-0.95, Math.min(0.95, bearing));
+    const rest = 1.41;
+    // When a target exceeds the arm's range, return that arm toward a brace.
+    const next = {
+      swing: rest + (Math.min(2.18, aim) - rest) * weight,
+      yaw: yaw * weight,
+      weight,
+      bend: -0.49 + (flex + 0.49) * weight,
+      twist: side * 0.24 * weight,
+      wrist: (-side * 0.24 - yaw * 0.16) * weight,
+      length: forearm,
+    };
+    for (const joint of Object.keys(next)) {
+      next[joint] = legacy[joint] + (next[joint] - legacy[joint]) * blend;
+    }
+    return next;
+  }
+
+  function wrapArm(
+    pair,
+    defender,
+    clavicle,
+    side,
+    reach,
+    swing,
+    bend,
+    anchor,
+    scale,
+  ) {
+    const runner = pair.runner;
+    const dx = runner.x - defender.x,
+      dz = runner.y - defender.y;
+    const distance = Math.hypot(dx, dz);
+    if (distance < 0.05 || distance >= 1.47) return null;
+    const nx = dx / distance,
+      nz = dz / distance;
+    const size = (runner.h || 74) / 74;
+    const width = Math.max(0.76, Math.min(1.4, (runner.w || 205) / 215));
+    const height = (1.32 + side * 0.075) * size;
+    const pitch = falling(runner) ? -1.28 * fallProgress(runner) : 0;
+    const reachOffset = pair.release ? 0.18 : 0;
+    // Offset the hands on opposite sides of the approach vector. Front,
+    // side and rear wraps can use the same pose without grabbing the ball.
+    const radial = (0.13 + reachOffset) * size;
+    const spread = (0.18 * width + reachOffset) * size * side;
+    const forward = Math.sin(-pitch) * height;
+    const delta = anchor
+      ? [
+          anchor[0] - clavicle[12],
+          anchor[1] - clavicle[13],
+          anchor[2] - clavicle[14],
+        ]
+      : [
+          runner.x -
+            nx * radial -
+            nz * spread +
+            Math.cos(runner.face) * forward -
+            clavicle[12],
+          Math.cos(pitch) * (height + (pitch ? 0.2 : 0)) - clavicle[13],
+          runner.y -
+            nz * radial +
+            nx * spread +
+            Math.sin(runner.face) * forward -
+            clavicle[14],
+        ];
+    const local = (axis) =>
+      delta[0] * clavicle[axis] +
+      delta[1] * clavicle[axis + 1] +
+      delta[2] * clavicle[axis + 2];
+    const x = local(0),
+      y = local(4),
+      z = local(8);
+    const proximity = 1 - smooth((distance - 1.02) / 0.45);
+    const release = defender.escapeReaction;
+    const strength = pair.release
+      ? 0.33 * smooth(release.time / Math.max(0.01, release.duration))
+      : pair.weight;
+    const weight = strength * proximity;
+    if (weight <= 0) return null;
+    const flex = pair.approach
+      ? -0.09
+      : pair.release
+        ? -0.28
+        : -0.32 - pair.grip * 0.42;
+    const aim = Math.atan2(Math.hypot(x, z), -y) - flex * 0.5;
+    const yaw = Math.max(-0.95, Math.min(0.95, -Math.atan2(z, x)));
+    const legacy = {
+      swing: swing + (Math.min(2.18, aim) - swing) * weight,
+      weight,
+      yaw: yaw * weight,
+      bend: bend + (flex - bend) * weight,
+      twist: side * 0.24 * weight,
+      wrist: -side * 0.27 * weight,
+      length: reach + (0.43 - reach) * weight,
+    };
+    const blend = anchor ? smooth(((pair.link.age || 0) - 0.04) / 0.12) : 0;
+    return blend
+      ? solveGripArm(x, y, z, side, scale, weight, legacy, blend)
+      : legacy;
+  }
   function player(
     p,
     clock,
@@ -646,6 +946,9 @@ export function createGridironRenderer(canvas) {
     possession,
     presnap,
     blockOpponent,
+    wrap,
+    wrappedBy,
+    runnerChest,
   ) {
     const s = (p.h || 74) / 74,
       breadth = Math.max(0.76, Math.min(1.4, (p.w || 205) / 215));
@@ -662,6 +965,41 @@ export function createGridironRenderer(canvas) {
     const action = p.action?.kind || "";
     const involved = contacts?.has(p.key) || p.pushing;
     const pose = AnimationPolicy.sample(p, involved, presnap);
+    const activeWrap =
+      wrap &&
+      !wrap.approach &&
+      !wrap.release &&
+      !partner &&
+      !p.airState &&
+      !(
+        p.action?.time > 0 &&
+        ["tackle-dive", "dive", "hit-stick", "cut-stick"].includes(action)
+      )
+        ? wrap
+        : null;
+    const contact = activeWrap || wrappedBy?.pair;
+    const toward = (contact?.angle ?? displayFace) - displayFace;
+    const opponent = activeWrap?.runner ?? wrappedBy?.defender;
+    const gap = opponent ? Math.hypot(p.x - opponent.x, p.y - opponent.y) : 0;
+    const load = contact
+      ? contact.weight *
+        (0.65 + 0.35 * clamp01((contact.closing || 0) / 5)) *
+        (1 - smooth((gap - 1.02) / 0.45))
+      : 0;
+    const gripTargets =
+      !ground && !activeWrap?.runner.ground
+        ? standingGrip(activeWrap, runnerChest, p, gap)
+        : null;
+    const releasing =
+      !ground && !partner && !p.airState && wrap?.release ? wrap : null;
+    const gripTurn = followGrip(
+      p,
+      gripTargets ? activeWrap : releasing,
+      gripTargets,
+      displayFace,
+      load,
+      clock,
+    );
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
@@ -724,7 +1062,8 @@ export function createGridironRenderer(canvas) {
         root,
         0,
         bob -
-          pose.crouch +
+          pose.crouch -
+          0.055 * load +
           legWeight * (((running?.bob || 0) - 0.067) * s - bob) -
           (cut?.drop || 0) * s,
         (cut?.shift || 0) * s,
@@ -843,12 +1182,19 @@ export function createGridironRenderer(canvas) {
       gait,
       cut?.weight || 0,
     );
-    const pelvis = rotateAtHeight(root, 0.87, articulation.pelvisYaw, 0);
+    const pelvis = rotateAtHeight(
+      root,
+      0.87,
+      articulation.pelvisYaw - 0.16 * load * Math.sin(toward) - gripTurn * 0.42,
+      0,
+    );
+    const twist = -0.3 * load * Math.sin(toward) - gripTurn;
     const chest = rotateAtHeight(
       root,
       1.02,
-      articulation.chestYaw,
-      articulation.chestPitch,
+      articulation.chestYaw + twist,
+      articulation.chestPitch -
+        (activeWrap ? 0.29 : 0.17) * load * Math.cos(toward),
     );
     const head = rotateAtHeight(chest, 1.71 + shift, 0, articulation.neckPitch);
     paint(
@@ -889,6 +1235,10 @@ export function createGridironRenderer(canvas) {
         feet[footIndex] = leg.plant;
       }
       const hipSwing =
+        (!ground
+          ? side * gripTurn * 0.26 +
+            load * (0.21 + side * 0.13 * Math.sin(toward))
+          : 0) +
         (run ? side * legAmp * step : 0) +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
         (pose.stance === "three-point"
@@ -911,6 +1261,7 @@ export function createGridironRenderer(canvas) {
       );
       const kneePivot = at(hip, 0.03, -0.48, 0);
       const baseKnee =
+        (!ground ? 0.3 * load + side * gripTurn * 0.2 : 0) +
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
         (pose.stance ? 0.2 : 0) +
         (ground ? groundFold * 0.72 : 0) +
@@ -1099,21 +1450,21 @@ export function createGridironRenderer(canvas) {
         ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
         : 0;
       const swingAngle = swing + (pump - swing) * gait + cutBalance;
-      const elevation = swingAngle + (0.18 - swingAngle) * carryWeight;
-      const shoulder = mul(
-        clavicle,
-        arm ? mul(rotY(arm.yaw), rotZ(elevation)) : rotZ(elevation),
-      );
+      const elevation =
+        swingAngle +
+        (0.18 - swingAngle) * carryWeight +
+        (side < 0 && wrappedBy && !ground ? 0.42 * load : 0);
+      const wrapAllowed =
+        wrap &&
+        !dive &&
+        p.action?.kind !== "hit-stick" &&
+        p.action?.kind !== "cut-stick" &&
+        !p.airState;
+      const armReach = reachPose ? 0.43 : 0.34;
+      const shoulderYaw = arm?.yaw || 0;
       // Pads ride with the shoulder girdle while the reaching upper arm
       // rotates beneath them. Locomotion and contact keep their original pad pose.
-      const pad = arm ? mul(clavicle, rotZ(elevation * 0.3)) : shoulder;
-      sphere(
-        pad,
-        [0.005, -0.026, -side * 0.029 * breadth],
-        [0.33 * breadth, 0.233, 0.29 * breadth],
-        jersey,
-      );
-      // The shared contact reach still owns dive and standing-wrap elbow angles.
+      // The legacy reach still owns any pose without a recorded wrap.
       const baseBend =
         reachPose?.elbow ??
         (ground
@@ -1125,12 +1476,49 @@ export function createGridironRenderer(canvas) {
               : 0.48 - 0.34 * relax);
       const swingBend =
         baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
-      const bend = swingBend + (1.24 - swingBend) * carryWeight;
+      const defaultBend = swingBend + (1.24 - swingBend) * carryWeight;
+      const grip = wrapAllowed
+        ? wrapArm(
+            wrap,
+            p,
+            clavicle,
+            side,
+            armReach,
+            elevation,
+            defaultBend,
+            gripTargets?.[footIndex],
+            s,
+          )
+        : null;
+      const shoulder = mul(
+        clavicle,
+        arm || grip
+          ? mul(rotY(grip?.yaw ?? shoulderYaw), rotZ(grip?.swing ?? elevation))
+          : rotZ(elevation),
+      );
+      const pad = grip
+        ? mul(
+            clavicle,
+            mul(
+              rotY(grip.yaw * (1 - grip.weight)),
+              rotZ(grip.swing * (1 - grip.weight * 0.7)),
+            ),
+          )
+        : arm
+          ? mul(clavicle, rotZ(elevation * 0.3))
+          : shoulder;
+      sphere(
+        pad,
+        [0.005, -0.026, -side * 0.029 * breadth],
+        [0.33 * breadth, 0.233, 0.29 * breadth],
+        jersey,
+      );
+      const bend = grip?.bend ?? defaultBend;
       const pivot = at(shoulder, 0, -0.43, 0);
-      const twist = reachPose
-        ? side * reachPose.inward
-        : (arm?.roll || 0) * 0.35;
-      const extension = reachPose ? 0.43 : 0.34;
+      const twist =
+        grip?.twist ??
+        (reachPose ? side * reachPose.inward : (arm?.roll || 0) * 0.35);
+      const extension = grip?.length ?? armReach;
       const elbow = mul(pivot, mul(rotZ(bend), rotY(twist)));
       drawLimb(
         meshes.arm,
@@ -1144,9 +1532,11 @@ export function createGridironRenderer(canvas) {
         jersey,
       );
       const wrist = at(elbow, 0, -extension, 0);
-      const palm = arm
-        ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
-        : wrist;
+      const palm = grip
+        ? mul(wrist, rotY(grip.wrist))
+        : arm
+          ? mul(wrist, mul(rotZ(arm.flex), rotY(arm.roll)))
+          : wrist;
       paint("glove", palm, [0, -0.026, 0], [0.12, 0.18, 0.16], C.pants);
       if (carriesBall) {
         // Keep the near end cupped in the palm. When the arm cradles the
@@ -1162,6 +1552,7 @@ export function createGridironRenderer(canvas) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
     }
+    return chest;
   }
   function resize() {
     const rect = canvas.getBoundingClientRect(),
@@ -1291,7 +1682,18 @@ export function createGridironRenderer(canvas) {
       contacts.add(c.defender);
       if (sim.carrier) contacts.add(sim.carrier.key);
     }
-    for (const p of sim.players)
+    const wraps = wrapPairs(sim, byKey);
+    let wrappedBy = null;
+    for (const [defender, pair] of wraps) {
+      if (
+        !pair.approach &&
+        !pair.release &&
+        (!wrappedBy || pair.weight > wrappedBy.pair.weight)
+      ) {
+        wrappedBy = { defender, pair };
+      }
+    }
+    const drawPlayer = (p, runnerChest) =>
       player(
         p,
         sim.clock,
@@ -1301,7 +1703,16 @@ export function createGridironRenderer(canvas) {
         sim.possession ?? 0,
         presnap,
         blockOpponent,
+        wraps.get(p),
+        p === wrappedBy?.pair.runner ? wrappedBy : null,
+        runnerChest,
       );
+    // The runner's actual torso matrix is available before either hand aims.
+    const wrappedRunner = wrappedBy?.pair.link ? wrappedBy.pair.runner : null;
+    const runnerChest = wrappedRunner ? drawPlayer(wrappedRunner) : null;
+    for (const p of sim.players) {
+      if (p !== wrappedRunner) drawPlayer(p, runnerChest);
+    }
     airAndPossessionMarkers(sim);
     if (sim.ball && sim.ball.flying) {
       sphere(

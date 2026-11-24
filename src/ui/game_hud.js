@@ -208,6 +208,7 @@ export function createGameHud({ readState, queries }) {
       manualDrive,
       manualReceiver,
       gameFlowNote,
+      tackleLandingPending,
     } = readState();
     if (phase === "live" || phase === "presnap" || phase === "dead") {
       const suffix = ["", "ST", "ND", "RD", "TH"][down] || "TH";
@@ -301,7 +302,9 @@ export function createGameHud({ readState, queries }) {
         (phase === "presnap"
           ? "ALIGNING"
           : phase === "dead"
-            ? "WHISTLE"
+            ? tackleLandingPending
+              ? "TAKEDOWN"
+              : "WHISTLE"
             : "COVERAGE ASSIGNMENTS");
     }
     const control = $("inputStatus");
@@ -345,7 +348,9 @@ export function createGameHud({ readState, queries }) {
                   " · LEFT STICK MOVE · B SWITCH · X AUDIBLE"
                 : "SNAP TO START · X AUDIBLE · A SNAP"
               : phase === "dead"
-                ? "WHISTLE · NEXT SNAP"
+                ? tackleLandingPending
+                  ? "TAKEDOWN"
+                  : "WHISTLE · NEXT SNAP"
                 : controlMode === "defense" && ball?.flying
                   ? "PASS AIRBORNE · " +
                     (defenderAirInteractionZone(P(selectedDefenderKey))
@@ -421,7 +426,9 @@ export function createGameHud({ readState, queries }) {
                 ? "LIVE RETURN"
                 : "LIVE PLAY"
               : phase === "dead"
-                ? "WHISTLE · NEXT"
+                ? tackleLandingPending
+                  ? "TAKEDOWN"
+                  : "WHISTLE · NEXT"
                 : phase.toUpperCase();
       stateRead.textContent = "STATE: " + status + " · " + gameFlowNote;
       stateRead.dataset.phase = phase;
