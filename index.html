@@ -14460,6 +14460,17 @@
       const gap = opponent ? Math.hypot(p.x - opponent.x, p.y - opponent.y) : 0;
       const load = contact2 ? contact2.weight * (0.65 + 0.35 * clamp01((contact2.closing || 0) / 5)) * (1 - smooth((gap - 1.02) / 0.45)) : 0;
       const gripTargets = activeWrap?.followThrough || !ground && !activeWrap?.runner.ground ? gripTargetsForWrap(activeWrap, runnerChest, p, gap) : null;
+      const attached = !ground && !activeWrap?.followThrough && activeWrap?.link.attachment?.active && gripTargets;
+      const effort = attached ? smooth((activeWrap.link.age - 0.1) / 0.18) * smooth((activeWrap.grip - 0.3) / 0.36) * smooth((activeWrap.link.quality - 0.24) / 0.45) : 0;
+      const closing = activeWrap?.closing || 0;
+      const heading = activeWrap?.angle ?? displayFace;
+      const lateral = effort > 0 ? (p.vy - opponent.vy) * Math.cos(heading) - (p.vx - opponent.vx) * Math.sin(heading) : 0;
+      const support = smooth(((p.balance ?? 1) - 0.35) / 0.55);
+      const gather = effort * support * smooth((1.13 - gap) / 0.32) * (0.4 + 0.6 * smooth((closing + 0.15) / 1.25));
+      const brace = effort * (1 - smooth((gap - 1.1) / 0.35)) * smooth((-closing + Math.abs(lateral) * 0.3 + (1 - support) * 0.8) / 1.8);
+      const slip = effort * smooth((gap - 0.95) / 0.32) * smooth((-closing + Math.abs(lateral) * 0.25) / 1.5);
+      const recoveryStep = (gather * 0.1 + brace * 0.15 + slip * 0.2) * smooth(Math.hypot(p.vx, p.vy) / 2.2);
+      const transfer = (gather + brace) * Math.max(-1, Math.min(1, lateral / 2.8));
       const releasing = !ground && !partner && !p.airState && wrap?.release ? wrap : null;
       const gripTurn = followGrip(
         p,
@@ -14514,7 +14525,7 @@
         root = at(
           root,
           0,
-          bob - pose2.crouch - 0.055 * load - 0.24 * fallBrace + legWeight * (((running?.bob || 0) - 0.067) * s - bob) - (cut?.drop || 0) * s,
+          bob - pose2.crouch - 0.055 * load - (0.06 * gather + 0.05 * brace) * s - 0.24 * fallBrace + legWeight * (((running?.bob || 0) - 0.067) * s - bob) - (cut?.drop || 0) * s,
           (cut?.shift || 0) * s
         );
         root = mul(root, rotZ(pose2.lean + pose2.stanceLean - pose2.impactAccent));
@@ -14595,15 +14606,15 @@
       const pelvis = rotateAtHeight(
         root,
         0.87,
-        articulation.pelvisYaw - 0.16 * load * Math.sin(toward) - gripTurn * 0.42 + (landing?.twist || 0) * 0.48,
-        0
+        articulation.pelvisYaw - 0.16 * load * Math.sin(toward) - gripTurn * 0.42 - Math.sin(toward) * (0.16 * gather + 0.08 * brace) + (landing?.twist || 0) * 0.48,
+        -0.09 * gather + 0.1 * slip
       );
-      const twist = -0.3 * load * Math.sin(toward) - gripTurn + (landing?.twist || 0);
+      const twist = -Math.sin(toward) * (0.3 * load + 0.25 * gather + 0.12 * brace) - gripTurn + (landing?.twist || 0);
       const chest = rotateAtHeight(
         root,
         1.02,
         articulation.chestYaw + twist,
-        articulation.chestPitch - (activeWrap ? 0.29 : 0.17) * load * Math.cos(toward) - 0.52 * fallBrace + 0.14 * (landing?.buckle || 0)
+        articulation.chestPitch - (activeWrap ? 0.29 : 0.17) * load * Math.cos(toward) - 0.52 * fallBrace - 0.23 * gather - 0.12 * brace + 0.1 * slip + 0.14 * (landing?.buckle || 0)
       );
       const head = rotateAtHeight(chest, 1.71 + shift, 0, articulation.neckPitch);
       paint(
@@ -14636,15 +14647,15 @@
           leg = solveGroundedLeg(target, side, s, hip, state2?.feet[footIndex]);
           feet[footIndex] = leg.plant;
         }
-        const hipSwing = (!ground ? side * gripTurn * 0.26 + load * (0.21 + side * 0.13 * Math.sin(toward)) : 0) + (run ? side * legAmp * step3 : 0) + (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) + (landing ? -0.21 * landing.front + side * 0.13 * landing.side : 0) + 0.27 * fallBrace + (pose2.stance === "three-point" ? 0.26 : pose2.stance === "coverage-ready" ? 0.13 : pose2.stance === "receiver" ? 0.16 : 0) + (hurdle || dive ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT)) : 0) + (rise > 0 ? -0.22 * arc : 0) + (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-        const roll = (leg?.roll || 0) * legWeight + side * idleRoll;
+        const hipSwing = (!ground ? side * gripTurn * 0.26 + load * (0.21 + side * 0.13 * Math.sin(toward)) : 0) + (run ? side * legAmp * step3 : 0) + side * (recoveryStep * step3 + 0.11 * transfer) + 0.09 * gather + (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) + (landing ? -0.21 * landing.front + side * 0.13 * landing.side : 0) + 0.27 * fallBrace + (pose2.stance === "three-point" ? 0.26 : pose2.stance === "coverage-ready" ? 0.13 : pose2.stance === "receiver" ? 0.16 : 0) + (hurdle || dive ? (0.6 + side * 0.22) * Math.sin(Math.PI * (hurdle ? hurdleT : diveT)) : 0) + (rise > 0 ? -0.22 * arc : 0) + (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
+        const roll = (leg?.roll || 0) * legWeight + side * idleRoll + 0.12 * transfer;
         if (roll) hip = mul(hip, rotX(roll));
         hip = mul(
           hip,
           rotZ(hipSwing * (1 - legWeight) + (leg?.hip || 0) * legWeight)
         );
         const kneePivot = at(hip, 0.03, -0.48, 0);
-        const baseKnee = (!ground ? 0.3 * load + side * gripTurn * 0.2 : 0) + (run ? Math.abs(step3 * legAmp) * 0.5 : 0) + (pose2.stance ? 0.2 : 0) + (ground ? groundFold * 0.72 : 0) + (landing ? 0.24 * landing.buckle + 0.11 * Math.abs(landing.side) : 0) + 0.38 * fallBrace + (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) + (rise > 0 ? 0.3 * arc : 0);
+        const baseKnee = (!ground ? 0.3 * load + side * gripTurn * 0.2 : 0) + (run ? Math.abs(step3 * legAmp) * 0.5 : 0) + 0.22 * gather + 0.23 * brace + Math.max(0, side * step3) * recoveryStep + (pose2.stance ? 0.2 : 0) + (ground ? groundFold * 0.72 : 0) + (landing ? 0.24 * landing.buckle + 0.11 * Math.abs(landing.side) : 0) + 0.38 * fallBrace + (hurdle ? 0.85 * Math.sin(Math.PI * hurdleT) : 0) + (rise > 0 ? 0.3 * arc : 0);
         const kneeBend = baseKnee * (1 - legWeight) + (leg?.knee || 0) * legWeight;
         drawLimb(
           meshes.leg,
@@ -14666,10 +14677,10 @@
             Math.cos(displayFace - yaw)
           );
           const bank = Math.atan2(-foot[9], foot[5]);
-          const heading = yaw + yawError * legWeight;
+          const heading2 = yaw + yawError * legWeight;
           const slope = pitch + (leg.pitch - pitch) * legWeight;
           const tilt = bank * (1 - legWeight);
-          const cy = Math.cos(heading), sy = Math.sin(heading);
+          const cy = Math.cos(heading2), sy = Math.sin(heading2);
           const cp = Math.cos(slope), sp = Math.sin(slope);
           const cb = Math.cos(tilt), sb = Math.sin(tilt);
           foot[0] = s * cy * cp;
