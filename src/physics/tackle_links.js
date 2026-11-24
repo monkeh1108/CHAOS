@@ -335,6 +335,65 @@ export function createTackleLinks() {
       : "wrap";
   }
 
+  // Only completed tackles reach this decision. Use the existing grip load
+  // and the defender's footing to select at most one partner for the fall.
+  function pairedFall(a, contacts) {
+    let selected = null;
+    for (const { d, t } of contacts) {
+      if (
+        t.style !== "wrap" ||
+        t.age < 0.23 ||
+        t.grip < 0.62 ||
+        t.quality < 0.62 ||
+        !t.attachment?.active ||
+        !t.supportLoad ||
+        d.ground ||
+        d.groundLock > 0 ||
+        d.blocked >= 0.25
+      )
+        continue;
+      const { x, y } = t.supportLoad;
+      const load = Math.hypot(x, y);
+      if (load < 0.18) continue;
+      const skill = d.AGI * 0.4 + d.STR * 0.35 + d.TAK * 0.25;
+      const carried = Math.max(0, (d.vx * x + d.vy * y) / load);
+      const lateral = Math.abs(
+        d.vx * Math.sin(d.face) - d.vy * Math.cos(d.face),
+      );
+      const balanceLimit =
+        0.73 + Math.min(0.09, load * 0.12) - (skill - 70) * 0.003;
+      const loadNeed = 0.3 + (skill - 70) * 0.004;
+      const score =
+        balanceLimit -
+        d.balance +
+        (load + carried * 0.075 + lateral * 0.09 - loadNeed);
+      if (
+        d.balance >= balanceLimit ||
+        load + carried * 0.075 + lateral * 0.09 < loadNeed ||
+        (selected &&
+          (score < selected.score ||
+            (score === selected.score && d.key >= selected.d.key)))
+      )
+        continue;
+      selected = { d, x, y, score };
+    }
+    if (!selected) return null;
+    const { d, x, y } = selected;
+    d.ground = {
+      stage: "fall",
+      time: 0.28,
+      fall: 0.28,
+      rest: 0.35,
+      rise: 0.3,
+      age: 0,
+      force: 0,
+      from: a.key,
+      kind: "tackle",
+      dir: Math.atan2(d.vy + 2 * y, d.vx + 2 * x),
+    };
+    return d.key;
+  }
+
   function finishTackle(a, contacts, type) {
     const names = contacts
       .map((c) => c.d.pos + (c.t.style === "hit" ? " HIT" : ""))
@@ -360,6 +419,7 @@ export function createTackleLinks() {
       kind: "tackle",
     };
 
+    const pairedDefender = pairedFall(a, contacts);
     // Snapshot the earned grips before finish() clears them and resets motion.
     const motion = { vx: a.vx || 0, vy: a.vy || 0, face: a.face || 0 };
     const wraps = contacts
@@ -385,6 +445,7 @@ export function createTackleLinks() {
         clock,
         motion,
         wraps,
+        ...(pairedDefender ? { pairedDefender } : {}),
       });
   }
 

@@ -129,10 +129,12 @@ export function createMatchView({
         hitStickCount: matchState.hitStickCount,
         impactBlockCount: matchState.impactBlockCount,
         powerMoveCount: matchState.powerMoveCount,
-        tackles: [...matchState.tackleLinks.values()].map((t) => ({
-          ...t,
-          attachment: t.attachment ? { ...t.attachment } : null,
-        })),
+        tackles: [...matchState.tackleLinks.values()].map(
+          ({ supportLoad: _supportLoad, attachment, ...t }) => ({
+            ...t,
+            attachment: attachment ? { ...attachment } : null,
+          }),
+        ),
         blocks: [...matchState.blockLinks.values()].map((t) => ({ ...t })),
         tackleCount: matchState.tackleCount,
         brokenTackleCount: matchState.brokenTackleCount,

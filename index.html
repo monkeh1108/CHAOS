@@ -9944,6 +9944,42 @@
       const power = d.HIT * 0.46 + d.STR * 0.25 + d.TAK * 0.2 + d.AWR * 0.09;
       return headOn && speed(d) > 2.2 && speedIn > 1.05 && power > 79 ? "hit" : "wrap";
     }
+    function pairedFall(a, contacts2) {
+      let selected = null;
+      for (const { d: d2, t } of contacts2) {
+        if (t.style !== "wrap" || t.age < 0.23 || t.grip < 0.62 || t.quality < 0.62 || !t.attachment?.active || !t.supportLoad || d2.ground || d2.groundLock > 0 || d2.blocked >= 0.25)
+          continue;
+        const { x: x2, y: y2 } = t.supportLoad;
+        const load = Math.hypot(x2, y2);
+        if (load < 0.18) continue;
+        const skill = d2.AGI * 0.4 + d2.STR * 0.35 + d2.TAK * 0.25;
+        const carried = Math.max(0, (d2.vx * x2 + d2.vy * y2) / load);
+        const lateral = Math.abs(
+          d2.vx * Math.sin(d2.face) - d2.vy * Math.cos(d2.face)
+        );
+        const balanceLimit = 0.73 + Math.min(0.09, load * 0.12) - (skill - 70) * 3e-3;
+        const loadNeed = 0.3 + (skill - 70) * 4e-3;
+        const score = balanceLimit - d2.balance + (load + carried * 0.075 + lateral * 0.09 - loadNeed);
+        if (d2.balance >= balanceLimit || load + carried * 0.075 + lateral * 0.09 < loadNeed || selected && (score < selected.score || score === selected.score && d2.key >= selected.d.key))
+          continue;
+        selected = { d: d2, x: x2, y: y2, score };
+      }
+      if (!selected) return null;
+      const { d, x, y } = selected;
+      d.ground = {
+        stage: "fall",
+        time: 0.28,
+        fall: 0.28,
+        rest: 0.35,
+        rise: 0.3,
+        age: 0,
+        force: 0,
+        from: a.key,
+        kind: "tackle",
+        dir: Math.atan2(d.vy + 2 * y, d.vx + 2 * x)
+      };
+      return d.key;
+    }
     function finishTackle(a, contacts2, type) {
       const names = contacts2.map((c) => c.d.pos + (c.t.style === "hit" ? " HIT" : "")).join(" + ");
       const impulse = Math.round(
@@ -9965,6 +10001,7 @@
         from: contacts2[0]?.d.key || null,
         kind: "tackle"
       };
+      const pairedDefender = pairedFall(a, contacts2);
       const motion = { vx: a.vx || 0, vy: a.vy || 0, face: a.face || 0 };
       const wraps = contacts2.filter(({ t }) => t.style === "wrap").map(({ d, t, hit }) => ({
         defender: d.key,
@@ -9986,7 +10023,8 @@
           runner: a.key,
           clock,
           motion,
-          wraps
+          wraps,
+          ...pairedDefender ? { pairedDefender } : {}
         });
     }
     function resolveHurdle(a, d, style) {
@@ -10190,6 +10228,8 @@
           1.6
         ) * clamp(0.78 + 0.22 * t.quality, 0.6, 1.2);
         t.grip = clamp(t.grip + dt * gripRate, 0, security);
+        const incomingVx = d.vx;
+        const incomingVy = d.vy;
         t.attachment = ChaosGripAttachment.step(
           a,
           d,
@@ -10232,6 +10272,13 @@
         const blend = clamp(dt * (0.43 + contribution * 0.82), 0, 0.12);
         d.vx += (a.vx - d.vx) * blend * aMass / (aMass + dMass);
         d.vy += (a.vy - d.vy) * blend * aMass / (aMass + dMass);
+        if (t.style === "wrap") {
+          const retain = Math.max(0, 1 - dt * 6);
+          t.supportLoad = {
+            x: (t.supportLoad?.x || 0) * retain + d.vx - incomingVx,
+            y: (t.supportLoad?.y || 0) * retain + d.vy - incomingVy
+          };
+        }
         const runnerEdge = a.TRK * 0.54 + a.STR * 0.24 + a.AGI * 0.22 - (d.TAK * 0.59 + d.STR * 0.23 + d.AWR * 0.18);
         const outrunningGrip = speed(a) > 3.3 && t.grip < 0.44 && t.age > 0.68;
         const physicallyEscaping = runnerEdge > 14 && security < 0.94 && t.age > 0.9 && t.grip < 0.76;
@@ -11993,10 +12040,12 @@
           hitStickCount: matchState.hitStickCount,
           impactBlockCount: matchState.impactBlockCount,
           powerMoveCount: matchState.powerMoveCount,
-          tackles: [...matchState.tackleLinks.values()].map((t) => ({
-            ...t,
-            attachment: t.attachment ? { ...t.attachment } : null
-          })),
+          tackles: [...matchState.tackleLinks.values()].map(
+            ({ supportLoad: _supportLoad, attachment, ...t }) => ({
+              ...t,
+              attachment: attachment ? { ...attachment } : null
+            })
+          ),
           blocks: [...matchState.blockLinks.values()].map((t) => ({ ...t })),
           tackleCount: matchState.tackleCount,
           brokenTackleCount: matchState.brokenTackleCount,
