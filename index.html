@@ -1298,12 +1298,15 @@
       lastObservedAt: clock
     };
   }
+  function hasRecovered(defender) {
+    return !defender.ground && (defender.stun || 0) <= 0 && (defender.diveRecovery || 0) <= 0 && (defender.tackleCooldown || 0) <= 0 && (defender.balance ?? 1) >= 0.27;
+  }
   function observe(defender, runner, bodyGap, clock) {
     const state2 = defender.reengage;
     if (!state2 || state2.carrier !== runner.key) return true;
     const distance2 = Math.hypot(runner.x - defender.x, runner.y - defender.y);
     if (distance2 >= state2.requiredGap) state2.hasSeparated = true;
-    const recovered = !defender.ground && (defender.stun || 0) <= 0 && (defender.diveRecovery || 0) <= 0 && (defender.tackleCooldown || 0) <= 0 && (defender.balance ?? 1) >= 0.27;
+    const recovered = hasRecovered(defender);
     const dt = clampFinite(clock - (state2.lastObservedAt ?? clock), 0, 0.06);
     state2.lastObservedAt = clock;
     const slowRunner = Math.hypot(runner.vx || 0, runner.vy || 0) < 0.85;
@@ -1316,7 +1319,11 @@
     }
     return false;
   }
-  var ChaosTackleReengagement = Object.freeze({ release, observe });
+  var ChaosTackleReengagement = Object.freeze({
+    release,
+    observe,
+    hasRecovered
+  });
 
   // src/physics/tackle_contacts.js
   function createTackleContacts() {
@@ -3343,7 +3350,7 @@
 
   // src/sim/kick_return.js
   function createKickReturn() {
-    let H2, P, TEAM_NAMES2, blockBattle, hud, isFreeKick, matchState, pursuitAim, setDriveSpot, setResultUI, speed, spotText, steer;
+    let H2, P, TEAM_NAMES2, blockBattle, hud, isFreeKick, matchState, pursuitAim, setDriveSpot, setResultUI, speed, spotText, steer, steerEscapeRecovery;
     function finishReturn(type, x, detail) {
       if (matchState.phase !== "live" || !matchState.specialState) return;
       const k = matchState.specialState;
@@ -3492,6 +3499,7 @@
       );
     }
     function coverReturnAI(d, ret, dt) {
+      if (steerEscapeRecovery(d, ret, dt)) return;
       const aim2 = pursuitAim(d, ret);
       if (!d.returnTrack) d.returnTrack = { x: d.x, y: d.y, age: 0, still: 0 };
       const track = d.returnTrack;
@@ -3540,7 +3548,8 @@
           setResultUI,
           speed,
           spotText,
-          steer
+          steer,
+          steerEscapeRecovery
         } = services);
       },
       finishReturn,
@@ -6754,7 +6763,8 @@
       const fx = (a.x - d.x) / sep;
       const fy = (a.y - d.y) / sep;
       if (!recovery.peel) {
-        const heading = Math.hypot(a.vx, a.vy) > 1 ? Math.atan2(a.vy, a.vx) : a.face;
+        const runnerSpeed = Math.hypot(a.vx, a.vy);
+        const heading = runnerSpeed > 1 ? Math.atan2(a.vy, a.vx) : a.face;
         const hx = Math.cos(heading);
         const hy = Math.sin(heading);
         if (fx * hx + fy * hy < 0.6) return null;
@@ -6765,9 +6775,10 @@
           const y = d.y - other.y;
           return x * fx + y * fy > 0.25 && Math.hypot(x, y) < 1.65 && Math.abs(y * fx - x * fy) < 0.65;
         });
-        if (!crowd) return null;
+        const pressing = runnerSpeed >= 0.85 && ChaosTackleReengagement.hasRecovered(d) && matchState.liveTackleContacts.get(d.key)?.bodyContact;
+        if (!crowd && !pressing) return null;
         const lateral = -(d.x - a.x) * hy + (d.y - a.y) * hx;
-        const crowdSide = -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx;
+        const crowdSide = crowd ? -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx : 0;
         let side = Math.abs(lateral) > 0.08 ? Math.sign(lateral) : -Math.sign(crowdSide) || 1;
         const width = recovery.requiredGap + 0.15;
         const lane = d.y + side * hx * width;
@@ -6781,15 +6792,17 @@
         role: a.key
       };
     }
-    function pursuitAI(d, a, dt) {
+    function steerEscapeRecovery(d, a, dt) {
       const recovery = escapeRecoveryAim(d, a);
-      if (recovery) {
-        d.pursuitPoint = recovery;
-        d.intent = "recover";
-        d.intentTarget = a.key;
-        steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
-        return;
-      }
+      if (!recovery) return false;
+      d.pursuitPoint = recovery;
+      d.intent = "recover";
+      d.intentTarget = a.key;
+      steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
+      return true;
+    }
+    function pursuitAI(d, a, dt) {
+      if (steerEscapeRecovery(d, a, dt)) return;
       const aim2 = pursuitAim(d, a);
       d.pursuitPoint = aim2;
       const rating3 = clamp(0.95 + (d.PUR - 70) * 32e-4, 0.82, 1.11);
@@ -6807,7 +6820,8 @@
       runFitAI,
       interceptT,
       pursuitAim,
-      pursuitAI
+      pursuitAI,
+      steerEscapeRecovery
     };
   }
 

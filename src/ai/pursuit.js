@@ -3,6 +3,7 @@ import { DefensivePresnap } from "../ai/defensive_presnap.js";
 import { InsideZoneIQ } from "../ai/inside_zone_iq.js";
 import { ChaosPursuitReaction } from "../ai/pursuit_reaction.js";
 import { RunPursuitPolicy } from "../ai/run_pursuit_policy.js";
+import { ChaosTackleReengagement } from "../physics/tackle_reengagement.js";
 
 export function createPursuit() {
   let H, P, RUNS, arrive, matchState, maxSpeed, steer;
@@ -300,7 +301,11 @@ export function createPursuit() {
 
   function escapeRecoveryAim(d, a) {
     const recovery = d.reengage;
-    if (recovery?.carrier !== a.key || recovery.hasSeparated || d.blocked >= 0.25)
+    if (
+      recovery?.carrier !== a.key ||
+      recovery.hasSeparated ||
+      d.blocked >= 0.25
+    )
       return null;
 
     const sep = dist(d, a);
@@ -308,11 +313,8 @@ export function createPursuit() {
     const fx = (a.x - d.x) / sep;
     const fy = (a.y - d.y) / sep;
     if (!recovery.peel) {
-      // A trailing defender can screen the runner from his own teammates
-      // while still ineligible to re-grip. Only reset his lane if another
-      // available tackler is actually approaching through that lane.
-      const heading =
-        Math.hypot(a.vx, a.vy) > 1 ? Math.atan2(a.vy, a.vx) : a.face;
+      const runnerSpeed = Math.hypot(a.vx, a.vy);
+      const heading = runnerSpeed > 1 ? Math.atan2(a.vy, a.vx) : a.face;
       const hx = Math.cos(heading);
       const hy = Math.sin(heading);
       if (fx * hx + fy * hy < 0.6) return null;
@@ -334,10 +336,19 @@ export function createPursuit() {
           Math.abs(y * fx - x * fy) < 0.65
         );
       });
-      if (!crowd) return null;
+      // Clear an arriving teammate's lane as before. When alone, use the
+      // previous motion step's measured body contact to detect rear pressure
+      // after recovery. The new attempt still requires physical separation.
+      const pressing =
+        runnerSpeed >= 0.85 &&
+        ChaosTackleReengagement.hasRecovered(d) &&
+        matchState.liveTackleContacts.get(d.key)?.bodyContact;
+      if (!crowd && !pressing) return null;
 
       const lateral = -(d.x - a.x) * hy + (d.y - a.y) * hx;
-      const crowdSide = -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx;
+      const crowdSide = crowd
+        ? -(crowd.x - d.x) * hy + (crowd.y - d.y) * hx
+        : 0;
       let side =
         Math.abs(lateral) > 0.08
           ? Math.sign(lateral)
@@ -357,15 +368,18 @@ export function createPursuit() {
     };
   }
 
-  function pursuitAI(d, a, dt) {
+  function steerEscapeRecovery(d, a, dt) {
     const recovery = escapeRecoveryAim(d, a);
-    if (recovery) {
-      d.pursuitPoint = recovery;
-      d.intent = "recover";
-      d.intentTarget = a.key;
-      steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
-      return;
-    }
+    if (!recovery) return false;
+    d.pursuitPoint = recovery;
+    d.intent = "recover";
+    d.intentTarget = a.key;
+    steer(d, recovery.x - d.x, recovery.y - d.y, dt, 0.95);
+    return true;
+  }
+
+  function pursuitAI(d, a, dt) {
+    if (steerEscapeRecovery(d, a, dt)) return;
     const aim = pursuitAim(d, a);
     d.pursuitPoint = aim;
     const rating = clamp(0.95 + (d.PUR - 70) * 0.0032, 0.82, 1.11);
@@ -389,5 +403,6 @@ export function createPursuit() {
     interceptT,
     pursuitAim,
     pursuitAI,
+    steerEscapeRecovery,
   };
 }
