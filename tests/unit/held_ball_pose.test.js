@@ -6,7 +6,7 @@ const { idleArmWeight } = require("../../src/render/animation_policy.js");
 function rendererFixture() {
   const draws = [];
   const noop = () => {};
-  let model, color;
+  let model, color, limb;
   const gl = new Proxy(
     {
       getShaderParameter: () => true,
@@ -19,7 +19,10 @@ function rendererFixture() {
       uniform3fv: (_, values) => {
         color = values.map((v) => Math.round(v * 255)).join(",");
       },
-      drawArrays: () => draws.push({ model, color }),
+      uniform4f: (name, ...values) => {
+        if (name === "uLimb") limb = values;
+      },
+      drawArrays: () => draws.push({ model, color, limb }),
       readPixels: (...args) => args.at(-1).fill(0),
       isContextLost: () => false,
     },
@@ -244,6 +247,107 @@ test("each live wrap follows the runner's torso as it turns in place", () => {
   scene.tackles = scene.tackles.map((link) => ({ ...link }));
   assert.notDeepEqual(hands().slice(0, 2), following.slice(0, 2));
   assert.notDeepEqual(hands().slice(2), following.slice(2));
+});
+
+test("a standing grip turns the spine and hips progressively without moving the player", () => {
+  const fixture = rendererFixture();
+  const { player, scene, draw } = fixture;
+  const defender = tacklePair(fixture, 0);
+  const segments = () => {
+    const rendered = draw();
+    const yaw = (matrix) => Math.atan2(matrix[2], matrix[0]);
+    const chest = rendered.find(
+      ({ color, model }) =>
+        color === "81,193,237" && near(span(model, 1), 0.78, 1e-5),
+    ).model;
+    const pelvis = rendered
+      .filter(
+        ({ color, model }) =>
+          color === "232,234,218" && near(span(model, 1), 0.37, 1e-5),
+      )
+      .at(-1).model;
+    const knees = rendered.filter(({ limb }) => limb?.[3] === 0.415).slice(-2);
+    return {
+      chest: yaw(chest),
+      pelvis: yaw(pelvis),
+      knees: knees.map(({ limb }) => limb[0]),
+    };
+  };
+  const initial = segments();
+  player.face = Math.PI / 2;
+  assert.deepEqual(
+    segments(),
+    initial,
+    "the body does not snap on a same-tick turn",
+  );
+  scene.clock += 1 / 60;
+  const first = segments();
+  let follow;
+  for (let i = 0; i < 9; i++) {
+    scene.clock += 1 / 60;
+    const before = structuredClone(scene);
+    follow = segments();
+    assert.deepEqual(scene, before);
+  }
+  assert.ok(first.chest > initial.chest && follow.chest > first.chest);
+  assert.ok(follow.pelvis > initial.pelvis);
+  assert.ok(
+    Math.abs(follow.pelvis - initial.pelvis) <
+      Math.abs(follow.chest - initial.chest),
+  );
+  assert.ok(Math.abs(follow.chest - initial.chest) < 0.44);
+  assert.notDeepEqual(follow.knees, initial.knees);
+
+  scene.tackles = [];
+  defender.wrapLinked = false;
+  defender.wrapReach = 0;
+  defender.intent = "recover";
+  defender.escapeReaction = {
+    kind: "twist",
+    time: 0.4,
+    duration: 0.4,
+    intensity: 0,
+  };
+  scene.clock += 1 / 60;
+  const release = segments();
+  defender.escapeReaction.time = 0.2;
+  scene.clock += 1 / 60;
+  const fading = segments();
+  defender.escapeReaction = null;
+  scene.clock += 1 / 60;
+  const free = segments();
+  assert.ok(
+    Math.abs(fading.chest - free.chest) < Math.abs(release.chest - free.chest),
+  );
+});
+
+test("an unreachable hand returns to a bent brace while the other arm can keep tracking", () => {
+  const fixture = rendererFixture();
+  const { player, scene, draw } = fixture;
+  const defender = tacklePair(fixture, Math.PI / 2);
+  defender.y = player.y - 0.85;
+  const arms = () =>
+    draw()
+      .filter(({ limb, color }) => limb?.[3] === 0.43 && color === "151,118,87")
+      .slice(-2);
+  const initial = arms();
+  player.face = Math.PI / 2;
+  const turned = arms();
+  assert.equal(turned.length, 2);
+  assert.notDeepEqual(turned[0].limb, initial[0].limb);
+  assert.ok(
+    near(turned[1].limb[0], -0.49, 1e-5),
+    "the far elbow goes back to the brace",
+  );
+  assert.ok(
+    near(turned[1].limb[1], 0, 1e-5),
+    "the far arm stops pulling around the runner",
+  );
+  assert.ok(
+    Math.abs(turned[0].limb[1]) > 0.08,
+    "the nearer arm still follows independently",
+  );
+  assert.equal(scene.tackles.length, 1);
 });
 
 test("wrap follow-through uses recorded falls and releases the hands on escape", () => {

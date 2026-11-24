@@ -639,6 +639,7 @@ export function createGridironRenderer(canvas) {
   const locomotion = new WeakMap();
   const lastWrap = new WeakMap();
   const wrapAnchors = new WeakMap();
+  const wrapTurns = new WeakMap();
   const clamp01 = (n) => Math.min(1, Math.max(0, n));
   const smooth = (n) => {
     const t = clamp01(n);
@@ -765,12 +766,93 @@ export function createGridironRenderer(canvas) {
       wrapAnchors.set(link, angle);
     }
     const around = angle + side * 0.73;
-    return at(
-      chest,
-      0.22 * Math.cos(around),
-      1.32 + side * 0.075,
-      0.27 * width * Math.sin(around),
+    const x = 0.22 * Math.cos(around);
+    const y = 1.32 + side * 0.075;
+    const z = 0.27 * width * Math.sin(around);
+    return [0, 1, 2].map(
+      (i) => chest[12 + i] + x * chest[i] + y * chest[4 + i] + z * chest[8 + i],
     );
+  }
+
+  function standingGrip(pair, chest, defender, gap) {
+    if (!pair?.link || !chest || gap < 0.05 || gap >= 1.47) return null;
+    const runner = pair.runner;
+    const width = Math.max(0.76, Math.min(1.4, (runner.w || 205) / 215));
+    return [-1, 1].map((side) =>
+      gripPoint(
+        pair.link,
+        chest,
+        side,
+        (runner.x - defender.x) / gap,
+        (runner.y - defender.y) / gap,
+        width,
+      ),
+    );
+  }
+
+  function followGrip(defender, pair, anchors, face, load, clock) {
+    const prior = wrapTurns.get(defender);
+    if (!anchors && !(pair?.release && prior?.link === pair.link)) {
+      if (prior) wrapTurns.delete(defender);
+      return 0;
+    }
+    const age = pair.link.age || 0;
+    const track = smooth((age - 0.04) / 0.12);
+    const dt = prior?.link === pair.link ? clock - prior.clock : 0;
+    const continuous = prior?.link === pair.link && dt >= 0 && dt < 0.18;
+    let turn = continuous ? prior.turn : 0;
+    if (anchors) {
+      const [left, right] = anchors;
+      const heading = Math.atan2(
+        (left[2] + right[2]) * 0.5 - defender.y,
+        (left[0] + right[0]) * 0.5 - defender.x,
+      );
+      const error = Math.atan2(
+        Math.sin(heading - face),
+        Math.cos(heading - face),
+      );
+      const goal = Math.max(-0.44, Math.min(0.44, error * 1.65)) * load * track;
+      if (continuous) turn += (goal - turn) * (1 - Math.exp(-dt * 22));
+    }
+    wrapTurns.set(defender, { link: pair.link, clock, turn });
+    if (!pair.release) return turn;
+    const escape = defender.escapeReaction;
+    return turn * smooth(escape.time / Math.max(0.01, escape.duration));
+  }
+
+  function solveGripArm(x, y, z, side, scale, strength, legacy, blend) {
+    const upper = 0.43;
+    const forearm = 0.43;
+    // The clavicle axes already contain one factor of world scale.
+    const span = Math.hypot(x, y, z) / (scale * scale);
+    const bearing = -Math.atan2(z, x);
+    const reachFade = 1 - smooth((span - 0.83) / 0.17);
+    const turnFade = 1 - smooth((Math.abs(bearing) - 0.95) / 0.52);
+    const weight = strength * reachFade * turnFade;
+    const elbowLimit = 1.65;
+    const cosine =
+      (span * span - upper * upper - forearm * forearm) / (2 * upper * forearm);
+    const flex = -Math.max(
+      0.24,
+      Math.min(elbowLimit, Math.acos(Math.max(-1, Math.min(1, cosine)))),
+    );
+    const aim = Math.atan2(Math.hypot(x, z), -y) - flex * 0.5;
+    const yaw = Math.max(-0.95, Math.min(0.95, bearing));
+    const rest = 1.41;
+    // When a target exceeds the arm's range, return that arm toward a brace.
+    const next = {
+      swing: rest + (Math.min(2.18, aim) - rest) * weight,
+      yaw: yaw * weight,
+      weight,
+      bend: -0.49 + (flex + 0.49) * weight,
+      twist: side * 0.24 * weight,
+      wrist: (-side * 0.24 - yaw * 0.16) * weight,
+      length: forearm,
+    };
+    for (const joint of Object.keys(next)) {
+      next[joint] = legacy[joint] + (next[joint] - legacy[joint]) * blend;
+    }
+    return next;
   }
 
   function wrapArm(
@@ -781,7 +863,8 @@ export function createGridironRenderer(canvas) {
     reach,
     swing,
     bend,
-    runnerChest,
+    anchor,
+    scale,
   ) {
     const runner = pair.runner;
     const dx = runner.x - defender.x,
@@ -800,15 +883,11 @@ export function createGridironRenderer(canvas) {
     const radial = (0.13 + reachOffset) * size;
     const spread = (0.18 * width + reachOffset) * size * side;
     const forward = Math.sin(-pitch) * height;
-    const anchor =
-      pair.link && runnerChest && !pair.release
-        ? gripPoint(pair.link, runnerChest, side, nx, nz, width)
-        : null;
     const delta = anchor
       ? [
-          anchor[12] - clavicle[12],
-          anchor[13] - clavicle[13],
-          anchor[14] - clavicle[14],
+          anchor[0] - clavicle[12],
+          anchor[1] - clavicle[13],
+          anchor[2] - clavicle[14],
         ]
       : [
           runner.x -
@@ -844,7 +923,7 @@ export function createGridironRenderer(canvas) {
         : -0.32 - pair.grip * 0.42;
     const aim = Math.atan2(Math.hypot(x, z), -y) - flex * 0.5;
     const yaw = Math.max(-0.95, Math.min(0.95, -Math.atan2(z, x)));
-    return {
+    const legacy = {
       swing: swing + (Math.min(2.18, aim) - swing) * weight,
       weight,
       yaw: yaw * weight,
@@ -853,6 +932,10 @@ export function createGridironRenderer(canvas) {
       wrist: -side * 0.27 * weight,
       length: reach + (0.43 - reach) * weight,
     };
+    const blend = anchor ? smooth(((pair.link.age || 0) - 0.04) / 0.12) : 0;
+    return blend
+      ? solveGripArm(x, y, z, side, scale, weight, legacy, blend)
+      : legacy;
   }
   function player(
     p,
@@ -903,6 +986,20 @@ export function createGridironRenderer(canvas) {
         (0.65 + 0.35 * clamp01((contact.closing || 0) / 5)) *
         (1 - smooth((gap - 1.02) / 0.45))
       : 0;
+    const gripTargets =
+      !ground && !activeWrap?.runner.ground
+        ? standingGrip(activeWrap, runnerChest, p, gap)
+        : null;
+    const releasing =
+      !ground && !partner && !p.airState && wrap?.release ? wrap : null;
+    const gripTurn = followGrip(
+      p,
+      gripTargets ? activeWrap : releasing,
+      gripTargets,
+      displayFace,
+      load,
+      clock,
+    );
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
@@ -1088,10 +1185,10 @@ export function createGridironRenderer(canvas) {
     const pelvis = rotateAtHeight(
       root,
       0.87,
-      articulation.pelvisYaw - 0.16 * load * Math.sin(toward),
+      articulation.pelvisYaw - 0.16 * load * Math.sin(toward) - gripTurn * 0.42,
       0,
     );
-    const twist = -0.3 * load * Math.sin(toward);
+    const twist = -0.3 * load * Math.sin(toward) - gripTurn;
     const chest = rotateAtHeight(
       root,
       1.02,
@@ -1138,7 +1235,10 @@ export function createGridironRenderer(canvas) {
         feet[footIndex] = leg.plant;
       }
       const hipSwing =
-        (!ground ? load * (0.21 + side * 0.13 * Math.sin(toward)) : 0) +
+        (!ground
+          ? side * gripTurn * 0.26 +
+            load * (0.21 + side * 0.13 * Math.sin(toward))
+          : 0) +
         (run ? side * legAmp * step : 0) +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
         (pose.stance === "three-point"
@@ -1161,7 +1261,7 @@ export function createGridironRenderer(canvas) {
       );
       const kneePivot = at(hip, 0.03, -0.48, 0);
       const baseKnee =
-        (!ground ? 0.3 * load : 0) +
+        (!ground ? 0.3 * load + side * gripTurn * 0.2 : 0) +
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
         (pose.stance ? 0.2 : 0) +
         (ground ? groundFold * 0.72 : 0) +
@@ -1386,7 +1486,8 @@ export function createGridironRenderer(canvas) {
             armReach,
             elevation,
             defaultBend,
-            runnerChest,
+            gripTargets?.[footIndex],
+            s,
           )
         : null;
       const shoulder = mul(
