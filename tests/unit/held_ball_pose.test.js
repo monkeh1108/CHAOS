@@ -211,6 +211,41 @@ test("recorded wraps aim two distinct hands toward the runner from front, side a
   }
 });
 
+test("each live wrap follows the runner's torso as it turns in place", () => {
+  const fixture = rendererFixture();
+  const { player, scene, draw } = fixture;
+  const rear = tacklePair(fixture, 0);
+  const rearLink = scene.tackles[0];
+  const side = tacklePair(fixture, Math.PI / 2);
+  side.key = "CB";
+  scene.tackles[0].defender = side.key;
+  scene.tackles.unshift(rearLink);
+  // The renderer needs to find and pose the runner even when drawn later.
+  scene.players = [rear, side, player];
+
+  const hands = () =>
+    gloves(draw())
+      .slice(2)
+      .map(({ model }) => translation(model));
+  const initial = hands();
+  assert.equal(initial.length, 4);
+  player.face = Math.PI / 2;
+  const turned = structuredClone(scene);
+  const following = hands();
+  for (const [i, palm] of following.entries()) {
+    assert.ok(
+      Math.hypot(...palm.map((value, axis) => value - initial[i][axis])) >
+        0.025,
+    );
+    assert.ok(Math.hypot(palm[0] - player.x, palm[2] - player.y) < 0.6);
+  }
+  assert.deepEqual(scene, turned);
+
+  scene.tackles = scene.tackles.map((link) => ({ ...link }));
+  assert.notDeepEqual(hands().slice(0, 2), following.slice(0, 2));
+  assert.notDeepEqual(hands().slice(2), following.slice(2));
+});
+
 test("wrap follow-through uses recorded falls and releases the hands on escape", () => {
   const f = rendererFixture();
   const { player, scene, draw } = f;

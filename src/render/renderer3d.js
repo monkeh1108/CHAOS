@@ -638,6 +638,7 @@ export function createGridironRenderer(canvas) {
   }
   const locomotion = new WeakMap();
   const lastWrap = new WeakMap();
+  const wrapAnchors = new WeakMap();
   const clamp01 = (n) => Math.min(1, Math.max(0, n));
   const smooth = (n) => {
     const t = clamp01(n);
@@ -659,6 +660,7 @@ export function createGridironRenderer(canvas) {
       const gap = Math.max(0.05, Math.hypot(dx, dz));
       const pair = {
         runner,
+        link,
         angle: Math.atan2(dz, dx),
         closing:
           ((defender.vx - runner.vx) * dx + (defender.vy - runner.vy) * dz) /
@@ -752,7 +754,35 @@ export function createGridironRenderer(canvas) {
     return pairs;
   }
 
-  function wrapArm(pair, defender, clavicle, side, reach, swing, bend) {
+  function gripPoint(link, chest, side, nx, nz, width) {
+    let angle = wrapAnchors.get(link);
+    if (angle === undefined) {
+      // Choose the near side of the posed torso once per earned grip.
+      angle = Math.atan2(
+        -nx * chest[8] - nz * chest[10],
+        -nx * chest[0] - nz * chest[2],
+      );
+      wrapAnchors.set(link, angle);
+    }
+    const around = angle + side * 0.73;
+    return at(
+      chest,
+      0.22 * Math.cos(around),
+      1.32 + side * 0.075,
+      0.27 * width * Math.sin(around),
+    );
+  }
+
+  function wrapArm(
+    pair,
+    defender,
+    clavicle,
+    side,
+    reach,
+    swing,
+    bend,
+    runnerChest,
+  ) {
     const runner = pair.runner;
     const dx = runner.x - defender.x,
       dz = runner.y - defender.y;
@@ -770,19 +800,29 @@ export function createGridironRenderer(canvas) {
     const radial = (0.13 + reachOffset) * size;
     const spread = (0.18 * width + reachOffset) * size * side;
     const forward = Math.sin(-pitch) * height;
-    const delta = [
-      runner.x -
-        nx * radial -
-        nz * spread +
-        Math.cos(runner.face) * forward -
-        clavicle[12],
-      Math.cos(pitch) * (height + (pitch ? 0.2 : 0)) - clavicle[13],
-      runner.y -
-        nz * radial +
-        nx * spread +
-        Math.sin(runner.face) * forward -
-        clavicle[14],
-    ];
+    const anchor =
+      pair.link && runnerChest && !pair.release
+        ? gripPoint(pair.link, runnerChest, side, nx, nz, width)
+        : null;
+    const delta = anchor
+      ? [
+          anchor[12] - clavicle[12],
+          anchor[13] - clavicle[13],
+          anchor[14] - clavicle[14],
+        ]
+      : [
+          runner.x -
+            nx * radial -
+            nz * spread +
+            Math.cos(runner.face) * forward -
+            clavicle[12],
+          Math.cos(pitch) * (height + (pitch ? 0.2 : 0)) - clavicle[13],
+          runner.y -
+            nz * radial +
+            nx * spread +
+            Math.sin(runner.face) * forward -
+            clavicle[14],
+        ];
     const local = (axis) =>
       delta[0] * clavicle[axis] +
       delta[1] * clavicle[axis + 1] +
@@ -825,6 +865,7 @@ export function createGridironRenderer(canvas) {
     blockOpponent,
     wrap,
     wrappedBy,
+    runnerChest,
   ) {
     const s = (p.h || 74) / 74,
       breadth = Math.max(0.76, Math.min(1.4, (p.w || 205) / 215));
@@ -1337,7 +1378,16 @@ export function createGridironRenderer(canvas) {
         baseBend + ((running?.elbow ?? baseBend) - baseBend) * gait;
       const defaultBend = swingBend + (1.24 - swingBend) * carryWeight;
       const grip = wrapAllowed
-        ? wrapArm(wrap, p, clavicle, side, armReach, elevation, defaultBend)
+        ? wrapArm(
+            wrap,
+            p,
+            clavicle,
+            side,
+            armReach,
+            elevation,
+            defaultBend,
+            runnerChest,
+          )
         : null;
       const shoulder = mul(
         clavicle,
@@ -1401,6 +1451,7 @@ export function createGridironRenderer(canvas) {
       box(I(), [p.x, 0.035, p.y], [1.13, 0.03, 0.09], C.yellow);
       box(I(), [p.x, 0.035, p.y], [0.09, 0.03, 1.13], C.yellow);
     }
+    return chest;
   }
   function resize() {
     const rect = canvas.getBoundingClientRect(),
@@ -1541,7 +1592,7 @@ export function createGridironRenderer(canvas) {
         wrappedBy = { defender, pair };
       }
     }
-    for (const p of sim.players)
+    const drawPlayer = (p, runnerChest) =>
       player(
         p,
         sim.clock,
@@ -1553,7 +1604,14 @@ export function createGridironRenderer(canvas) {
         blockOpponent,
         wraps.get(p),
         p === wrappedBy?.pair.runner ? wrappedBy : null,
+        runnerChest,
       );
+    // The runner's actual torso matrix is available before either hand aims.
+    const wrappedRunner = wrappedBy?.pair.link ? wrappedBy.pair.runner : null;
+    const runnerChest = wrappedRunner ? drawPlayer(wrappedRunner) : null;
+    for (const p of sim.players) {
+      if (p !== wrappedRunner) drawPlayer(p, runnerChest);
+    }
     airAndPossessionMarkers(sim);
     if (sim.ball && sim.ball.flying) {
       sphere(
