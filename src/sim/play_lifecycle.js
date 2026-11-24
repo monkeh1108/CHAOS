@@ -23,9 +23,9 @@ export function createPlayLifecycle() {
     startThirdQuarter,
     traceSample;
 
-  function finish(type, x, detail) {
+  function finish(type, x, detail, tackle) {
     if (matchState.phase !== "live") return;
-    const runner = matchState.ballCarrier;
+    const runner = tackle?.runner ?? matchState.ballCarrier;
     // Presentation can follow an existing fall while the ruling takes effect now.
     const landingRunner =
       (type === "tackle" || type === "sack") &&
@@ -141,6 +141,9 @@ export function createPlayLifecycle() {
           : (gained >= 0 ? "+" : "") + gained.toFixed(1) + " yards gained"),
       action: "NEXT SNAP",
       ...(landingRunner ? { landingRunner } : {}),
+      ...(type === "sack" && landingRunner && tackle?.pairedDefender
+        ? { landingPartner: tackle.pairedDefender }
+        : {}),
     });
     log(
       heading +

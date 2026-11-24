@@ -437,7 +437,10 @@ export function createTackleLinks() {
         upright: !d.ground,
       }));
     const clock = matchState.totalClock || 0;
-    finish(a === P("QB") ? "sack" : "tackle", a.x, description);
+    finish(a === P("QB") ? "sack" : "tackle", a.x, description, {
+      runner: a,
+      pairedDefender,
+    });
     if (wraps.length)
       emitPresentation({
         type: "wrapFinished",

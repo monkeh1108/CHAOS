@@ -666,7 +666,7 @@ export function createFieldRenderer({
   }
   // Thin amber links are active blocks; pink links are active tackle wraps.
   function drawContactLinks(v) {
-    const { phase, blockLinks, tackleLinks, ballCarrier } = readState();
+    const { phase, blockLinks, tackleLinks, tackleRunner } = readState();
     if (phase !== "live") return;
     ctx.save();
     ctx.lineCap = "round";
@@ -686,7 +686,7 @@ export function createFieldRenderer({
     }
     for (const e of tackleLinks.values()) {
       const a = P(e.defender),
-        b = ballCarrier;
+        b = tackleRunner;
       if (!a || !b) continue;
       const [ax, ay] = xy(a.x, a.y, v),
         [bx, by] = xy(b.x, b.y, v);
@@ -759,6 +759,7 @@ export function createFieldRenderer({
       intended,
       blockLinks,
       tackleLinks,
+      tackleRunner,
       wrapFinish,
       possession,
       first,
@@ -817,6 +818,7 @@ export function createFieldRenderer({
         renderer3d.draw({
           players,
           carrier: ballCarrier,
+          tackleRunner,
           markerCarrier,
           active,
           intended,

@@ -584,7 +584,9 @@ export function attachGameBrowser(session) {
     }
     if (
       pendingTackleResult &&
-      P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall"
+      P(pendingTackleResult.landingRunner)?.ground?.stage !== "fall" &&
+      (!pendingTackleResult.landingPartner ||
+        P(pendingTackleResult.landingPartner)?.ground?.stage !== "fall")
     ) {
       const result = pendingTackleResult;
       pendingTackleResult = null;
@@ -1217,6 +1219,14 @@ export function attachGameBrowser(session) {
       totalClock: session.totalClock,
       pileState: session.pileState,
       tackleLinks: session.tackleLinks,
+      tackleRunner:
+        session.ballCarrier ??
+        (session.phase === "live" &&
+        !session.specialState &&
+        !session.passThrown &&
+        session.tackleLinks.size
+          ? P("QB")
+          : null),
       wrapFinish,
       burstTime: session.burstTime,
       players: session.players,

@@ -15,6 +15,11 @@ def test_tackle_result_waits_for_landing(browser_session, standalone_html):
     </script>
     """
     html = standalone_html.replace("</head>", clock + "</head>", 1)
+    html = html.replace(
+        "createGame({ attach: attachGameBrowser });",
+        "createGame({ attach: attachGameBrowser }, 8933);",
+        1,
+    )
     with browser_session(headless=True) as browser:
         page = browser.new_page()
         errors = []
@@ -29,6 +34,7 @@ def test_tackle_result_waits_for_landing(browser_session, standalone_html):
               const require = (ok, message) => { if (!ok) throw Error(message); };
               const reports = [];
               stepDisplay(16);
+              const initial = game.captureSnapshot();
 
               function verifyLanding(event, hz, play) {
                 const down = game.getState();
@@ -42,13 +48,18 @@ def test_tackle_result_waits_for_landing(browser_session, standalone_html):
                 window.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter" }));
                 require(game.getState().phase === "dead", "Early Enter cannot skip landing");
 
+                const partner = () =>
+                  game.getState().players.find(p => p.key === event.landingPartner);
+                const falling = () =>
+                  runner().ground?.stage === "fall" || partner()?.ground?.stage === "fall";
                 let frames = 0;
-                while (runner().ground?.stage === "fall" && frames < 120) {
+                while (falling() && frames < 120) {
                   require(!visible(), "Result must wait for the down pose");
                   stepDisplay(1000 / hz);
                   frames++;
                 }
                 require(runner().ground?.stage === "winded", "Landing reached");
+                require(!falling(), "Both recorded falls have landed");
                 require(visible() && !snap().disabled, "Result appears on the down pose");
                 require(document.getElementById("message").textContent.startsWith(event.heading + "."),
                   "Play-ending message appears with the result");
@@ -85,6 +96,45 @@ def test_tackle_result_waits_for_landing(browser_session, standalone_html):
                 }
                 require(found, "Expected a recorded fall for " + play);
               }
+              for (const [play, balance] of [["paired sack", .35], ["standing sack", 1]]) {
+                game.restoreSnapshot(initial);
+                game.debugFinishCoinToss("heads", "receive");
+                game.reset();
+                game.debugSeed(431);
+                game.select("verticals");
+                game.snap();
+                for (const p of game.getState().players)
+                  game.debugMovePlayer(p.key, p.team ? 106 : 17, p.team ? 48 : 2);
+                game.debugMovePlayer("QB", 27, 26);
+                game.debugMovePlayer("MLB", 27, 26.68);
+                game.debugSetDefenderState("MLB", {
+                  face: -Math.PI / 2, blocked: 0, stun: 0, tackleCooldown: 0, action: null,
+                });
+                game.debugSetBalance("MLB", balance);
+                let resultEvent, wrap;
+                for (let tick = 0; tick < 120 && game.getState().phase === "live"; tick++) {
+                  const events = game.advanceTick([]);
+                  resultEvent = events.find(e => e.type === "resultShown");
+                  wrap = events.find(e => e.type === "wrapFinished");
+                }
+                require(resultEvent?.heading === "QUARTERBACK SACK", "Expected a sack");
+                require(!game.getState().ballCarrier && !game.getState().passThrown,
+                  "The sack uses implicit pre-pass possession");
+                require(resultEvent.landingRunner === "QB", "The result identifies the QB");
+                require(wrap?.runner === "QB" && wrap.wraps.some(x => x.defender === "MLB"),
+                  "The completed grip identifies both participants");
+                const paired = balance < 1;
+                const defender = () => game.getState().players.find(p => p.key === "MLB");
+                require((defender().ground?.stage === "fall") === paired, "Recorded defender outcome");
+                require(resultEvent.landingPartner === (paired ? "MLB" : undefined),
+                  "The result waits only for a recorded partner");
+                verifyLanding(resultEvent, 120, play);
+                require(!paired || defender().ground?.stage === "winded", "The defender landed");
+                for (let frame = 0; frame < 150; frame++) stepDisplay(1000 / 120);
+                require(!defender().ground && !game.getState().players.find(p => p.key === "QB").ground,
+                  "Ordinary recovery clocks complete after the result");
+              }
+
               game.reset();
               game.select("stretch");
               game.snap();
@@ -93,6 +143,7 @@ def test_tackle_result_waits_for_landing(browser_session, standalone_html):
               return reports;
             }"""
         )
-        assert [item["play"] for item in reports] == ["scrimmage", "return"]
+        assert [item["play"] for item in reports] == ["scrimmage", "return", "paired sack", "standing sack"]
         assert all(0.24 <= item["seconds"] <= 0.29 for item in reports), reports
+        assert reports[2]["seconds"] > reports[3]["seconds"], reports
         assert not errors, errors
