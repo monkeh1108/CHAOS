@@ -202,7 +202,10 @@ test("recorded wraps aim two distinct hands toward the runner from front, side a
         Math.hypot(x - player.x, z - player.y) < 0.56,
         "reach ends near the runner",
       );
-      assert.ok(y > 0.88 && y < 1.65, "hands stay in the torso band");
+      assert.ok(
+        y > 0.88 && y < 1.65,
+        "hands stay in the torso band: " + y + " at heading " + heading,
+      );
     }
     assert.deepEqual(scene, before);
   }
@@ -262,4 +265,101 @@ test("wrap follow-through uses recorded falls and releases the hands on escape",
     Math.max(...hands()) < Math.max(...standing),
     "only the recorded fall lowers the defender",
   );
+});
+
+test("a completed wrap renders even when no live grip was drawn", () => {
+  const f = rendererFixture();
+  const { scene, player, draw } = f;
+  const defender = tacklePair(f, Math.PI / 2);
+  scene.phase = "dead";
+  scene.tackles = [];
+  player.ground = {
+    stage: "fall",
+    kind: "tackle",
+    from: defender.key,
+    age: 0.045,
+    fall: 0.25,
+  };
+  defender.wrapReach = 0;
+  defender.wrapLinked = false;
+  defender.intent = "whistle";
+  const fallback = draw();
+  scene.wrapFinish = {
+    runner: player.key,
+    wraps: [
+      {
+        defender: defender.key,
+        category: "torso",
+        grip: 0.8,
+        angle: defender.face,
+        closing: 4,
+      },
+    ],
+  };
+  const before = structuredClone(scene);
+  const withFinish = draw();
+  assert.notDeepEqual(gloves(withFinish).slice(2), gloves(fallback).slice(2));
+  assert.notDeepEqual(
+    withFinish.filter((d) => d.color === "22,34,43"),
+    fallback.filter((d) => d.color === "22,34,43"),
+    "stance changes along with the arms",
+  );
+  assert.deepEqual(scene, before);
+  player.ground = null;
+  const withoutFall = draw();
+  delete scene.wrapFinish;
+  assert.deepEqual(
+    draw(),
+    withoutFall,
+    "a stale finish cannot pose an upright runner",
+  );
+});
+
+test("wrap finish emits grip evidence captured before simulation cleanup", () => {
+  const { createTackleLinks } = require("../../src/physics/tackle_links.js");
+  const links = createTackleLinks();
+  const runner = { key: "RB", x: 4, y: 5, stam: 1 };
+  const defender = { key: "LB", pos: "LB", x: 4, y: 4, stam: 1 };
+  const grip = {
+    style: "wrap",
+    contactCategory: "torso",
+    initialImpulse: 100,
+    grip: 0.72,
+  };
+  const events = [];
+  let finished = false;
+  links.bind({
+    P: () => null,
+    log() {},
+    matchState: {},
+    finish() {
+      finished = true;
+      grip.grip = 0;
+    },
+    emitPresentation(event) {
+      assert.ok(finished);
+      events.push(event);
+    },
+  });
+  links.finishTackle(
+    runner,
+    [{ d: defender, t: grip, hit: { closing: 5 } }],
+    "Wrap",
+  );
+  assert.deepEqual(events, [
+    {
+      type: "wrapFinished",
+      runner: "RB",
+      wraps: [
+        {
+          defender: "LB",
+          category: "torso",
+          grip: 0.72,
+          angle: Math.PI / 2,
+          closing: 5,
+        },
+      ],
+    },
+  ]);
+  assert.equal(defender.ground, undefined);
 });

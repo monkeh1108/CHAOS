@@ -1173,6 +1173,7 @@ export function attachGameBrowser(session) {
       defenderAirInteractionZone,
     },
   });
+  let wrapFinish = null;
   const fieldRenderer = createFieldRenderer({
     canvas,
     reportDiagnostic: reportBrowserDiagnostic,
@@ -1196,6 +1197,7 @@ export function attachGameBrowser(session) {
       totalClock: session.totalClock,
       pileState: session.pileState,
       tackleLinks: session.tackleLinks,
+      wrapFinish,
       burstTime: session.burstTime,
       players: session.players,
       blockLinks: session.blockLinks,
@@ -1230,7 +1232,9 @@ export function attachGameBrowser(session) {
   return {
     emit(event) {
       if (event.type === "coinTossInputReset") tossPadPrevious = [];
+      else if (event.type === "wrapFinished") wrapFinish = event;
       else if (event.type === "rightStickReset") {
+        wrapFinish = null;
         rightStickLatched = false;
         rightStickDirection = "";
       } else if (event.type === "playbookShown") playbook.renderPlaybook();

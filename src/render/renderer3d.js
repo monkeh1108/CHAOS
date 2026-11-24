@@ -654,8 +654,15 @@ export function createGridironRenderer(canvas) {
     for (const link of sim.tackles) {
       const defender = byKey.get(link.defender);
       if (link.style !== "wrap" || !defender || !runner || !live) continue;
+      const dx = runner.x - defender.x;
+      const dz = runner.y - defender.y;
+      const gap = Math.max(0.05, Math.hypot(dx, dz));
       const pair = {
         runner,
+        angle: Math.atan2(dz, dx),
+        closing:
+          ((defender.vx - runner.vx) * dx + (defender.vy - runner.vy) * dz) /
+          gap,
         weight:
           (0.48 + 0.52 * smooth((link.age || 0) / 0.16)) *
           (0.68 + 0.32 * clamp01(link.grip || 0)),
@@ -663,6 +670,31 @@ export function createGridironRenderer(canvas) {
       };
       pairs.set(defender, pair);
       lastWrap.set(defender, pair);
+    }
+    const finish = sim.phase === "dead" && sim.wrapFinish;
+    const finishedRunner = finish && byKey.get(finish.runner);
+    if (
+      finishedRunner &&
+      falling(finishedRunner) &&
+      finishedRunner.ground.kind === "tackle"
+    ) {
+      const release = 1 - smooth(fallProgress(finishedRunner));
+      for (const grip of finish.wraps) {
+        const defender = byKey.get(grip.defender);
+        if (
+          !defender ||
+          (defender.ground &&
+            !(falling(defender) && defender.ground.from === finishedRunner.key))
+        )
+          continue;
+        pairs.set(defender, {
+          runner: finishedRunner,
+          grip: clamp01(grip.grip),
+          weight: 0.9 * release,
+          angle: grip.angle,
+          closing: grip.closing,
+        });
+      }
     }
     for (const defender of sim.players) {
       if (pairs.has(defender)) continue;
@@ -730,7 +762,7 @@ export function createGridironRenderer(canvas) {
       nz = dz / distance;
     const size = (runner.h || 74) / 74;
     const width = Math.max(0.76, Math.min(1.4, (runner.w || 205) / 215));
-    const height = (1.18 + side * 0.075) * size;
+    const height = (1.32 + side * 0.075) * size;
     const pitch = falling(runner) ? -1.28 * fallProgress(runner) : 0;
     const reachOffset = pair.release ? 0.18 : 0;
     // Offset the hands on opposite sides of the approach vector. Front,
@@ -809,6 +841,27 @@ export function createGridironRenderer(canvas) {
     const action = p.action?.kind || "";
     const involved = contacts?.has(p.key) || p.pushing;
     const pose = AnimationPolicy.sample(p, involved, presnap);
+    const activeWrap =
+      wrap &&
+      !wrap.approach &&
+      !wrap.release &&
+      !partner &&
+      !p.airState &&
+      !(
+        p.action?.time > 0 &&
+        ["tackle-dive", "dive", "hit-stick", "cut-stick"].includes(action)
+      )
+        ? wrap
+        : null;
+    const contact = activeWrap || wrappedBy?.pair;
+    const toward = (contact?.angle ?? displayFace) - displayFace;
+    const opponent = activeWrap?.runner ?? wrappedBy?.defender;
+    const gap = opponent ? Math.hypot(p.x - opponent.x, p.y - opponent.y) : 0;
+    const load = contact
+      ? contact.weight *
+        (0.65 + 0.35 * clamp01((contact.closing || 0) / 5)) *
+        (1 - smooth((gap - 1.02) / 0.45))
+      : 0;
     const run = pose.run * (1 - (pose.standUp || 0) * 0.65),
       step = pose.cycle,
       bob = pose.bob;
@@ -871,7 +924,8 @@ export function createGridironRenderer(canvas) {
         root,
         0,
         bob -
-          pose.crouch +
+          pose.crouch -
+          0.055 * load +
           legWeight * (((running?.bob || 0) - 0.067) * s - bob) -
           (cut?.drop || 0) * s,
         (cut?.shift || 0) * s,
@@ -990,21 +1044,19 @@ export function createGridironRenderer(canvas) {
       gait,
       cut?.weight || 0,
     );
-    const pelvis = rotateAtHeight(root, 0.87, articulation.pelvisYaw, 0);
-    const brace =
-      wrappedBy && !ground
-        ? wrappedBy.weight *
-          0.12 *
-          Math.sin(
-            Math.atan2(wrappedBy.defender.y - p.y, wrappedBy.defender.x - p.x) -
-              displayFace,
-          )
-        : 0;
+    const pelvis = rotateAtHeight(
+      root,
+      0.87,
+      articulation.pelvisYaw - 0.16 * load * Math.sin(toward),
+      0,
+    );
+    const twist = -0.3 * load * Math.sin(toward);
     const chest = rotateAtHeight(
       root,
       1.02,
-      articulation.chestYaw + brace,
-      articulation.chestPitch,
+      articulation.chestYaw + twist,
+      articulation.chestPitch -
+        (activeWrap ? 0.29 : 0.17) * load * Math.cos(toward),
     );
     const head = rotateAtHeight(chest, 1.71 + shift, 0, articulation.neckPitch);
     paint(
@@ -1045,6 +1097,7 @@ export function createGridironRenderer(canvas) {
         feet[footIndex] = leg.plant;
       }
       const hipSwing =
+        (!ground ? load * (0.21 + side * 0.13 * Math.sin(toward)) : 0) +
         (run ? side * legAmp * step : 0) +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
         (pose.stance === "three-point"
@@ -1067,6 +1120,7 @@ export function createGridironRenderer(canvas) {
       );
       const kneePivot = at(hip, 0.03, -0.48, 0);
       const baseKnee =
+        (!ground ? 0.3 * load : 0) +
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
         (pose.stance ? 0.2 : 0) +
         (ground ? groundFold * 0.72 : 0) +
@@ -1255,7 +1309,10 @@ export function createGridironRenderer(canvas) {
         ? cut.side * side * (0.23 * cut.load - 0.3 * cut.push) * cut.effort
         : 0;
       const swingAngle = swing + (pump - swing) * gait + cutBalance;
-      const elevation = swingAngle + (0.18 - swingAngle) * carryWeight;
+      const elevation =
+        swingAngle +
+        (0.18 - swingAngle) * carryWeight +
+        (side < 0 && wrappedBy && !ground ? 0.42 * load : 0);
       const wrapAllowed =
         wrap &&
         !dive &&
@@ -1479,10 +1536,9 @@ export function createGridironRenderer(canvas) {
       if (
         !pair.approach &&
         !pair.release &&
-        pair.runner === sim.carrier &&
-        (!wrappedBy || pair.weight > wrappedBy.weight)
+        (!wrappedBy || pair.weight > wrappedBy.pair.weight)
       ) {
-        wrappedBy = { defender, weight: pair.weight };
+        wrappedBy = { defender, pair };
       }
     }
     for (const p of sim.players)
@@ -1496,7 +1552,7 @@ export function createGridironRenderer(canvas) {
         presnap,
         blockOpponent,
         wraps.get(p),
-        p === sim.carrier ? wrappedBy : null,
+        p === wrappedBy?.pair.runner ? wrappedBy : null,
       );
     airAndPossessionMarkers(sim);
     if (sim.ball && sim.ball.flying) {
