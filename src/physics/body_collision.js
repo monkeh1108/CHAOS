@@ -295,45 +295,45 @@ export function createBodyCollision() {
       // head-on impacts can still knock both down depending on their ratings.
       const closingA = Math.max(0, a.vx * nx + a.vy * ny);
       const closingB = Math.max(0, -b.vx * nx - b.vy * ny);
-      if (closingA > closingB * 1.28)
+      const carrier = matchState.ballCarrier;
+      const defender = carrier === a ? b : a;
+      const defenderClosing =
+        carrier === a ? candidate?.bNormal : candidate?.aNormal;
+      const runnerClosing = carrier === a ? candidate?.aNormal : candidate?.bNormal;
+      // Give a balanced defender a chance to contest a real square pad
+      // collision after its impulse and before generic body knockdowns.
+      const standingContest =
+        candidate?.square > 0.32 &&
+        matchState.contactEnabled &&
+        matchState.liveTackleContacts.get(defender.key)?.padImpact &&
+        defenderClosing * 1.28 >= runnerClosing &&
+        defender.balance >= 0.45 &&
+        defender.blocked < 0.25 &&
+        defender.stun <= 0 &&
+        defender.tackleCooldown <= 0 &&
+        defender.diveRecovery <= 0 &&
+        !defender.reengage &&
+        (!(defender.action?.time > 0) ||
+          defender.action.kind === "conservative") &&
+        (!(carrier.action?.time > 0) ||
+          !["truck", "stiff"].includes(carrier.action.kind));
+      const bodyFall = (victim, attacker, x, y) => {
+        if (standingContest && victim === defender) return;
         groundContact(
-          b,
-          a,
-          hit * ChaosLowContact.bodyVulnerability(b),
+          victim,
+          attacker,
+          hit * ChaosLowContact.bodyVulnerability(victim),
           normalSpeed,
-          nx,
-          ny,
+          x,
+          y,
           "body",
         );
-      else if (closingB > closingA * 1.28)
-        groundContact(
-          a,
-          b,
-          hit * ChaosLowContact.bodyVulnerability(a),
-          normalSpeed,
-          -nx,
-          -ny,
-          "body",
-        );
+      };
+      if (closingA > closingB * 1.28) bodyFall(b, a, nx, ny);
+      else if (closingB > closingA * 1.28) bodyFall(a, b, -nx, -ny);
       else {
-        groundContact(
-          a,
-          b,
-          hit * ChaosLowContact.bodyVulnerability(a),
-          normalSpeed,
-          -nx,
-          -ny,
-          "body",
-        );
-        groundContact(
-          b,
-          a,
-          hit * ChaosLowContact.bodyVulnerability(b),
-          normalSpeed,
-          nx,
-          ny,
-          "body",
-        );
+        bodyFall(a, b, -nx, -ny);
+        bodyFall(b, a, nx, ny);
       }
     }
     if (hit > 13) {

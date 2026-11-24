@@ -173,18 +173,23 @@ export function createTackleContacts() {
               matchState.playClock - e.time < 0.075 &&
               e.penetration >= 0.095,
           );
-        const committedDive =
-          d.action?.kind === "tackle-dive" && d.action.time > 0;
-        // Do not let a dive's proximity radius award a ghost tackle. Preserve the
-        // stable standing-wrap solver until its full-body geometry is calibrated.
+        // Keep cheap proximity as a broad phase. Opposing open-field
+        // approaches and committed dives still need measured contact.
+        const opposing = a.vx * d.vx + a.vy * d.vy < -2;
         if (
-          (committedDive && contactState.kind === "miss" && !swept) ||
+          (contactState.kind === "miss" &&
+            !swept &&
+            (committedDive || (opposing && !padImpact))) ||
           (contactState.kind === "light contact" && !swept && !padImpact)
         ) {
           report?.push({
             defender: d.key,
             reason:
-              contactState.kind === "miss" ? "missed dive" : "light contact",
+              contactState.kind === "miss"
+                ? committedDive
+                  ? "missed dive"
+                  : "missed standing contact"
+                : "light contact",
             contact: contactState,
           });
           continue;
