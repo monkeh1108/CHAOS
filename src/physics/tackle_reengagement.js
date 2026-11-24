@@ -19,19 +19,21 @@ function release(defender, runner, bodyGap, clock) {
     lastObservedAt: clock,
   };
 }
+function hasRecovered(defender) {
+  return (
+    !defender.ground &&
+    (defender.stun || 0) <= 0 &&
+    (defender.diveRecovery || 0) <= 0 &&
+    (defender.tackleCooldown || 0) <= 0 &&
+    (defender.balance ?? 1) >= 0.27
+  );
+}
 function observe(defender, runner, bodyGap, clock) {
   const state = defender.reengage;
   if (!state || state.carrier !== runner.key) return true;
   const distance = Math.hypot(runner.x - defender.x, runner.y - defender.y);
   if (distance >= state.requiredGap) state.hasSeparated = true;
-  // Recovery requires balance and the end of the actual failed engagement.
-  // Most escapes clear this state after genuine physical separation.
-  const recovered =
-    !defender.ground &&
-    (defender.stun || 0) <= 0 &&
-    (defender.diveRecovery || 0) <= 0 &&
-    (defender.tackleCooldown || 0) <= 0 &&
-    (defender.balance ?? 1) >= 0.27;
+  const recovered = hasRecovered(defender);
   // But two bodies can remain in contact after a failed grip. A stopped runner
   // must NOT become tackle-immune simply because separation never occurred.
   // Once the tackler has physically recovered, sustained *new* body contact
@@ -55,4 +57,8 @@ function observe(defender, runner, bodyGap, clock) {
   }
   return false;
 }
-export const ChaosTackleReengagement = Object.freeze({ release, observe });
+export const ChaosTackleReengagement = Object.freeze({
+  release,
+  observe,
+  hasRecovered,
+});

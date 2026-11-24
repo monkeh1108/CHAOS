@@ -14,7 +14,8 @@ export function createKickReturn() {
     setResultUI,
     speed,
     spotText,
-    steer;
+    steer,
+    steerEscapeRecovery;
 
   function finishReturn(type, x, detail) {
     if (matchState.phase !== "live" || !matchState.specialState) return;
@@ -219,6 +220,7 @@ export function createKickReturn() {
   }
 
   function coverReturnAI(d, ret, dt) {
+    if (steerEscapeRecovery(d, ret, dt)) return;
     const aim = pursuitAim(d, ret);
     // Close coverage already includes a finite observed-reaction delay in pursuitAim.
     // Do not override it with instantaneous carrier tracking here.
@@ -282,6 +284,7 @@ export function createKickReturn() {
         speed,
         spotText,
         steer,
+        steerEscapeRecovery,
       } = services);
     },
     finishReturn,

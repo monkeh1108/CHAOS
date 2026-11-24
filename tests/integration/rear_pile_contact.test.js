@@ -41,11 +41,15 @@ assert.notEqual(withoutLab, script, 'expected the contact lab mount call');
 // Set fixture inputs and inspect closure state without changing production debug controls.
 vm.runInContext(withoutLab.replace(/const\s+debug\s*=\s*\{/, `
  window.fixture = {
-  recovery(key) {const d = systems.P(key); return {cooldown: d.tackleCooldown, separated: d.reengage?.hasSeparated};},
   neutral() {matchState.controlMode='offense';matchState.manualDrive=true;matchState.suppressManualUntilNeutral=false;},
   input(value) {dispatchInput({type:"controls",move:{x:0,y:Number(value),mag:Number(value)}});},
   time() {return matchState.playClock;},
   contacts() {return Object.fromEntries(matchState.liveTackleContacts);},
+  recovery(key) {
+   const { reengage, tackleCooldown, stun, diveRecovery, balance } = systems.P(key);
+   return {reengage, tackleCooldown, stun, diveRecovery, balance,
+    cooldown: tackleCooldown, separated: reengage?.hasSeparated};
+  },
   missDive(key) {
    systems.P(key).action={kind:'tackle-dive',time:.01,age:.52,used:false};
    systems.P(key).diveRecovery=1.2;
@@ -207,6 +211,66 @@ observe('second defender after a broken grip', 'RB', [...second, 'DT2'], 150, (s
  if (released && links.some(link => link.defender === 'DT2')) backupGrip = true;
 });
 assert.ok(released && backupGrip);
+
+function verifyLoneRearReengagement(carrier, defender) {
+ for (const p of g.getState().players) {
+  g.debugMovePlayer(p.key, p.team === 0 ? 16 : 108, p.team === 0 ? 2 : 48);
+ }
+ f.neutral();
+ g.debugMovePlayer(carrier, 42, 26);
+ g.debugSetVelocity(carrier, 4, 0);
+ g.debugMovePlayer(defender, 41, 26);
+ g.debugSetVelocity(defender, 7.1, 0);
+ g.debugSetDefenderState(defender, {face: 0});
+ g.debugTackleWatch(true);
+
+ let release = null;
+ let peeled = false;
+ let separated = false;
+ for (let tick = 0; tick < 150 && g.getState().phase === 'live'; tick++) {
+  g.step(1);
+  const state = g.getState();
+  if (!release) {
+   if (!state.contacts.tackles.some(link => link.defender === defender)) continue;
+   assert.ok(g.debugForceGripEscape(defender));
+   const recovery = f.recovery(defender);
+   assert.ok(recovery.tackleCooldown > 0 && !recovery.reengage.hasSeparated);
+   release = {tick, x: player(carrier, state).x, gap: recovery.reengage.requiredGap};
+   continue;
+  }
+  const runner = player(carrier, state);
+  const pursuer = player(defender, state);
+  const { reengage, tackleCooldown, stun, diveRecovery, balance } = f.recovery(defender);
+  if (reengage?.peel) {
+   peeled = true;
+   assert.equal(tackleCooldown, 0, 'lone pursuit peels only after cooldown');
+  }
+  separated ||= Math.hypot(runner.x - pursuer.x, runner.y - pursuer.y) >= release.gap;
+  const attempt = g.debugTackleEligibility().find(row => row.defender === defender && row.reason === 'grip started');
+  if (!attempt) continue;
+  assert.ok(peeled && separated, 'second attempt must follow a steerable exit and actual separation');
+  assert.ok(!tackleCooldown && !stun && !diveRecovery && balance >= .27);
+  assert.ok(runner.x > release.x + 1, 'the broken tackle buys ground');
+  assert.ok(tick - release.tick < 120, 'the defender must not remain locked out');
+  return;
+ }
+ assert.fail('lone rear defender remained unable to make a second attempt');
+}
+
+scrimmage();
+g.debugForceCarrier('RB');
+verifyLoneRearReengagement('RB', 'MLB');
+
+g.newGame();
+g.debugFinishCoinToss('heads', 'receive');
+g.debugSeed(48723);
+g.startKick();
+const returnKick = g.getMatch().specialState;
+g.debugMovePlayer('RB', 10, 4);
+g.debugMovePlayer('WR2', returnKick.landingX, returnKick.targetY);
+for (let i = 0; i < 200 && !g.getMatch().specialState?.returning; i++) g.step(1);
+assert.ok(g.getMatch().specialState?.returning);
+verifyLoneRearReengagement(g.getState().ballCarrier, 'EDGE1');
 
 scrimmage();
 g.debugForceCarrier('RB');
