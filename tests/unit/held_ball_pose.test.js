@@ -454,26 +454,159 @@ test("a completed wrap renders even when no live grip was drawn", () => {
   );
 });
 
+test("the fall follows recorded momentum, pull and explicit direction into landing", () => {
+  const assess = ({ vx = 0, vy = 0, pull = 0, dir, age = 0.19 }) => {
+    const fixture = rendererFixture();
+    const { player, scene, draw } = fixture;
+    const defender = tacklePair(fixture, 0);
+    scene.phase = "dead";
+    scene.tackles = [];
+    player.ground = {
+      kind: "tackle",
+      from: defender.key,
+      stage: "fall",
+      age,
+      fall: 0.25,
+      dir,
+    };
+    scene.wrapFinish = {
+      runner: player.key,
+      clock: 0,
+      motion: { vx, vy, face: 0 },
+      wraps: [
+        {
+          defender: defender.key,
+          angle: 0,
+          age: 0.24,
+          closing: 0,
+          grip: 0.85,
+          pull,
+        },
+      ],
+    };
+    const torso = () => {
+      const before = structuredClone(scene);
+      const parts = draw().filter(({ model }) =>
+        near(span(model, 1), 0.78, 1e-5),
+      );
+      assert.deepEqual(scene, before);
+      return parts.map(({ model }) => Array.from(model.slice(4, 7)));
+    };
+    const [runner, tackler] = torso();
+    assert.ok(tackler[1] > 0.65, "the defender is recorded as standing");
+    player.ground.stage = "winded";
+    return { runner, landed: torso()[0] };
+  };
+  const forward = assess({ vx: 5 });
+  const backward = assess({ vx: 0.3, pull: 12 });
+  const side = assess({ vy: 4 });
+  const explicit = assess({ vx: 5, dir: -Math.PI / 2 });
+  const buckle = assess({});
+  assert.ok(forward.runner[0] > 0.5 && backward.runner[0] < -0.5);
+  assert.ok(side.runner[2] > 0.5 && explicit.runner[2] < -0.5);
+  assert.ok(
+    forward.landed[0] > forward.runner[0] &&
+      backward.landed[0] < backward.runner[0],
+  );
+  assert.ok(
+    buckle.landed[1] > forward.landed[1],
+    "ambiguous evidence favors a shallower buckle",
+  );
+});
+
+test("finished wraps track the falling torso within reach and release at landing", () => {
+  const fixture = rendererFixture();
+  const { player, scene, draw } = fixture;
+  const defender = tacklePair(fixture, 0);
+  const hands = () =>
+    gloves(draw())
+      .slice(2)
+      .map(({ model }) => translation(model));
+  const standing = hands();
+  scene.phase = "dead";
+  scene.tackles = [];
+  player.ground = {
+    kind: "tackle",
+    from: defender.key,
+    stage: "fall",
+    age: 0.07,
+    fall: 0.25,
+    dir: Math.PI / 2,
+  };
+  const finish = {
+    runner: player.key,
+    clock: scene.clock,
+    motion: { vx: 0, vy: 1, face: 0 },
+    wraps: [
+      {
+        defender: defender.key,
+        angle: 0,
+        age: 0.24,
+        closing: 0,
+        grip: 0.85,
+        pull: 0,
+      },
+    ],
+  };
+  scene.wrapFinish = finish;
+  const duringFall = hands();
+  assert.notDeepEqual(duringFall, standing);
+  scene.wrapFinish = { ...finish, motion: { ...finish.motion, vy: -1 } };
+  player.ground.dir = -Math.PI / 2;
+  assert.notDeepEqual(
+    hands(),
+    duringFall,
+    "hands respond to the torso's actual fall direction",
+  );
+  scene.wrapFinish = finish;
+  defender.x -= 0.85;
+  const outOfReach = hands();
+  delete scene.wrapFinish;
+  assert.deepEqual(
+    hands(),
+    outOfReach,
+    "a distant defender cannot retain the grip pose",
+  );
+  defender.x += 0.85;
+  player.ground.stage = "winded";
+  scene.wrapFinish = finish;
+  const released = hands();
+  delete scene.wrapFinish;
+  assert.deepEqual(hands(), released, "the hands are free by landing");
+});
+
 test("wrap finish emits grip evidence captured before simulation cleanup", () => {
   const { createTackleLinks } = require("../../src/physics/tackle_links.js");
   const links = createTackleLinks();
-  const runner = { key: "RB", x: 4, y: 5, stam: 1 };
-  const defender = { key: "LB", pos: "LB", x: 4, y: 4, stam: 1 };
+  const runner = { key: "RB", x: 4, y: 5, stam: 1, vx: 1.4, vy: -2, face: 0.2 };
+  const defender = {
+    key: "LB",
+    pos: "LB",
+    x: 4,
+    y: 4,
+    stam: 1,
+    vx: 0.6,
+    vy: -1,
+  };
   const grip = {
     style: "wrap",
     contactCategory: "torso",
     initialImpulse: 100,
     grip: 0.72,
+    age: 0.24,
+    attachment: { active: true, force: 11 },
   };
   const events = [];
   let finished = false;
   links.bind({
     P: () => null,
     log() {},
-    matchState: {},
+    matchState: { totalClock: 4 },
     finish() {
       finished = true;
       grip.grip = 0;
+      grip.attachment.force = 0;
+      runner.vx = defender.vy = 0;
     },
     emitPresentation(event) {
       assert.ok(finished);
@@ -489,6 +622,8 @@ test("wrap finish emits grip evidence captured before simulation cleanup", () =>
     {
       type: "wrapFinished",
       runner: "RB",
+      clock: 4,
+      motion: { vx: 1.4, vy: -2, face: 0.2 },
       wraps: [
         {
           defender: "LB",
@@ -496,6 +631,11 @@ test("wrap finish emits grip evidence captured before simulation cleanup", () =>
           grip: 0.72,
           angle: Math.PI / 2,
           closing: 5,
+          age: 0.24,
+          pull: 11,
+          vx: 0.6,
+          vy: -1,
+          upright: true,
         },
       ],
     },
