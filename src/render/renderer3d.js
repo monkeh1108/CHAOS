@@ -1109,6 +1109,31 @@ export function createGridironRenderer(canvas) {
       activeWrap?.followThrough || (!ground && !activeWrap?.runner.ground)
         ? gripTargetsForWrap(activeWrap, runnerChest, p, gap)
         : null;
+    // Read the live grip after movement. Preserve the initial reach and the
+    // separate follow-through and release poses.
+    const attached = !ground && !activeWrap?.followThrough &&
+      activeWrap?.link.attachment?.active && gripTargets;
+    const effort = attached
+      ? smooth((activeWrap.link.age - 0.10) / 0.18) *
+        smooth((activeWrap.grip - 0.30) / 0.36) *
+        smooth((activeWrap.link.quality - 0.24) / 0.45)
+      : 0;
+    const closing = activeWrap?.closing || 0;
+    const heading = activeWrap?.angle ?? displayFace;
+    const lateral = effort > 0
+      ? (p.vy - opponent.vy) * Math.cos(heading) -
+        (p.vx - opponent.vx) * Math.sin(heading)
+      : 0;
+    const support = smooth(((p.balance ?? 1) - 0.35) / 0.55);
+    const gather = effort * support * smooth((1.13 - gap) / 0.32) *
+      (0.40 + 0.60 * smooth((closing + 0.15) / 1.25));
+    const brace = effort * (1 - smooth((gap - 1.10) / 0.35)) *
+      smooth((-closing + Math.abs(lateral) * 0.30 + (1 - support) * 0.8) / 1.8);
+    const slip = effort * smooth((gap - 0.95) / 0.32) *
+      smooth((-closing + Math.abs(lateral) * 0.25) / 1.5);
+    const recoveryStep = (gather * 0.10 + brace * 0.15 + slip * 0.20) *
+      smooth(Math.hypot(p.vx, p.vy) / 2.2);
+    const transfer = (gather + brace) * Math.max(-1, Math.min(1, lateral / 2.8));
     const releasing =
       !ground && !partner && !p.airState && wrap?.release ? wrap : null;
     const gripTurn = followGrip(
@@ -1203,6 +1228,7 @@ export function createGridironRenderer(canvas) {
         bob -
           pose.crouch -
           0.055 * load -
+          (0.06 * gather + 0.05 * brace) * s -
           0.24 * fallBrace +
           legWeight * (((running?.bob || 0) - 0.067) * s - bob) -
           (cut?.drop || 0) * s,
@@ -1327,19 +1353,22 @@ export function createGridironRenderer(canvas) {
       0.87,
       articulation.pelvisYaw -
         0.16 * load * Math.sin(toward) -
-        gripTurn * 0.42 +
+        gripTurn * 0.42 -
+        Math.sin(toward) * (0.16 * gather + 0.08 * brace) +
         (landing?.twist || 0) * 0.48,
-      0,
+      -0.09 * gather + 0.10 * slip,
     );
     const twist =
-      -0.3 * load * Math.sin(toward) - gripTurn + (landing?.twist || 0);
+      -Math.sin(toward) * (0.3 * load + 0.25 * gather + 0.12 * brace) -
+      gripTurn + (landing?.twist || 0);
     const chest = rotateAtHeight(
       root,
       1.02,
       articulation.chestYaw + twist,
       articulation.chestPitch -
         (activeWrap ? 0.29 : 0.17) * load * Math.cos(toward) -
-        0.52 * fallBrace +
+        0.52 * fallBrace -
+        0.23 * gather - 0.12 * brace + 0.10 * slip +
         0.14 * (landing?.buckle || 0),
     );
     const head = rotateAtHeight(chest, 1.71 + shift, 0, articulation.neckPitch);
@@ -1386,6 +1415,7 @@ export function createGridironRenderer(canvas) {
             load * (0.21 + side * 0.13 * Math.sin(toward))
           : 0) +
         (run ? side * legAmp * step : 0) +
+        side * (recoveryStep * step + 0.11 * transfer) + 0.09 * gather +
         (ground ? -0.23 + groundFold * (side < 0 ? 1 : 0.72) : 0) +
         (landing ? -0.21 * landing.front + side * 0.13 * landing.side : 0) +
         0.27 * fallBrace +
@@ -1401,7 +1431,7 @@ export function createGridironRenderer(canvas) {
           : 0) +
         (rise > 0 ? -0.22 * arc : 0) +
         (kick && side < 0 ? -0.98 * Math.sin(Math.PI * kickT) : 0);
-      const roll = (leg?.roll || 0) * legWeight + side * idleRoll;
+      const roll = (leg?.roll || 0) * legWeight + side * idleRoll + 0.12 * transfer;
       if (roll) hip = mul(hip, rotX(roll));
       hip = mul(
         hip,
@@ -1411,6 +1441,7 @@ export function createGridironRenderer(canvas) {
       const baseKnee =
         (!ground ? 0.3 * load + side * gripTurn * 0.2 : 0) +
         (run ? Math.abs(step * legAmp) * 0.5 : 0) +
+        0.22 * gather + 0.23 * brace + Math.max(0, side * step) * recoveryStep +
         (pose.stance ? 0.2 : 0) +
         (ground ? groundFold * 0.72 : 0) +
         (landing ? 0.24 * landing.buckle + 0.11 * Math.abs(landing.side) : 0) +
