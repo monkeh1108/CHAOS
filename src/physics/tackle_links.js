@@ -361,6 +361,7 @@ export function createTackleLinks() {
     };
 
     // Snapshot the earned grips before finish() clears them and resets motion.
+    const motion = { vx: a.vx || 0, vy: a.vy || 0, face: a.face || 0 };
     const wraps = contacts
       .filter(({ t }) => t.style === "wrap")
       .map(({ d, t, hit }) => ({
@@ -369,10 +370,22 @@ export function createTackleLinks() {
         grip: t.grip,
         angle: Math.atan2(a.y - d.y, a.x - d.x),
         closing: hit.closing,
+        age: t.age || 0,
+        pull: t.attachment?.active ? t.attachment.force : 0,
+        vx: d.vx || 0,
+        vy: d.vy || 0,
+        upright: !d.ground,
       }));
+    const clock = matchState.totalClock || 0;
     finish(a === P("QB") ? "sack" : "tackle", a.x, description);
     if (wraps.length)
-      emitPresentation({ type: "wrapFinished", runner: a.key, wraps });
+      emitPresentation({
+        type: "wrapFinished",
+        runner: a.key,
+        clock,
+        motion,
+        wraps,
+      });
   }
 
   // A hurdle can evade a well-timed low cut, but it exposes the carrier to
